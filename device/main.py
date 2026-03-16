@@ -403,6 +403,7 @@ def _preload_screens(oled):
         "src.ui.screens.gps",
         "src.ui.screens.sleep",
         "src.ui.screens.selfdestruct",
+        "src.ui.screens.frowny",
     ):
         try:
             __import__(mod)

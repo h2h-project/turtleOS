@@ -35,7 +35,7 @@ class Booter:
         )
 
         # Version (shown only at intro) FIX
-        self.version = "version 2.1.28"
+        self.version = "version 2.1.29"
 
         # Logo orientation
         self.logo_flip_x = False
@@ -246,6 +246,22 @@ class Booter:
     # -------------------------------------------------
     # Boot pipeline
     # -------------------------------------------------
+    # Detail substrings that indicate a step failed or hardware is missing
+    _ERROR_HINTS = (
+        "FAIL", "ERROR", "NOT DETECTED", "ENOMEM",
+        "HTTP", "BAD", "TIMEOUT", "MISSING", "NO SENSORS",
+    )
+
+    @staticmethod
+    def _detail_is_error(detail):
+        if not detail:
+            return False
+        d = str(detail).upper()
+        for hint in Booter._ERROR_HINTS:
+            if hint in d:
+                return True
+        return False
+
     def boot_pipeline(
             self,
             steps,
@@ -254,12 +270,14 @@ class Booter:
             settle_ms=120,
             logger=None,
             *,
-            # New: explicit final hold so you can eliminate delay after "Locked & loaded!"
+            # Explicit final hold so you can eliminate delay after "Locked & loaded!"
             final_hold_ms=20,
-            # New: fewer ramp frames (1 is fastest/least flicker)
+            # Fewer ramp frames (1 is fastest/least flicker)
             ramp_frames=1,
-            # New: per-step pause (override settle_ms behavior cleanly)
-            step_pause_ms=None
+            # Per-step pause (override settle_ms behavior cleanly)
+            step_pause_ms=None,
+            # Extra hold (ms) when a step detail looks like an error
+            error_hold_ms=700,
     ):
         if logger is None:
             logger = print
@@ -353,6 +371,10 @@ class Booter:
                 logger("[BOOT] " + label + " -> " + status + " " + str(detail))
             else:
                 logger("[BOOT] " + label + " -> " + status)
+
+            # Hold error results long enough to read
+            if error_hold_ms and int(error_hold_ms) > 0 and self._detail_is_error(detail):
+                time.sleep_ms(int(error_hold_ms))
 
             p_prev = p_next
 

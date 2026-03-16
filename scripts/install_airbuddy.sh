@@ -286,19 +286,21 @@ echo "Don't stress — you can always re-run this script or edit config.json"
 echo "directly on the device to change anything later."
 echo
 
-GPS_ENABLED="$(prompt_yes_no "Enable GPS?" "n")"
-WIFI_ENABLED="$(prompt_yes_no "Enable WiFi?" "y")"
+GPS_ENABLED="$(prompt_yes_no "Would you like to enable GPS? Totally optional: only enable if you will be installing a GPS module to your board." "n")"
+WIFI_ENABLED="$(prompt_yes_no "Would you like to enable WiFi? Important: only enable if your board has a WiFi chip." "y")"
 
 WIFI_SSID=""
 WIFI_PASSWORD=""
+TELEMETRY_ENABLED="false"
+TELEMETRY_POST_EVERY_S=120
+API_BASE="http://air2.earthen.io"
+
 if [[ "$WIFI_ENABLED" == "true" ]]; then
   WIFI_SSID="$(prompt_required "WiFi network name (SSID)")"
   WIFI_PASSWORD="$(prompt_required "WiFi password")"
+  TELEMETRY_ENABLED="$(prompt_yes_no "Enable telemetry uploads to your Buwana dashboard?" "y")"
+  TELEMETRY_POST_EVERY_S="$(prompt_default "How often to upload readings (seconds)" "120")"
 fi
-
-TELEMETRY_ENABLED="$(prompt_yes_no "Enable telemetry uploads to your Buwana dashboard?" "y")"
-TELEMETRY_POST_EVERY_S="$(prompt_default "How often to upload readings (seconds)" "120")"
-API_BASE="$(prompt_default "AirBuddy server address" "http://air.earthen.io")"
 
 echo
 echo "Almost there! The next two values come from your Buwana AirBuddy account."
@@ -413,5 +415,14 @@ echo
 echo "If something looks off, try a clean reinstall:"
 echo "  ./scripts/install_airbuddy.sh --fresh"
 echo
-echo "Happy breathing! Know thy air."
+cat <<'CLOUDS'
+
+        .  .  .   .  .  .   .  .  .
+      .  .-~~~-.   .-~~~-.   .-~~~-.  .
+     .  (       ) (       ) (       )  .
+    .    '-~~~-'   '-~~~-'   '-~~~-'   .
+      .  .  .   .  .  .   .  .  .  .
+
+CLOUDS
+echo "You're good to go.  Happy breathing!"
 echo

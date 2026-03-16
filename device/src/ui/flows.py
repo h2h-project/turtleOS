@@ -255,6 +255,22 @@ def _fetch_device_info(cfg):
     return {}
 
 
+def _show_frowny(oled, btn, line1, line2):
+    """
+    Show FrownyScreen with two message lines and wait for any button click.
+    Falls back to a plain centered text + brief sleep if the import fails.
+    """
+    try:
+        from src.ui.screens.frowny import FrownyScreen
+        FrownyScreen(oled).show(btn, line1=line1, line2=line2)
+    except Exception:
+        _draw_center_lines(oled, [line1, line2], y0=22, line_h=12)
+        try:
+            time.sleep_ms(2000)
+        except Exception:
+            pass
+
+
 def _offline_notice(oled, btn, lines, dwell_ms=1200, poll_ms=25):
     """
     Show a brief status notice.
@@ -329,8 +345,13 @@ def connectivity_carousel(
         return a
 
     # ------------------------------------------------------------
-    # 1) WIFI SCREEN (always)
+    # 1) WIFI SCREEN — skip with frowny if WiFi is not enabled in config
     # ------------------------------------------------------------
+    _wifi_cfg_on = bool(cfg.get("wifi_enabled", False)) if isinstance(cfg, dict) else False
+    if not _wifi_cfg_on:
+        _show_frowny(oled, btn, "WiFi not enabled", "on your device")
+        return _exit(None)
+
     wifi_scr = get_screen("wifi")
     if wifi_scr and hasattr(wifi_scr, "show_live"):
         try:
@@ -470,8 +491,7 @@ def sensor_carousel(
         tick_fn=None,
 ):
     if air is None:
-        draw_text(oled, "NO SENSOR", y=24)
-        wait_for_single(btn, tick_fn=tick_fn)
+        _show_frowny(oled, btn, "Ack! No sensors", "are connected!")
         return
 
     # One full reading for CO2/TVOC screens
@@ -653,7 +673,4 @@ def selfdestruct_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=N
         draw_text(oled, "SELFDESTRUCT", y=20)
         time.sleep_ms(800)
 
-    # Small exit confirmation
-    draw_text(oled, "DONE", y=28)
-    wait_for_single(btn, tick_fn=tick_fn)
     reset_and_flush(btn, flush_ms, poll_ms)

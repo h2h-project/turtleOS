@@ -90,27 +90,24 @@ class SelfDestructScreen:
         fb = o.oled
 
         # -------------------------------------------------
-        # 1) Intro view (6 seconds)
+        # 1) Intro view (3.5 seconds)
+        # Three lines of arvo20 (~17px each) vertically centered in 64px:
+        #   top margin = (64 - 3*17) / 2 ≈ 7px
         # -------------------------------------------------
         fb.fill(0)
-
-        # Use Arvo20, three clean lines
-        # y positions chosen to center the 3-line block nicely on 64px OLED
-        self._center_text(o.f_arvo20, "SELF", 14)
-        self._center_text(o.f_arvo20, "DESTRUCT", 30)
-        self._center_text(o.f_arvo20, "INITIATED", 46)
-
+        self._center_text(o.f_arvo20, "SELF", 7)
+        self._center_text(o.f_arvo20, "DESTRUCT", 24)
+        self._center_text(o.f_arvo20, "INITIATED", 41)
         fb.show()
 
-        # Hold for 6 seconds (ignore clicks during intro)
-        self._wait_ms_abortable(btn, 6000, treat_any_click_as_abort=False)
+        self._wait_ms_abortable(btn, 3500, treat_any_click_as_abort=False)
         btn.reset()
 
         # -------------------------------------------------
-        # 2) Countdown view (20..0)
+        # 2) Countdown view (15..0)
         # -------------------------------------------------
         abort_line = "CLICK TO ABORT"
-        for n in range(20, -1, -1):
+        for n in range(15, -1, -1):
             self._draw_countdown_view(n, abort_line)
 
             clicked = self._wait_ms_abortable(btn, 1000, treat_any_click_as_abort=True)
@@ -122,7 +119,17 @@ class SelfDestructScreen:
                 btn.reset()
 
         # -------------------------------------------------
-        # 3) Punchline view (GRIN face + Just kidding!)
+        # 3) "Boom!" — show for 2 seconds
+        # f_large is ~20px tall; center in 64px → y = (64-20)/2 = 22
+        # -------------------------------------------------
+        fb.fill(0)
+        self._center_text(o.f_large, "Boom!", 22)
+        fb.show()
+        self._wait_ms_abortable(btn, 2000, treat_any_click_as_abort=False)
+        btn.reset()
+
+        # -------------------------------------------------
+        # 4) Punchline view (GRIN face + Just kidding!)
         #    Face constrained to top half
         # -------------------------------------------------
         fb.fill(0)
