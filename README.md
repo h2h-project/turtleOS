@@ -5,7 +5,7 @@
 
 ## Overview
 
-**airBuddy** is a small, open‑source air quality testing device.  Version 2.1 is built on a **Raspberry Pi Zero 2 W**.  
+**airBuddy** is a small, open‑source air quality testing device.  Version 2.1 is built on a Rasberry Pi Pico W and is compapticle with ESP32 boards.  
 The airBuddy let's one test and track the air quality in one's home-- and later one's community.   The project uses super inexpensive and sensor components that are available just about anywhere, so that just about anyone can put it togeter.
 
 With one press of a button, airBuddy:
