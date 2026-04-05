@@ -18,6 +18,7 @@ CONFIG_FILE = "config.json"
 DEFAULTS = {
     # --- Hardware ---
     "gps_enabled": True,
+    "oled_col_offset": 0,  # 0 = large/SSD1306, 2 = small 1.3" SH1106
 
     # --- WiFi ---
     "wifi_enabled": True,
@@ -136,6 +137,18 @@ def _to_bool(val, default=False):
 # ----------------------------
 def _normalize_types(cfg):
     changed = False
+
+    # --- OLED column offset ---
+    try:
+        col_offset = int(cfg.get("oled_col_offset", DEFAULTS["oled_col_offset"]))
+        if col_offset < 0 or col_offset > 4:
+            col_offset = DEFAULTS["oled_col_offset"]
+    except Exception:
+        col_offset = DEFAULTS["oled_col_offset"]
+        changed = True
+    if cfg.get("oled_col_offset") != col_offset:
+        cfg["oled_col_offset"] = col_offset
+        changed = True
 
     # --- Booleans ---
     for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled"):

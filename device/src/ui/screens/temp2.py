@@ -1,10 +1,10 @@
-# src/ui/screens/temp.py — Temperature screen (Pico / MicroPython safe)
+# src/ui/screens/temp2.py — Temperature screen sourced from SCD41 (Pico / MicroPython safe)
 #
 # Layout:
-# - Top-left:     "Temperature" title (f_med, no top margin)
+# - Top-left:     "Temperature 2" title (f_med, no top margin)
 # - Top-right:    connectivity icons (GPS / API / WiFi)
-# - Middle:       AHT21 primary temp large (f_large / arvo24), centered
-# - Bottom-left:  Humidity "RH 67%"  (f_med)
+# - Middle:       SCD41 temp large (f_large / arvo24), centered
+# - Bottom-left:  SCD41 Humidity "RH 67%"  (f_med)
 # - Bottom-right: clock glyph + RTC chip temperature "33°C" (f_med, right-aligned)
 #
 # Compatibility:
@@ -18,7 +18,7 @@ import src.ui.connection_header as _ch
 from src.ui.connection_header import GPS_NONE
 
 
-class TempScreen:
+class Temp2Screen:
     REFRESH_MS = 4000
     POLL_MS = 25
 
@@ -30,6 +30,11 @@ class TempScreen:
         # RTC info dict held by reference — fresh reads are written back so
         # the telemetry scheduler always sees the latest DS3231 temperature.
         self._rtc_info = rtc_info if isinstance(rtc_info, dict) else None
+        # Cache last good SCD41 values so the display holds steady when
+        # scd41_temp_c / scd41_humidity is None (SCD41 measures every 5 s;
+        # refresh is every 4 s — they periodically fall out of sync).
+        self._cached_temp_c = None
+        self._cached_rh = None
 
     # -------------------------------------------------
     # Helpers
@@ -178,7 +183,7 @@ class TempScreen:
                     try:
                         fn = getattr(air, "read_quick", None)
                         if callable(fn):
-                            return fn(source="temp")
+                            return fn(source="temp2")
                         return air.finish_sampling(log=False)
                     except Exception:
                         return None
@@ -254,17 +259,18 @@ class TempScreen:
         )
 
         # --- Title top-left, no top margin ---
-        f.write("Temperature 1", 0, 0)
+        f.write("Temperature 2", 0, 0)
 
-        # --- Primary temp (AHT21 preferred, fall back to temp_c) ---
+        # --- Primary temp from SCD41 ---
         temp_c = None
         if reading:
-            temp_c = getattr(reading, "aht21_temp_c", None)
-            if temp_c is None:
-                temp_c = getattr(reading, "temp_c", None)
+            temp_c = getattr(reading, "scd41_temp_c", None)
 
         if temp_c is not None:
             temp_c = self._round_1dp(temp_c)
+            self._cached_temp_c = temp_c
+        else:
+            temp_c = self._cached_temp_c  # hold last good value during SCD41 inter-sample gap
 
         temp_str = self._format_temp(temp_c)
 
@@ -275,10 +281,15 @@ class TempScreen:
 
         self._draw_main_temp(temp_str, y_val)
 
-        # --- Bottom-left: Humidity ---
+        # --- Bottom-left: SCD41 Humidity ---
         rh = None
         if reading:
-            rh = getattr(reading, "humidity", None)
+            rh = getattr(reading, "scd41_humidity", None)
+
+        if rh is not None:
+            self._cached_rh = rh
+        else:
+            rh = self._cached_rh  # hold last good value
         self._draw_humidity(rh, y_bottom_row)
 
         # --- Bottom-right: clock glyph + RTC chip temperature ---

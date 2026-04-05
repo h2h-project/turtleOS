@@ -89,7 +89,7 @@ class WaitingScreen:
     def show(
             self,
             oled,
-            line="Know your air...",
+            line="Know thy air...",
             animate=False,
             period_ms=1000,
             *,
@@ -130,7 +130,7 @@ class WaitingScreen:
             self,
             oled,
             btn,
-            line="Know your air...",
+            line="Know thy air...",
             animate=True,
             period_ms=None,
             *,
@@ -504,7 +504,7 @@ class WaitingScreen:
     def render(
             self,
             oled,
-            line="Know your air...",
+            line="Know thy air...",
             animate=False,
             period_ms=1000,
             *,

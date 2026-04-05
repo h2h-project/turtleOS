@@ -1,6 +1,7 @@
 # src/ui/booter.py  (MicroPython / Pico-safe)
 import time
 import gc
+from src.ui import logo_airbuddy
 from src.ui.thermobar import ThermoBar
 
 
@@ -26,21 +27,19 @@ class Booter:
     def __init__(self, oled):
         self.oled = oled
 
-        # Med font for footer text and version number; arvo24 for brand label
+        # Footer text in MED now
         self.f_footer = (
-                getattr(oled, "f_med", None)
+                getattr(oled, "f_small", None)
+                or getattr(oled, "f_arvo16", None)
                 or getattr(oled, "f_small", None)
         )
-        # arvo24 (f_large) is trimmed to digits/punctuation only — no letters.
-        # Use arvo20 (full ASCII, Arvo Bold) for the brand label instead.
-        self.f_brand = getattr(oled, "f_arvo20", None) or self.f_footer
-        self.f_version_num = getattr(oled, "f_small", None) or self.f_footer
-        self.f_version = self.f_brand  # height reference for layout
 
-        # Version label content
-        self.brand = "airOS"
-        self.version_num = "2.1.36"
-        self.version = "airOS version 2.1.35"  # used for serial logging
+        # Version (shown only at intro) FIX
+        self.version = "version 2.1.33"
+
+        # Logo orientation
+        self.logo_flip_x = False
+        self.logo_flip_y = True
 
         self.bar = ThermoBar(oled)
         self._layout = None
@@ -103,98 +102,95 @@ class Booter:
             pass
 
     # -------------------------------------------------
+    # Logo blit (pixel-safe)
+    # -------------------------------------------------
+    def _logo_pixel(self, data, lw, x, y):
+        idx = x + (y >> 3) * lw
+        return (data[idx] >> (y & 7)) & 1
+
+    def _blit_logo_fixed(self, x0, y0):
+        fb = self._fb()
+        if not fb:
+            return
+
+        lw = int(getattr(logo_airbuddy, "WIDTH", 0))
+        lh = int(getattr(logo_airbuddy, "HEIGHT", 0))
+        data = getattr(logo_airbuddy, "DATA", None)
+
+        if (lw <= 0) or (lh <= 0) or (data is None):
+            return
+
+        if not isinstance(data, (bytes, bytearray)):
+            try:
+                data = bytes(data)
+            except Exception:
+                return
+
+        sw = int(getattr(self.oled, "width", 128))
+        sh = int(getattr(self.oled, "height", 64))
+
+        for yy in range(lh):
+            dy = (lh - 1 - yy) if self.logo_flip_y else yy
+            sy = y0 + yy
+            if not (0 <= sy < sh):
+                continue
+
+            for xx in range(lw):
+                dx = (lw - 1 - xx) if self.logo_flip_x else xx
+                sx = x0 + xx
+                if not (0 <= sx < sw):
+                    continue
+
+                if self._logo_pixel(data, lw, dx, dy):
+                    fb.pixel(sx, sy, 1)
+
+    # -------------------------------------------------
     # Layout calc (cached)
     # -------------------------------------------------
     def _calc_layout(self):
         w = int(getattr(self.oled, "width", 128))
         h = int(getattr(self.oled, "height", 64))
 
-        gap_ver_to_bar = 3
+        gap_logo_to_bar = 4
         gap_bar_to_footer = 4
-        bar_h = 7
 
-        ver_h = 11
-        if self.f_version:
-            try:
-                _, ver_h = self.f_version.size("A")
-            except Exception:
-                ver_h = 11
-
-        footer_h = 11
-        if self.f_footer:
-            try:
-                _, footer_h = self.f_footer.size("A")
-            except Exception:
-                footer_h = 11
+        lw = int(getattr(logo_airbuddy, "WIDTH", 0))
+        lh = int(getattr(logo_airbuddy, "HEIGHT", 0))
 
         bar_w = int(w * 0.70)
         if bar_w < 40:
             bar_w = 40
         if bar_w > w:
             bar_w = w
+
         bar_x = max(0, (w - bar_w) // 2)
+        bar_h = 7
 
-        total_h = ver_h + gap_ver_to_bar + bar_h + gap_bar_to_footer + footer_h
-        y0 = max(0, (h - total_h) // 2 - 2)
-        if y0 < 0:
-            y0 = 0
+        footer_h = 10
+        if self.f_footer:
+            try:
+                _, footer_h = self.f_footer.size("Booting")
+            except Exception:
+                footer_h = 10
 
-        ver_y = y0
-        bar_y = y0 + ver_h + gap_ver_to_bar
+        total_h = lh + gap_logo_to_bar + bar_h + gap_bar_to_footer + footer_h
+        y0 = max(0, (h - total_h) // 2)
+
+        logo_y = y0
+        bar_y = y0 + lh + gap_logo_to_bar
         footer_y = bar_y + bar_h + gap_bar_to_footer
 
         return {
             "w": w,
             "h": h,
+            "lw": lw,
+            "lh": lh,
             "bar_x": bar_x,
             "bar_y": bar_y,
             "bar_w": bar_w,
-            "ver_y": ver_y,
+            "logo_y": logo_y,
             "footer_y": footer_y,
         }
-
-    # -------------------------------------------------
-    # Version line: "abOS" (arvo24) + "v2.1.33" (med) centred as a pair
-    # -------------------------------------------------
-    def _draw_version_line(self, y):
-        w = int(getattr(self.oled, "width", 128))
-        gap = 4
-
-        bw = bh = 0
-        if self.f_brand:
-            try:
-                bw, bh = self.f_brand.size(self.brand)
-            except Exception:
-                bw = len(self.brand) * 14
-                bh = 20
-
-        vw = vh = 0
-        if self.f_version_num:
-            try:
-                vw, vh = self.f_version_num.size(self.version_num)
-            except Exception:
-                vw = len(self.version_num) * 6
-                vh = 11
-
-        total_w = int(bw) + (gap if bw and vw else 0) + int(vw)
-        x = max(0, (w - total_w) // 2)
-
-        # Vertically offset version number: centred against brand + 4px lower
-        ver_y_off = max(0, (int(bh) - int(vh)) // 2) + 4
-
-        if self.f_brand:
-            try:
-                self.f_brand.write(self.brand, x, y)
-            except Exception:
-                pass
-
-        if self.f_version_num and vw:
-            try:
-                self.f_version_num.write(
-                    self.version_num, x + int(bw) + gap, y + ver_y_off
-                )
-            except Exception:
-                pass
 
     # -------------------------------------------------
     # Draw frame
@@ -203,19 +199,18 @@ class Booter:
         if self._layout is None:
             self._layout = self._calc_layout()
 
+        w = self._layout["w"]
+        lw = self._layout["lw"]
         bar_x = self._layout["bar_x"]
         bar_y = self._layout["bar_y"]
         bar_w = self._layout["bar_w"]
-        ver_y = self._layout["ver_y"]
+        logo_y = self._layout["logo_y"]
         footer_y = self._layout["footer_y"]
 
         self._clear()
 
-        try:
-            gc.collect()
-        except Exception:
-            pass
-        self._draw_version_line(ver_y)
+        if lw and (lw <= w):
+            self._blit_logo_fixed(max(0, (w - lw) // 2), logo_y)
 
         self.bar.draw(bar_x, bar_y, bar_w, p=max(0.0, min(1.0, float(p))))
 
@@ -241,7 +236,7 @@ class Booter:
         frames = max(1, int(float(duration) * float(fps)))
         delay_ms = int(1000 / max(1, int(fps)))
 
-        self._draw_frame(p=0.0, footer=footer)
+        self._draw_frame(p=0.0, footer=footer or self.version)
 
         for i in range(frames + 1):
             p = i / float(frames)
@@ -290,7 +285,7 @@ class Booter:
         self._layout = self._calc_layout()
 
         # Intro
-        self._draw_frame(p=0.0, footer=None)
+        self._draw_frame(p=0.0, footer=self.version)
         logger("[BOOT] " + self.version)
         time.sleep_ms(int(intro_ms) if intro_ms is not None else 0)
 

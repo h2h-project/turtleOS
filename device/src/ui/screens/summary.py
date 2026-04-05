@@ -1,8 +1,7 @@
 # src/ui/screens/summary.py — Summary screen (Pico / MicroPython safe)
 
 import time
-from src.ui.glyphs import draw_circle, draw_degree, draw_c, draw_sub2
-from src.ui.faces import draw_face
+from src.ui.glyphs import draw_circle, draw_degree, draw_c, draw_sub2, draw_face
 
 
 class SummaryScreen:
@@ -21,7 +20,9 @@ class SummaryScreen:
         Returns lvl 0..4
           0 good, 1 ok, 2 poor, 3 bad, 4 verybad
         """
-        ppm = int(getattr(r, "eco2_ppm", 0) or 0)
+        # Prefer SCD4x CO2 for scoring — consistent with what is displayed
+        scd41_co2 = int(getattr(r, "scd41_co2_ppm", 0) or 0)
+        ppm = scd41_co2 if scd41_co2 > 0 else int(getattr(r, "eco2_ppm", 0) or 0)
         tvoc = int(getattr(r, "tvoc_ppb", 0) or 0)
         ready = bool(getattr(r, "ready", True))
 
@@ -140,7 +141,10 @@ class SummaryScreen:
         # subscript sits a bit lower than baseline (tuned for MED)
         draw_sub2(self.oled.oled, x + int(w_base) + 1, y + 9, scale=1, color=1)
 
-    def _draw_tvoc_line(self, tvoc, x, y):
+    def _draw_tvoc_line(self, tvoc, x, y, has_sensor=True):
+        if not has_sensor:
+            self.f.write("---", x, y)
+            return
         if tvoc is None:
             self.f.write("-- ppb", x, y)
             return
@@ -162,10 +166,24 @@ class SummaryScreen:
         _, h = self.oled._text_size(self.f, "Ag")
         line_h = h + 2
 
-        eco2 = getattr(r, "eco2_ppm", None) if r else None
+        # CO2: prefer SCD4x true CO2, fall back to ENS160 eCO2
+        scd41_co2 = getattr(r, "scd41_co2_ppm", None) if r else None
+        eco2 = scd41_co2 if scd41_co2 else (getattr(r, "eco2_ppm", None) if r else None)
+
+        # TVOC: ENS160 only — show "---" when no AHT sensor is present
         tvoc = getattr(r, "tvoc_ppb", None) if r else None
-        temp_c = getattr(r, "temp_c", None) if r else None
-        rh = getattr(r, "humidity", None) if r else None
+        aht_available = (
+            (getattr(r, "aht21_temp_c", None) is not None)
+            or (getattr(r, "aht10_temp_c", None) is not None)
+        ) if r else False
+
+        # Temp: prefer SCD4x, fall back to primary temp_c
+        scd41_temp = getattr(r, "scd41_temp_c", None) if r else None
+        temp_c = scd41_temp if scd41_temp is not None else (getattr(r, "temp_c", None) if r else None)
+
+        # Humidity: prefer SCD4x, fall back to primary humidity
+        scd41_rh = getattr(r, "scd41_humidity", None) if r else None
+        rh = scd41_rh if scd41_rh is not None else (getattr(r, "humidity", None) if r else None)
 
         score = self._score_from_reading(r) if r else 2
 
@@ -175,7 +193,7 @@ class SummaryScreen:
         y += line_h
 
         # TVOC
-        self._draw_tvoc_line(tvoc, x, y)
+        self._draw_tvoc_line(tvoc, x, y, has_sensor=aht_available)
         y += line_h
 
         # TEMP

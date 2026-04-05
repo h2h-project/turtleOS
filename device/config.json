@@ -6,7 +6,8 @@
   "telemetry_enabled": true,
   "telemetry_post_every_s": 120,
   "api_base": "http://air2.earthen.io/",
-  "device_id": "AB-0002",
-  "device_key": "love-please",
-  "timezone_offset_min": 420
+  "device_id": "AB_09",
+  "device_key": "JoBkzrUwBJmve-lhxDi01_qU",
+  "timezone_offset_min": 420,
+  "oled_col_offset": 2
 }

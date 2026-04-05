@@ -502,15 +502,35 @@ def sensor_carousel(
         return
 
     gc_collect()
+
+    # Determine which sensors are present after hardware init (done inside finish_sampling)
+    _has_scd41 = getattr(air, '_scd41', None) is not None
+    _has_ens = getattr(air, '_ens', None) is not None
+    _has_aht = getattr(air, '_aht', None) is not None
+    _has_aht10 = getattr(air, '_aht10', None) is not None
+
+    # Build the ordered screen list for this carousel run.
+    # Only include a screen if the required sensor is actually connected.
+    _sensor_screens = []
+    if _has_scd41:
+        _sensor_screens.append("co2")       # SCD4X CO2 screen
+    if _has_ens:
+        _sensor_screens.append("eco2")      # ENS160 eCO2 screen
+        _sensor_screens.append("tvoc")      # ENS160 TVOC screen
+    if _has_aht:
+        _sensor_screens.append("temp")      # AHT temperature screen (skipped if no AHT sensor connected)
+    if _has_scd41:
+        _sensor_screens.append("temp2")     # SCD4X temperature screen
+
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    for _n in ("co2", "tvoc", "temp", "summary"):
+    for _n in _sensor_screens + ["summary"]:
         get_screen(_n)
         _gc()
     reset_and_flush(btn, flush_ms, poll_ms)
 
-    for name in ("co2", "tvoc", "temp"):
+    for name in _sensor_screens:
         _gc()
         scr = get_screen(name)
         if not scr:
@@ -518,26 +538,81 @@ def sensor_carousel(
             continue
 
         try:
-            # TEMP: let the temp screen run its own live loop, then continue to SUMMARY
-            if name == "temp" and hasattr(scr, "show_live"):
+            # Live temp screens: run their own loop, then continue to SUMMARY
+            if name in ("temp", "temp2") and hasattr(scr, "show_live"):
                 try:
-                    # Preferred: temp screen can pull fresh samples from `air`
                     scr.show_live(btn=btn, air=air, tick_fn=tick_fn)
                 except TypeError:
-                    # Fallback: temp screen only wants btn
                     scr.show_live(btn=btn)
 
-                # (#3) Use the last good reading already captured by TempScreen's live
-                # loop — avoids a second finish_sampling() allocation right before summary.
+                # Use the last good reading captured by the live loop
                 if getattr(air, '_last', None) is not None:
                     reading = air._last
 
-                # Prevent the click that exited temp from instantly skipping summary
+                # If another temp screen follows in the list, continue to it;
+                # otherwise flush and break to summary.
+                _remaining = _sensor_screens[_sensor_screens.index(name) + 1:]
+                _next_is_temp = bool(_remaining and _remaining[0] in ("temp", "temp2"))
                 reset_and_flush(btn, flush_ms=min(180, flush_ms), poll_ms=poll_ms)
+                if _next_is_temp:
+                    continue
                 break  # exit loop → go show summary
 
-            # CO2/TVOC screens use the captured reading
-            scr.show(reading)
+            # co2: live-updating (polls SCD41 every 5 s)
+            elif name == "co2" and hasattr(scr, "show_live"):
+                _captured = reading
+                def _get_co2():
+                    # Directly poll SCD41; update _captured in-place when new data arrives.
+                    scd41 = getattr(air, '_scd41', None)
+                    if scd41 is not None:
+                        try:
+                            result = scd41.read_if_ready()
+                            if result is not None and result[0]:
+                                _captured.scd41_co2_ppm = int(result[0])
+                        except Exception:
+                            pass
+                    return _captured
+                try:
+                    a_live = scr.show_live(btn=btn, get_reading=_get_co2, tick_fn=tick_fn)
+                except TypeError:
+                    a_live = scr.show_live(btn=btn)
+                reset_and_flush(btn, flush_ms=min(180, flush_ms), poll_ms=poll_ms)
+                if a_live in ("single", None):
+                    _gc()
+                    continue
+                reset_and_flush(btn, flush_ms, poll_ms)
+                return a_live
+
+            # eco2: live-updating (polls ENS160 every 5 s)
+            elif name == "eco2" and hasattr(scr, "show_live"):
+                _captured = reading
+                def _get_eco2():
+                    # Directly poll ENS160; update _captured in-place when new data arrives.
+                    ens = getattr(air, '_ens', None)
+                    if ens is not None:
+                        try:
+                            if ens.data_ready():
+                                aqi, tvoc_ppb, eco2_ppm = ens.read_air_raw()
+                                if eco2_ppm > 0:
+                                    _captured.eco2_ppm = int(eco2_ppm)
+                                    _captured.ready = True
+                        except Exception:
+                            pass
+                    return _captured
+                try:
+                    a_live = scr.show_live(btn=btn, get_reading=_get_eco2, tick_fn=tick_fn)
+                except TypeError:
+                    a_live = scr.show_live(btn=btn)
+                reset_and_flush(btn, flush_ms=min(180, flush_ms), poll_ms=poll_ms)
+                if a_live in ("single", None):
+                    _gc()
+                    continue
+                reset_and_flush(btn, flush_ms, poll_ms)
+                return a_live
+
+            # TVOC and other static screens use the captured reading
+            else:
+                scr.show(reading)
 
         except Exception as e:
             print("[FLOW] screen error:", name, repr(e))
@@ -618,6 +693,23 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None):
     # button release here. btn.reset() inside show_live captures the held state
     # cleanly: the eventual release is ignored, and the next fresh press is a click.
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
+
+    # Battery screen shown first; single click advances to sleep screen.
+    bat_scr = get_screen("battery")
+    if bat_scr and hasattr(bat_scr, "show_live"):
+        try:
+            a = bat_scr.show_live(btn)
+        except Exception:
+            a = None
+    else:
+        draw_text(oled, "Battery", y=24)
+        a = wait_for_single(btn, tick_fn=tick_fn)
+
+    if a != "single":
+        reset_and_flush(btn, flush_ms, poll_ms)
+        return
+
+    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     scr = get_screen("sleep")
     if scr and hasattr(scr, "show_live"):

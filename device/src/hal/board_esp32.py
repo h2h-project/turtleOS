@@ -51,3 +51,45 @@ GPS_RX_PIN = 16
 
 def gps_pins():
     return (GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN)
+
+
+# ------------------------------------------------------------
+# Power source detection
+# ------------------------------------------------------------
+# ESP32 boards vary widely.
+# There is no universal USB/VBUS detect mechanism across all boards.
+#
+# If your specific board exposes USB/VBUS or charger status on a GPIO,
+# set USB_DETECT_PIN to that GPIO number and adjust USB_DETECT_ACTIVE.
+#
+# Examples:
+#   USB_DETECT_PIN = 35
+#   USB_DETECT_ACTIVE = 1
+#
+# For now, default to "unknown / not detected" by returning False.
+# This keeps the HAL stable and honest until real hardware detection exists.
+# ------------------------------------------------------------
+
+USB_DETECT_PIN = None       # set to GPIO number if your board has one
+USB_DETECT_ACTIVE = 1       # 1 = high means USB present, 0 = low means USB present
+
+def usb_power_present():
+    """
+    Return True if USB/VBUS power is detected on this ESP32 board.
+
+    Default behavior:
+      - returns False if no dedicated detect pin is configured
+
+    If a real detect pin is available on your board:
+      - set USB_DETECT_PIN above
+      - set USB_DETECT_ACTIVE to match the hardware logic
+    """
+    if USB_DETECT_PIN is None:
+        return False
+
+    try:
+        pin = Pin(USB_DETECT_PIN, Pin.IN)
+        val = pin.value()
+        return bool(val == USB_DETECT_ACTIVE)
+    except Exception:
+        return False

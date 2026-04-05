@@ -90,8 +90,18 @@ def run(
         _refresh_rtc_temp = None
 
     if oled is None:
-        from src.ui.oled import OLED
-        oled = OLED()
+        try:
+            from src.ui.oled import OLED
+            oled = OLED()
+        except OSError as e:
+            if e.args[0] == 19:  # ENODEV
+                print("[APP] OLED: not found — running headless")
+            else:
+                print("[APP] OLED: init failed:", repr(e))
+            oled = None
+        except Exception as e:
+            print("[APP] OLED: init failed:", repr(e))
+            oled = None
 
     # ------------------------------------------------------------
     # I2C (fixed freq)
@@ -161,8 +171,22 @@ def run(
     except Exception:
         _hw_wifi = False
 
+    _boot_wifi_ok = isinstance(wifi_boot, dict) and wifi_boot.get("ok")
+
+    # On Pico/CYW43 there is no RTCWDT risk from re-entering the WiFi driver
+    # after a failed boot connection.  Always create WiFiManager on Pico if WiFi
+    # is supported and enabled — the driver can reconnect from the main loop and
+    # screens, and _bg_tick() will update status["wifi_ok"] correctly.
+    # On ESP32: gate on _boot_wifi_ok to avoid RTCWDT from broken driver state.
+    try:
+        from src.hal.platform import platform_tag as _plt_tag
+        _is_esp32_loop = (_plt_tag() == "esp32")
+    except Exception:
+        _is_esp32_loop = False
+
+    _wifi_manager_ok = _boot_wifi_ok if _is_esp32_loop else True
     wifi = None
-    if _hw_wifi:
+    if _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
         try:
             from src.net.wifi_manager import WiFiManager
             wifi = WiFiManager()
@@ -172,6 +196,12 @@ def run(
     if wifi is None:
         from src.net.wifi_manager_null import NullWiFiManager
         wifi = NullWiFiManager()
+        if not _gps_cfg.get("wifi_enabled", False):
+            try:
+                from src.ui import connection_header as _ch
+                _ch.set_wifi_enabled(False)
+            except Exception:
+                pass
 
     air = air_sensor
 
@@ -354,13 +384,21 @@ def run(
                 from src.ui.screens.co2 import CO2Screen
                 screens[name] = CO2Screen(oled)
 
+            elif name == "eco2":
+                from src.ui.screens.eco2 import eCO2Screen
+                screens[name] = eCO2Screen(oled)
+
             elif name == "tvoc":
                 from src.ui.screens.tvoc import TVOCScreen
                 screens[name] = TVOCScreen(oled)
 
             elif name == "temp":
                 from src.ui.screens.temp import TempScreen
-                screens[name] = TempScreen(oled, i2c=i2c, status=status)
+                screens[name] = TempScreen(oled, i2c=i2c, status=status, rtc_info=rtc)
+
+            elif name == "temp2":
+                from src.ui.screens.temp2 import Temp2Screen
+                screens[name] = Temp2Screen(oled, i2c=i2c, status=status, rtc_info=rtc)
 
             elif name == "summary":
                 from src.ui.screens.summary import SummaryScreen
@@ -381,6 +419,10 @@ def run(
             elif name == "selfdestruct":
                 from src.ui.screens.selfdestruct import SelfDestructScreen
                 screens[name] = SelfDestructScreen(oled)
+
+            elif name == "battery":
+                from src.ui.screens.battery import BatteryScreen
+                screens[name] = BatteryScreen(oled, i2c=i2c)
 
             elif name == "sleep":
                 from src.ui.screens.sleep import SleepScreen
@@ -490,7 +532,7 @@ def run(
         action = waiting.show_live(
             oled,
             btn,
-            line="Know your air...",
+            line="Know thy air...",
             animate=False,
             wifi_ok=status["wifi_ok"],
             gps_on=status["gps_on"],

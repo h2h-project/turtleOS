@@ -1,5 +1,5 @@
-# src/ui/screens/co2.py
-# CO2 screen for AirBuddy using SCD41 / SCD4x (RAM-lean)
+# src/ui/screens/eco2.py
+# eCO₂ screen for AirBuddy (RAM-lean)
 # Pico / MicroPython safe
 
 import gc
@@ -8,19 +8,20 @@ from src.ui.thermobar import ThermoBar
 from src.ui.glyphs import draw_sub2, draw_face9
 
 
-class CO2Screen:
+class eCO2Screen:
     DISPLAY_DURATION = 4
-    REFRESH_MS = 5000
+    REFRESH_MS = 4000
     POLL_MS = 25
 
     # ppm -> step mapping edges (11 points = 10 bins)
     _EDGES = (400, 550, 700, 850, 1000, 1300, 1600, 2000, 2600, 3400, 5000)
 
-    # Fixed UI strings
-    _TXT_CO = "CO"
+    # Fixed UI strings (avoid re-alloc each call)
+    _TXT_ECO = "eCO"
     _TXT_PPM = "PPM"
-    _TXT_SRC = "SCD41"
-    _TXT_NA = "Sensor initiating..."
+    _TXT_CONF = "CONF"
+    _TXT_NA = "SENSOR NOT READY"
+    _TXT_XX = "XX%"
 
     # Fixed scale labels
     _SCALE_TXT = ("400", "1000", "2000", "5000")
@@ -69,8 +70,8 @@ class CO2Screen:
         self.left_face_x = 2
         self.right_face_x = 110
 
-        # Precompute fixed widths
-        self._w_co, _ = (self.f_arvo if self.f_arvo else self.f_med).size(self._TXT_CO)
+        # Precompute fixed widths (avoid repeated .size() calls)
+        self._w_eco, _ = (self.f_arvo if self.f_arvo else self.f_med).size(self._TXT_ECO)
         self._w_ppm, _ = self.w_small.size(self._TXT_PPM)
         self._scale_w = []
         for t in self._SCALE_TXT:
@@ -86,12 +87,13 @@ class CO2Screen:
         self._inner_hi = inner_x + inner_w - 1
 
         # Precompute tick X positions aligned to label centers + tiny offsets
+        # (replaces dict + index lookups)
         self._tick_x = []
         for i in range(4):
             x_label = int(self._SCALE_X[i])
             x_center = x_label + (self._scale_w[i] // 2)
 
-            # manual nudges
+            # manual nudges (kept from your tuning)
             if i == 1:      # 1000
                 x_center += 5
             elif i == 2:    # 2000
@@ -110,16 +112,39 @@ class CO2Screen:
     # -------------------------------------------------
     # Public API
     # -------------------------------------------------
-    def show(self, reading):
+    def show(self, reading, confidence_pct=None):
         self.oled.clear()
 
         # free memory right before first draw/write burst
         gc.collect()
 
-        ppm = int(getattr(reading, "scd41_co2_ppm", 0) or 0)
-        not_ready = (ppm <= 0)
+        ppm = int(getattr(reading, "eco2_ppm", 0))
+        ready = bool(getattr(reading, "ready", True))
+        not_ready = (not ready) or (ppm <= 0)
 
-        self._draw_header(ppm, not_ready)
+        # Confidence (keep lean: avoid format())
+        conf = None
+        if confidence_pct is not None:
+            try:
+                conf = int(confidence_pct)
+            except Exception:
+                conf = None
+        else:
+            try:
+                conf = int(getattr(reading, "confidence"))
+            except Exception:
+                conf = None
+
+        if conf is None:
+            conf_text = self._TXT_XX
+        else:
+            if conf < 0:
+                conf = 0
+            elif conf > 100:
+                conf = 100
+            conf_text = str(conf) + "%"
+
+        self._draw_header(ppm, conf_text, not_ready)
         self._draw_scale_numbers()
         self._draw_bar(ppm, not_ready)
         self._draw_fixed_ticks()
@@ -131,7 +156,7 @@ class CO2Screen:
         """
         Live refresh screen — redraws every REFRESH_MS (default 5 s).
 
-        get_reading: callable() -> reading object with scd41_co2_ppm attribute.
+        get_reading: callable() -> reading object with eco2_ppm / confidence attributes.
         Exit: single click only.
         tick_fn: optional background callable (e.g. telemetry tick), called every 500 ms.
         """
@@ -164,11 +189,27 @@ class CO2Screen:
                     reading = None
 
                 gc.collect()
-                ppm = int(getattr(reading, "scd41_co2_ppm", 0) or 0) if reading else 0
-                not_ready = (ppm <= 0)
+                ppm = int(getattr(reading, "eco2_ppm", 0)) if reading else 0
+                ready = bool(getattr(reading, "ready", True)) if reading else False
+                not_ready = (not ready) or (ppm <= 0)
+
+                conf = None
+                if reading is not None:
+                    try:
+                        conf = int(getattr(reading, "confidence"))
+                    except Exception:
+                        conf = None
+                if conf is None:
+                    conf_text = self._TXT_XX
+                else:
+                    if conf < 0:
+                        conf = 0
+                    elif conf > 100:
+                        conf = 100
+                    conf_text = str(conf) + "%"
 
                 self.oled.oled.fill(0)
-                self._draw_header(ppm, not_ready)
+                self._draw_header(ppm, conf_text, not_ready)
                 self._draw_scale_numbers()
                 self._draw_bar(ppm, not_ready)
                 self._draw_fixed_ticks()
@@ -192,17 +233,17 @@ class CO2Screen:
     # -------------------------------------------------
     # Drawing helpers
     # -------------------------------------------------
-    def _draw_header(self, ppm, not_ready):
+    def _draw_header(self, ppm, conf_text, not_ready):
         x0 = 2
         y_title = 2
         status_y = 19
 
         title_writer = self.f_arvo if self.f_arvo else self.f_med
 
-        # Title
-        title_writer.write(self._TXT_CO, x0, y_title)
+        # Title (no faux-bold)
+        title_writer.write(self._TXT_ECO, x0, y_title)
 
-        sub2_x = x0 + int(self._w_co) + 1
+        sub2_x = x0 + int(self._w_eco) + 1
         sub2_y = y_title + 10
         draw_sub2(self.oled.oled, sub2_x, sub2_y, scale=1, color=1)
 
@@ -216,7 +257,9 @@ class CO2Screen:
             self.f_med.write(self._TXT_NA, x0, status_y)
         else:
             yy = status_y + (1 if self.w_small is self.f_small else 0)
-            self.w_small.write(self._TXT_SRC, x0, yy)
+            self.w_small.write(conf_text, x0, yy)
+            w_pct, _ = self.w_small.size(conf_text)
+            self.w_small.write(self._TXT_CONF, x0 + int(w_pct) + 6, yy)
 
         # Value (only when ready)
         if not not_ready:
@@ -228,6 +271,7 @@ class CO2Screen:
     def _draw_scale_numbers(self):
         y = self.scale_y
         w = self.w_small
+        # manual loop avoids zip() iterator object
         w.write(self._SCALE_TXT[0], self._SCALE_X[0], y)
         w.write(self._SCALE_TXT[1], self._SCALE_X[1], y)
         w.write(self._SCALE_TXT[2], self._SCALE_X[2], y)
@@ -280,6 +324,7 @@ class CO2Screen:
         fb.pixel(x, y0 + 5, 1)
 
     def _draw_fixed_ticks(self):
+        # 4 ticks at the 4 scale labels
         tx = self._tick_x
         self._draw_tick(tx[0])
         self._draw_tick(tx[1])

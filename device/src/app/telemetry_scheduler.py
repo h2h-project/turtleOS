@@ -159,13 +159,19 @@ class TelemetryScheduler:
         return self._client
 
     def _now_unix_seconds(self):
+        # MicroPython RP2040 time.mktime() uses epoch 2000-01-01, not 1970-01-01.
+        # Add 946 684 800 s (30 years) to convert to Unix epoch.
+        _MP_EPOCH_OFFSET = 946_684_800
         try:
             from machine import RTC
             y, mo, d, wd, hh, mm, ss, sub = RTC().datetime()
-            return int(time.mktime((y, mo, d, hh, mm, ss, wd, 0)))
+            if y < 2020:          # RTC not synced yet — return 0 so caller skips
+                return 0
+            mp_s = int(time.mktime((y, mo, d, hh, mm, ss, wd, 0)))
+            return mp_s + _MP_EPOCH_OFFSET
         except Exception:
             try:
-                return int(time.time())
+                return int(time.time()) + _MP_EPOCH_OFFSET
             except Exception:
                 return 0
 

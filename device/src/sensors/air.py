@@ -3,9 +3,11 @@
 # Patched version:
 # - Adds safer AHT21 init + busy/status handling
 # - Keeps OPTIONAL AHT10 support
-# - Stores BOTH sensor readings side-by-side on AirReading:
+# - Adds SCD4X / SCD41 support on same primary I2C bus
+# - Stores sensor readings side-by-side on AirReading:
 #     r.aht10_temp_c, r.aht10_humidity
 #     r.aht21_temp_c, r.aht21_humidity
+#     r.scd41_co2_ppm, r.scd41_temp_c, r.scd41_humidity
 # - Chooses a "primary" temp/rh for ENS160 compensation + UI:
 #     Prefer AHT21, else AHT10, else last good reading, else 0/0 fallback
 #
@@ -16,9 +18,11 @@
 # - Only set ENS160 environment when temp/rh are actually available
 # - Add AHT21 init + busy polling + sanity checks
 # - Fix CSV log placeholder count bug
+# - Add SCD4X periodic measurement support for true CO2 + diagnostic temp/RH
 
 import time
 from machine import Pin, I2C
+from src.drivers.scd4x import SCD4X
 
 # ---- CO2 confidence helper (your implemented file) ----
 try:
@@ -41,6 +45,7 @@ class AirReading:
     Side-by-side comparison (optional):
       - aht10_temp_c / aht10_humidity
       - aht21_temp_c / aht21_humidity
+      - scd41_co2_ppm / scd41_temp_c / scd41_humidity
     """
 
     def __init__(
@@ -60,6 +65,9 @@ class AirReading:
             aht10_humidity=None,
             aht21_temp_c=None,
             aht21_humidity=None,
+            scd41_co2_ppm=None,
+            scd41_temp_c=None,
+            scd41_humidity=None,
     ):
         self.timestamp = int(timestamp)
 
@@ -67,9 +75,11 @@ class AirReading:
         self.temp_c = float(temp_c)
         self.humidity = float(humidity)
 
+        # ENS160-derived values
         self.eco2_ppm = int(eco2_ppm)
         self.tvoc_ppb = int(tvoc_ppb)
         self.aqi = int(aqi)
+
         self.rating = str(rating)
         self.source = str(source)
         self.ready = bool(ready)
@@ -82,12 +92,17 @@ class AirReading:
         self.aht21_temp_c = aht21_temp_c
         self.aht21_humidity = aht21_humidity
 
+        # Optional SCD41/SCD4X fields
+        self.scd41_co2_ppm = scd41_co2_ppm
+        self.scd41_temp_c = scd41_temp_c
+        self.scd41_humidity = scd41_humidity
+
 
 # ----------------------------
 # Minimal but safer AHT21 driver
 # ----------------------------
 class AHT21:
-    _CMD_INIT = b"\xBE\x08\x00"
+    _CMD_INIT = b"\xE1\x08\x00"   # AHT10/AHT20 init (0xE1); AHT21 uses 0xBE — using AHT10 command for hardware compatibility
     _CMD_TRIGGER = b"\xAC\x33\x00"
     _CMD_SOFTRESET = b"\xBA"
 
@@ -242,6 +257,7 @@ class AirSensor:
     AirSensor:
       - ENS160 + AHT21 (usual ENS stack)
       - OPTIONAL AHT10 (external module)
+      - OPTIONAL SCD4X/SCD41 (true CO2 + diagnostic temp/RH)
       - begin_sampling()/finish_sampling() warmup timer
       - ENS160 retry loop
       - confidence score attached to AirReading.confidence
@@ -264,6 +280,7 @@ class AirSensor:
             freq=None,
             aht21_addr=0x38,
             ens160_addr=0x53,
+            scd41_addr=0x62,
             # Optional: second I2C bus for AHT10 (recommended if also using AHT21 on 0x38)
             aht10_i2c=None,
             aht10_i2c_id=None,
@@ -275,7 +292,7 @@ class AirSensor:
     ):
         self.log_path = log_path
 
-        # Primary bus config (ENS160 + AHT21 typically)
+        # Primary bus config (ENS160 + AHT21 + SCD41 typically)
         self._i2c = i2c
         self._i2c_id = i2c_id
         self._pin_sda = pin_sda
@@ -291,10 +308,12 @@ class AirSensor:
 
         self._aht_addr = aht21_addr
         self._ens_addr = ens160_addr
+        self._scd41_addr = scd41_addr
 
         self._aht = None        # AHT21
         self._ens = None        # ENS160
         self._aht10 = None      # AHT10 (optional)
+        self._scd41 = None      # SCD4X/SCD41
 
         self._warmup_until = None
         self._warmup_source = None
@@ -302,6 +321,7 @@ class AirSensor:
         self._last = None
         self._last_eco2_ppm = None
         self._last_aqi = None
+        self._last_scd41_co2_ppm = None
 
         self._log_inited = False
 
@@ -346,9 +366,27 @@ class AirSensor:
 
         # Instantiate primary drivers
         if self._aht is None:
-            self._aht = AHT21(self._i2c, addr=self._aht_addr)
+            try:
+                self._aht = AHT21(self._i2c, addr=self._aht_addr)
+            except Exception:
+                self._aht = None
+
         if self._ens is None:
-            self._ens = ENS160(self._i2c, addr=self._ens_addr)
+            try:
+                self._ens = ENS160(self._i2c, addr=self._ens_addr)
+            except Exception:
+                self._ens = None
+
+        if self._scd41 is None:
+            try:
+                self._scd41 = SCD4X(self._i2c, addr=self._scd41_addr)
+                try:
+                    self._scd41.serial_number = self._scd41.get_serial_number()
+                except Exception:
+                    pass
+                self._scd41.ensure_started()
+            except Exception:
+                self._scd41 = None
 
         # AHT10 optional bus: if not provided, we will try to use the primary bus
         if self._aht10_i2c is None and (
@@ -425,6 +463,9 @@ class AirSensor:
         return True
 
     def _read_ens160_with_retry(self, temp_c, rh, timeout_ms=4000, step_ms=250):
+        if self._ens is None:
+            return 0, 0, 0, False, "ens160 unavailable"
+
         start = time.ticks_ms()
         last = None
         stale_count = 0
@@ -473,6 +514,40 @@ class AirSensor:
             return 0, 0, 0, False, "ens160 read failed"
         return last[0], last[1], last[2], False, "ens160 not ready"
 
+    def _read_scd41(self):
+        """
+        Best-effort SCD41 read.
+        Returns:
+          (co2_ppm, temp_c, rh, ready, reason)
+        """
+        if self._scd41 is None:
+            return None, None, None, False, "scd41 unavailable"
+
+        try:
+            self._scd41.ensure_started()
+        except Exception:
+            pass
+
+        try:
+            if not self._scd41.data_ready():
+                return None, None, None, False, "scd41 data not ready"
+        except Exception as e:
+            return None, None, None, False, "scd41 ready check failed: {}".format(e)
+
+        try:
+            co2, temp_c, rh = self._scd41.read_measurement()
+
+            if co2 is None or int(co2) <= 0:
+                return None, None, None, False, "scd41 co2 invalid"
+            if not (-40.0 <= float(temp_c) <= 85.0):
+                return None, None, None, False, "scd41 temp out of range"
+            if not (0.0 <= float(rh) <= 100.0):
+                return None, None, None, False, "scd41 humidity out of range"
+
+            return int(co2), float(temp_c), float(rh), True, ""
+        except Exception as e:
+            return None, None, None, False, "scd41 read failed: {}".format(e)
+
     # ----------------------------
     # Confidence inputs
     # ----------------------------
@@ -518,10 +593,11 @@ class AirSensor:
 
         # Read AHT21 (best effort)
         aht21_temp, aht21_rh = None, None
-        try:
-            aht21_temp, aht21_rh = self._aht.read()
-        except Exception:
-            pass
+        if self._aht is not None:
+            try:
+                aht21_temp, aht21_rh = self._aht.read()
+            except Exception:
+                pass
 
         # Read AHT10 (best effort)
         aht10_temp, aht10_rh = None, None
@@ -530,6 +606,14 @@ class AirSensor:
                 aht10_temp, aht10_rh = self._aht10.read()
             except Exception:
                 pass
+
+        # Read SCD41 (best effort)
+        scd41_co2_ppm, scd41_temp_c, scd41_rh = None, None, None
+        scd41_ready, scd41_reason = False, "scd41 unavailable"
+        try:
+            scd41_co2_ppm, scd41_temp_c, scd41_rh, scd41_ready, scd41_reason = self._read_scd41()
+        except Exception as e:
+            scd41_ready, scd41_reason = False, "scd41 exception: {}".format(e)
 
         # Choose primary env for ENS160 + UI
         temp_c, rh, env_src = self._select_env_values(
@@ -567,6 +651,13 @@ class AirSensor:
         if env_src != "none":
             source_tag = "{}+{}".format(source_tag, env_src)
 
+        combined_reason = reason
+        if not scd41_ready and scd41_reason:
+            if combined_reason:
+                combined_reason = "{} | {}".format(combined_reason, scd41_reason)
+            else:
+                combined_reason = scd41_reason
+
         r = AirReading(
             timestamp=self._now_timestamp(),
             temp_c=temp_c,
@@ -578,17 +669,23 @@ class AirSensor:
             source=source_tag,
             ready=ready,
             confidence=conf,
-            reason=reason,
+            reason=combined_reason,
             aht10_temp_c=aht10_temp,
             aht10_humidity=aht10_rh,
             aht21_temp_c=aht21_temp,
             aht21_humidity=aht21_rh,
+            scd41_co2_ppm=scd41_co2_ppm,
+            scd41_temp_c=scd41_temp_c,
+            scd41_humidity=scd41_rh,
         )
 
         if ready:
             self._last = r
             self._last_eco2_ppm = int(eco2_ppm)
             self._last_aqi = int(aqi)
+
+        if scd41_ready and scd41_co2_ppm is not None:
+            self._last_scd41_co2_ppm = int(scd41_co2_ppm)
 
         return r
 
@@ -619,7 +716,7 @@ class AirSensor:
 
         r = self._read_once(source=source, warmup_done=warmup_done)
 
-        if log and r and getattr(r, "ready", False):
+        if log and r:
             self._append_log(r)
 
         return r
@@ -636,7 +733,8 @@ class AirSensor:
                 with open(self.log_path, "w") as f:
                     f.write(
                         "timestamp,temp_c,humidity,eco2_ppm,tvoc_ppb,aqi,rating,source,ready,confidence,reason,"
-                        "aht10_temp_c,aht10_humidity,aht21_temp_c,aht21_humidity\n"
+                        "aht10_temp_c,aht10_humidity,aht21_temp_c,aht21_humidity,"
+                        "scd41_co2_ppm,scd41_temp_c,scd41_humidity\n"
                     )
             except Exception:
                 pass
@@ -645,10 +743,15 @@ class AirSensor:
         try:
             with open(self.log_path, "a") as f:
                 f.write(
-                    "{},{:.2f},{:.2f},{},{},{},{},{},{},{},{},{},{},{},{}\n".format(
-                        r.timestamp, r.temp_c, r.humidity,
-                        r.eco2_ppm, r.tvoc_ppb, r.aqi,
-                        r.rating, r.source,
+                    "{},{:.2f},{:.2f},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n".format(
+                        r.timestamp,
+                        r.temp_c,
+                        r.humidity,
+                        r.eco2_ppm,
+                        r.tvoc_ppb,
+                        r.aqi,
+                        r.rating,
+                        r.source,
                         int(1 if r.ready else 0),
                         (r.confidence if r.confidence is not None else ""),
                         r.reason,
@@ -656,6 +759,9 @@ class AirSensor:
                         ("" if r.aht10_humidity is None else "{:.2f}".format(float(r.aht10_humidity))),
                         ("" if r.aht21_temp_c is None else "{:.2f}".format(float(r.aht21_temp_c))),
                         ("" if r.aht21_humidity is None else "{:.2f}".format(float(r.aht21_humidity))),
+                        ("" if r.scd41_co2_ppm is None else "{}".format(int(r.scd41_co2_ppm))),
+                        ("" if r.scd41_temp_c is None else "{:.2f}".format(float(r.scd41_temp_c))),
+                        ("" if r.scd41_humidity is None else "{:.2f}".format(float(r.scd41_humidity))),
                     )
                 )
         except Exception:
@@ -684,10 +790,11 @@ class AirSensor:
 
             # AHT21 best effort
             aht21_temp, aht21_rh = None, None
-            try:
-                aht21_temp, aht21_rh = self._aht.read()
-            except Exception:
-                pass
+            if self._aht is not None:
+                try:
+                    aht21_temp, aht21_rh = self._aht.read()
+                except Exception:
+                    pass
 
             # AHT10 best effort
             aht10_temp, aht10_rh = None, None
@@ -697,6 +804,14 @@ class AirSensor:
                 except Exception:
                     pass
 
+            # SCD41 best effort
+            scd41_co2_ppm, scd41_temp_c, scd41_rh = None, None, None
+            scd41_ready, scd41_reason = False, "scd41 unavailable"
+            try:
+                scd41_co2_ppm, scd41_temp_c, scd41_rh, scd41_ready, scd41_reason = self._read_scd41()
+            except Exception as e:
+                scd41_ready, scd41_reason = False, "scd41 exception: {}".format(e)
+
             temp_c, rh, env_src = self._select_env_values(
                 aht21_temp, aht21_rh, aht10_temp, aht10_rh
             )
@@ -704,7 +819,6 @@ class AirSensor:
             ens_temp = temp_c if env_src != "none" else None
             ens_rh = rh if env_src != "none" else None
 
-            # Slightly less aggressive than before
             aqi, tvoc_ppb, eco2_ppm, ready, reason = self._read_ens160_with_retry(
                 ens_temp, ens_rh, timeout_ms=1800, step_ms=200
             )
@@ -732,6 +846,13 @@ class AirSensor:
             if env_src != "none":
                 source_tag = "{}+{}".format(source_tag, env_src)
 
+            combined_reason = reason
+            if not scd41_ready and scd41_reason:
+                if combined_reason:
+                    combined_reason = "{} | {}".format(combined_reason, scd41_reason)
+                else:
+                    combined_reason = scd41_reason
+
             r = AirReading(
                 timestamp=self._now_timestamp(),
                 temp_c=temp_c,
@@ -743,20 +864,25 @@ class AirSensor:
                 source=source_tag,
                 ready=ready,
                 confidence=conf,
-                reason=reason,
+                reason=combined_reason,
                 aht10_temp_c=aht10_temp,
                 aht10_humidity=aht10_rh,
                 aht21_temp_c=aht21_temp,
                 aht21_humidity=aht21_rh,
+                scd41_co2_ppm=scd41_co2_ppm,
+                scd41_temp_c=scd41_temp_c,
+                scd41_humidity=scd41_rh,
             )
 
             if ready:
                 self._last = r
                 self._last_eco2_ppm = int(eco2_ppm)
                 self._last_aqi = int(aqi)
-                return r
 
-            return self._last or r
+            if scd41_ready and scd41_co2_ppm is not None:
+                self._last_scd41_co2_ppm = int(scd41_co2_ppm)
+
+            return self._last or r if not ready else r
 
         except Exception:
             return self._last

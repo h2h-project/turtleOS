@@ -2,6 +2,8 @@
 # TVOC screen for AirBuddy
 # Pico / MicroPython safe
 
+import gc
+import time
 from src.ui.thermobar import ThermoBar
 from src.ui.glyphs import draw_face9
 
@@ -21,6 +23,8 @@ class TVOCScreen:
     """
 
     DISPLAY_DURATION = 4
+    REFRESH_MS = 4000
+    POLL_MS = 25
 
     def __init__(self, oled):
         self.oled = oled
@@ -108,6 +112,81 @@ class TVOCScreen:
         self._draw_bottom_labels()
 
         self.oled.oled.show()
+
+    def show_live(self, btn=None, get_reading=None, refresh_ms=None, tick_fn=None):
+        """
+        Live refresh screen — redraws every REFRESH_MS (default 4 s).
+
+        get_reading: callable() -> reading object with tvoc_ppb / confidence attributes.
+        Exit: single click only.
+        tick_fn: optional background callable (e.g. telemetry tick), called every 500 ms.
+        """
+        if refresh_ms is None:
+            refresh_ms = self.REFRESH_MS
+
+        if get_reading is None:
+            def get_reading():
+                return None
+
+        reading = None
+        next_refresh = 0
+        _tick_next = time.ticks_ms()
+        _tick_every = 500
+
+        while True:
+            now = time.ticks_ms()
+
+            if tick_fn is not None and time.ticks_diff(now, _tick_next) >= 0:
+                try:
+                    tick_fn()
+                except Exception:
+                    pass
+                _tick_next = time.ticks_add(now, _tick_every)
+
+            if time.ticks_diff(now, next_refresh) >= 0:
+                try:
+                    reading = get_reading()
+                except Exception:
+                    reading = None
+
+                gc.collect()
+                tvoc = int(getattr(reading, "tvoc_ppb", 0)) if reading else 0
+                ready = bool(getattr(reading, "ready", True)) if reading else False
+                not_ready = (not ready) or (tvoc <= 0)
+
+                conf = None
+                if reading is not None:
+                    try:
+                        conf = int(getattr(reading, "confidence"))
+                    except Exception:
+                        conf = None
+                if conf is None:
+                    conf_text = "XX%"
+                else:
+                    conf = 0 if conf < 0 else 100 if conf > 100 else conf
+                    conf_text = str(conf) + "%"
+
+                self.oled.oled.fill(0)
+                self._draw_header(tvoc, conf_text, not_ready)
+                self._draw_scale_numbers()
+                self._draw_bar(tvoc, not_ready)
+                self._draw_fixed_ticks()
+                self._draw_bottom_labels()
+                self.oled.oled.show()
+
+                next_refresh = time.ticks_add(now, int(refresh_ms))
+
+            action = None
+            if btn is not None:
+                try:
+                    action = btn.poll_action()
+                except Exception:
+                    action = None
+
+            if action:
+                return action
+
+            time.sleep_ms(self.POLL_MS)
 
     # -------------------------------------------------
     # Drawing helpers

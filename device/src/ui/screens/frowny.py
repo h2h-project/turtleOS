@@ -1,6 +1,6 @@
 # src/ui/screens/frowny.py — Reusable error/frowny-face screen (MicroPython safe)
 import time
-from src.ui.faces import draw_face
+from src.ui.glyphs import draw_face
 
 
 class FrownyScreen:

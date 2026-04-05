@@ -116,6 +116,11 @@ class AirBuddyButton:
                                 self._click_window_start_ms = now
                             self._click_count += 1
 
+                            # On the 3rd click, reset the window so there's a
+                            # full click_window_ms to land the 4th (quad) click.
+                            if self._click_count == 3:
+                                self._click_window_start_ms = now
+
                             if self._click_count >= 4:
                                 self._click_count = 0
                                 self._click_window_start_ms = None

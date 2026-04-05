@@ -36,10 +36,16 @@ GPS_H  = 6
 HEIGHT = 6   # height of the header strip
 
 # ---------------------------------------------------------------------------
-# Module-level API reachability cache.
-# Updated by set_api_ok(); persists across draw() calls.
+# Module-level state cache — mirrors set_api_ok() pattern.
 # ---------------------------------------------------------------------------
 _api_ok = False
+
+# _wifi_hw_enabled: True  = WiFi driver was initialised at boot (safe to probe live)
+#                   False = WiFi was disabled/skipped — do NOT touch network.WLAN()
+#                           because on ESP32 that triggers a driver init attempt
+#                           which OOMs on a tight post-boot heap.
+# Defaults to True so Pico W (always-on driver) works without explicit setup.
+_wifi_hw_enabled = True
 
 
 def set_api_ok(ok):
@@ -52,12 +58,25 @@ def set_api_ok(ok):
     _api_ok = bool(ok)
 
 
+def set_wifi_enabled(ok):
+    """
+    Tell the header whether the WiFi driver was actually started this boot.
+    Call set_wifi_enabled(False) when wifi_enabled=False in config so that
+    _probe_wifi() never touches network.WLAN() (which on ESP32 attempts a
+    driver init and spams OOM errors on every draw when heap is tight).
+    """
+    global _wifi_hw_enabled
+    _wifi_hw_enabled = bool(ok)
+
+
 def _probe_wifi():
     """
     Live WiFi check via MicroPython network module.
-    Reads a C-level flag — no socket or I/O overhead (~0.1 ms).
-    Returns False on Pico without WiFi hardware, import error, etc.
+    Short-circuits to False when the driver was never started (ESP32 safety).
+    On Pico W the driver is always alive so the live probe always runs.
     """
+    if not _wifi_hw_enabled:
+        return False
     try:
         import network
         wlan = network.WLAN(network.STA_IF)

@@ -15,7 +15,7 @@ class SleepScreen:
     def __init__(self, oled):
         self.oled = oled
 
-        self._top_pad = 5
+        self._top_pad = 0
 
         w = int(getattr(oled, "width", 128))
         h = int(getattr(oled, "height", 64))

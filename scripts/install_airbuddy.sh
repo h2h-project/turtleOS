@@ -317,6 +317,12 @@ echo "  Examples: 480 = HKT/PHT,  420 = WIB,  330 = IST,  0 = UTC"
 echo "  Negative: -300 = EST,  -360 = CST,  -480 = PST"
 TIMEZONE_OFFSET_MIN="$(prompt_default "Timezone offset in minutes (leave blank to skip)" "")"
 
+echo
+echo "Are you using a large OLED display or a small one?  They have slightly"
+echo "different pixel dimensions.  Small ones need a horizontal 2 pixel offset,"
+echo "large ones 0.  Please specify your OLED offset:"
+OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
+
 # ------------------------------------------------------------
 # Generate config.json
 # ------------------------------------------------------------
@@ -341,7 +347,8 @@ cat > "$TMP_CONFIG" <<EOF
   "api_base": "$(escape_json_string "$API_BASE")",
   "device_id": "$(escape_json_string "$DEVICE_ID")",
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
-  "timezone_offset_min": $TZ_JSON
+  "timezone_offset_min": $TZ_JSON,
+  "oled_col_offset": $OLED_COL_OFFSET
 }
 EOF
 

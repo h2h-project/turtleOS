@@ -1,6 +1,5 @@
 import time
-from src.ui.glyphs import draw_circle  # harmless import if you already use glyphs
-from src.ui.faces import draw_face     # uses your face helper (we'll call grin explicitly)
+from src.ui.glyphs import draw_circle, draw_face
 
 
 class SelfDestructScreen:
@@ -123,7 +122,7 @@ class SelfDestructScreen:
         # f_large is ~20px tall; center in 64px → y = (64-20)/2 = 22
         # -------------------------------------------------
         fb.fill(0)
-        self._center_text(o.f_large, "Boom!", 22)
+        self._center_text(o.f_arvo20, "BOOM!", 22)
         fb.show()
         self._wait_ms_abortable(btn, 2000, treat_any_click_as_abort=False)
         btn.reset()

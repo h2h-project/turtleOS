@@ -4,14 +4,6 @@ import framebuf
 import math
 from machine import Pin, I2C
 
-# AirBuddy font registry + ezFBfont writer
-from src import fonts
-from src.drivers.ezFBfont import ezFBfont
-
-# Screens
-from src.ui.waiting import WaitingScreen
-
-
 class SSD1306_I2C(framebuf.FrameBuffer):
     """
     Minimal SSD1306/SH1106-compatible I2C framebuffer driver (128x64).
@@ -126,7 +118,14 @@ class OLED:
             from src.hal.board import init_i2c
             self.i2c = init_i2c()
 
+        # Hardware probe — raises OSError(19) if no OLED on the bus.
+        # Imports below are intentionally placed AFTER this line so that 84 KB of
+        # font bitmap data is never loaded when running headless (no OLED hardware).
         self.oled = SSD1306_I2C(width, height, self.i2c, addr=addr, col_offset=col_offset)
+
+        from src import fonts
+        from src.drivers.ezFBfont import ezFBfont
+        from src.ui.waiting import WaitingScreen
 
         # --- ezFBfont writers bound to the framebuffer device ---
         self.f_vsmall = ezFBfont(self.oled, fonts.VSMALL, fg=1, bg=0, tkey=-1)
@@ -154,7 +153,7 @@ class OLED:
 
     def _center_x(self, writer, text):
         w, _ = self._text_size(writer, text)
-        return max(0, (self.width - w) // 12)
+        return max(0, (self.width - w) // 2)
 
     def draw_centered(self, writer, text, y):
         x = self._center_x(writer, text)
@@ -171,7 +170,7 @@ class OLED:
     # ----------------------------
     # Screens
     # ----------------------------
-    def show_waiting(self, line="Know your air"):
+    def show_waiting(self, line="Know thy air"):
         self.waiting_screen.render(self, line=line, animate=True, period_ms=1000)
 
     def show_spinner_frame(self, frame):

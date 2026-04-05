@@ -23,8 +23,6 @@ def btn_pin():
     return BTN_PIN
 
 
-
-
 # ------------------------------------------------------------
 # I2C (OLED + DS3231)
 # ------------------------------------------------------------
@@ -67,3 +65,34 @@ def gps_pins():
     Returns (uart_id, baud, tx_pin, rx_pin)
     """
     return (GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN)
+
+
+# ------------------------------------------------------------
+# Power source detection
+# ------------------------------------------------------------
+# On Pico / Pico W, VBUS detect is commonly exposed on GP24.
+# This allows us to tell whether USB 5V is present.
+#
+# Important:
+# - True means USB/VBUS is present
+# - False means USB/VBUS is not detected
+# - This does NOT fully describe charger/battery path behavior;
+#   it only tells us whether USB power is present
+# ------------------------------------------------------------
+
+USB_DETECT_PIN = 24
+USB_DETECT_ACTIVE = 1
+
+def usb_power_present():
+    """
+    Return True if USB/VBUS power is present on the Pico board.
+
+    Uses GP24 as VBUS detect, which is standard for Pico-class boards.
+    Returns False on any read/setup failure.
+    """
+    try:
+        pin = Pin(USB_DETECT_PIN, Pin.IN)
+        val = pin.value()
+        return bool(val == USB_DETECT_ACTIVE)
+    except Exception:
+        return False

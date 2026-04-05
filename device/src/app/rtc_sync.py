@@ -305,17 +305,23 @@ def sync_system_rtc_from_ds3231(i2c, min_year=2020, tz_offset_s=0):
         except Exception:
             min_year = 2020
 
+        # MicroPython RP2040 time.mktime() uses epoch 2000-01-01; Unix epoch is 1970-01-01.
+        # Add 946 684 800 s (30 years) so rtc["unix"] is a real Unix timestamp.
+        _MP_EPOCH_OFFSET = 946_684_800
+
         if year < min_year:
             out["reason"] = "year_below_min"
             out["dt_utc"] = (year, month, day, wd0, hour, minute, sec)
-            out["unix"] = _safe_mktime((year, month, day, hour, minute, sec, 0, 0))
+            mp_s = _safe_mktime((year, month, day, hour, minute, sec, 0, 0))
+            out["unix"] = (mp_s + _MP_EPOCH_OFFSET) if mp_s is not None else None
             out["synced"] = False
             return out
 
         # DS3231 is accepted as UTC: set system RTC directly
         RTC().datetime((year, month, day, wd0, hour, minute, sec, 0))
         out["dt_utc"] = (year, month, day, wd0, hour, minute, sec)
-        out["unix"] = _safe_mktime((year, month, day, hour, minute, sec, 0, 0))
+        mp_s = _safe_mktime((year, month, day, hour, minute, sec, 0, 0))
+        out["unix"] = (mp_s + _MP_EPOCH_OFFSET) if mp_s is not None else None
         out["synced"] = True
         out["reason"] = None
         return out
