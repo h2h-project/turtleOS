@@ -720,3 +720,84 @@ def draw_face(fb, width, height, mood, *, right_edge=True, fill_height_ratio=0.9
             cx + int(r * 0.35), cy + 8,
             thickness=2, c=1
         )
+
+
+# ------------------------------------------------------------
+# Vertical battery glyph with horizontal fill bands
+# ------------------------------------------------------------
+
+def battery_status(volts):
+    """Map bus voltage (V) to a charge-level string."""
+    if volts is None:
+        return "critical"
+    if volts >= 4.05:
+        return "full"
+    elif volts >= 3.90:
+        return "high"
+    elif volts >= 3.75:
+        return "medium"
+    elif volts >= 3.55:
+        return "low"
+    else:
+        return "critical"
+
+
+_BATTERY_LEVEL_BANDS = {
+    "full":     5,
+    "high":     4,
+    "medium":   3,
+    "low":      2,
+    "critical": 1,
+}
+
+
+def draw_battery_v(fb, x, y, bands_filled=5, total_bands=5,
+                   w=22, h=34, nub_w=8, nub_h=3, color=1):
+    """
+    Vertical battery glyph with `total_bands` horizontal bands.
+    (x, y)       = top-left of the nub (positive terminal at the top).
+    w, h         = body width and height (not counting the nub).
+    bands_filled = how many bands to fill solid, counted from the bottom.
+    Empty bands are drawn as hollow outlines.
+    """
+    x = int(x); y = int(y)
+    w = int(w); h = int(h)
+    nub_w = int(nub_w); nub_h = int(nub_h)
+    total_bands = max(1, int(total_bands))
+    bands_filled = max(0, min(int(bands_filled), total_bands))
+
+    # Nub — positive terminal, centred on body width
+    nub_x = x + (w - nub_w) // 2
+    _fill_rect(fb, nub_x, y, nub_w, nub_h, color)
+
+    # Body outline
+    body_y = y + nub_h
+    _hline(fb, x, body_y,         w, color)   # top
+    _hline(fb, x, body_y + h - 1, w, color)   # bottom
+    _vline(fb, x,         body_y, h, color)   # left
+    _vline(fb, x + w - 1, body_y, h, color)   # right
+
+    # Band area (1 px inside the border on each side)
+    inner_x = x + 2
+    inner_w = w - 4
+    inner_y = body_y + 1
+    inner_h = h - 2
+
+    padding = 1   # top/bottom padding inside the body before first/last band
+    gap     = 1   # gap between bands
+
+    avail  = inner_h - 2 * padding - (total_bands - 1) * gap
+    band_h = max(2, avail // total_bands)
+
+    for band_idx in range(total_bands):
+        # band_idx 0 = bottom band, total_bands-1 = top band
+        visual_pos = total_bands - 1 - band_idx
+        band_y = inner_y + padding + visual_pos * (band_h + gap)
+        if band_idx < bands_filled:
+            _fill_rect(fb, inner_x, band_y, inner_w, band_h, color)
+        else:
+            # hollow outline for unfilled bands
+            _hline(fb, inner_x, band_y,             inner_w, color)
+            _hline(fb, inner_x, band_y + band_h - 1, inner_w, color)
+            _vline(fb, inner_x,             band_y, band_h, color)
+            _vline(fb, inner_x + inner_w - 1, band_y, band_h, color)

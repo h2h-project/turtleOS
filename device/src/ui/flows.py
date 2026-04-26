@@ -389,7 +389,12 @@ def connectivity_carousel(
     online_scr = get_screen("online")
     if online_scr and hasattr(online_scr, "show_live"):
         try:
-            a = online_scr.show_live(btn, tick_fn=tick_fn)
+            a = online_scr.show_live(
+                btn,
+                wifi_ok=wifi_ok,
+                gps_state=status.get("gps_on") if isinstance(status, dict) else None,
+                tick_fn=tick_fn,
+            )
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)
     else:
@@ -461,7 +466,15 @@ def connectivity_carousel(
     device_scr = get_screen("device")
     if device_scr and hasattr(device_scr, "show_live"):
         try:
+            # Show screen immediately with hollow API, then fetch, then update icon
+            if hasattr(device_scr, "show_loading"):
+                device_scr.show_loading()
             api_info = _fetch_device_info(cfg)
+            try:
+                from src.ui import connection_header as _ch_dev
+                _ch_dev.set_api_ok(bool(api_info))
+            except Exception:
+                pass
             a = device_scr.show_live(btn=btn, api_info=api_info, tick_fn=tick_fn)
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)

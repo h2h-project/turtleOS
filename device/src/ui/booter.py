@@ -39,8 +39,8 @@ class Booter:
 
         # Version label content
         self.brand = "airOS"
-        self.version_num = "2.1.36"
-        self.version = "airOS version 2.1.35"  # used for serial logging
+        self.version_num = "2.1.41"
+        self.version = "airOS version 2.1.41"  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None
@@ -139,7 +139,7 @@ class Booter:
         if y0 < 0:
             y0 = 0
 
-        ver_y = y0
+        ver_y = y0 + 1
         bar_y = y0 + ver_h + gap_ver_to_bar
         footer_y = bar_y + bar_h + gap_bar_to_footer
 
@@ -180,7 +180,7 @@ class Booter:
         x = max(0, (w - total_w) // 2)
 
         # Vertically offset version number: centred against brand + 4px lower
-        ver_y_off = max(0, (int(bh) - int(vh)) // 2) + 4
+        ver_y_off = max(0, (int(bh) - int(vh)) // 2) + 2
 
         if self.f_brand:
             try:

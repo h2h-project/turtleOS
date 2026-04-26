@@ -363,6 +363,10 @@ class WaitingScreen:
             self._gps_on = _to_gps_state(ret.get("gps_state"))
         elif "gps_on" in ret:
             self._gps_on = _to_gps_state(ret.get("gps_on"))
+        try:
+            connection_header.set_gps_state(self._gps_on)
+        except Exception:
+            pass
 
         if "api_ok" in ret:
             self._api_ok = bool(ret.get("api_ok"))

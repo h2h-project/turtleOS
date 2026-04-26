@@ -70,8 +70,11 @@ class TelemetryClient:
     # Timestamp Formatter (Human Readable)
     # --------------------------------------------------
     def _fmt_epoch(self, epoch_s):
+        # epoch_s is a Unix (1970-based) timestamp; time.localtime() on ESP32
+        # MicroPython uses the 2000-01-01 epoch, so subtract the offset first.
+        _MP_EPOCH_OFFSET = 946_684_800
         try:
-            t = time.localtime(int(epoch_s))
+            t = time.localtime(int(epoch_s) - _MP_EPOCH_OFFSET)
             return "%02d/%02d/%02d %02d:%02d:%02d" % (
                 t[2], t[1], t[0] % 100,
                 t[3], t[4], t[5]

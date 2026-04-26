@@ -1,6 +1,6 @@
 # AirBuddy 2.1 — Developer Guide
 
-AirBuddy is a MicroPython air quality monitor that runs on a **Raspberry Pi Pico (RP2040)** or **ESP32**. It reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair, displays readings on a 128×64 OLED, and periodically posts telemetry to a REST API at `http://air.earthen.io` (configurable).
+AirBuddy is a MicroPython air quality monitor that runs on a **Raspberry Pi Pico (RP2040)**, **ESP32**, or **ESP32-S3** (current primary target: ESP32-S3-N16-R8). It reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair, displays readings on a 128×64 OLED, and periodically posts telemetry to a REST API at `http://air.earthen.io` (configurable).
 
 ---
 
@@ -23,10 +23,11 @@ device/               ← everything deployed to the microcontroller
     │   ├── rtc_sync.py
     │   └── sysinfo.py
     ├── hal/
-    │   ├── platform.py           ← detects "pico" or "esp32"
-    │   ├── board.py              ← facade: delegates to pico or esp32 board
+    │   ├── platform.py           ← detects "pico", "esp32", or "unknown"
+    │   ├── board.py              ← facade: delegates to the correct board module
     │   ├── board_pico.py         ← Pico pin constants + init helpers
-    │   └── board_esp32.py        ← ESP32 pin constants + init helpers
+    │   ├── board_esp32.py        ← ESP32 pin constants + init helpers
+    │   └── board_esp32_s3.py     ← ESP32-S3 pin constants + init helpers (current target)
     ├── input/
     │   └── button.py             ← AirBuddyButton (debounce, multi-click, hold)
     ├── ui/
@@ -97,27 +98,42 @@ Hold the button **at power-on for 2 seconds** → boot halts and drops to the Mi
 
 ---
 
-## Pico vs ESP32 differences
+## Board pin maps
 
 All board-specific code lives in `src/hal/`. Never hardcode pins outside these files.
 
-| | Raspberry Pi Pico | ESP32 |
-|---|---|---|
-| `sys.platform` | `"rp2"` | `"esp32"` |
-| Button GPIO | GP15 | GPIO4 |
-| Button LED | GP18 | GPIO18 |
-| I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 |
-| GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 |
-| WiFi | Pico W only (via `net_caps`) | Built-in |
-| Heap concern | Moderate | High — WiFi PHY alloc fragments heap aggressively |
+| | Raspberry Pi Pico | ESP32 | ESP32-S3-N16-R8 | XIAO ESP32-S3 |
+|---|---|---|---|---|
+| `sys.platform` | `"rp2"` | `"esp32"` | `"esp32"` | `"esp32"` |
+| `platform_tag()` | `"pico"` | `"esp32"` | `"esp32s3"` | `"xiao_esp32s3"` |
+| HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | `board_xiao_esp32_s3.py` |
+| Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
+| Button LED | GP18 | GPIO18 | GPIO48 | None |
+| I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=9, SDA=6, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
+| GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
+| WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
+| USB power detect | GP24 (VBUS) | board-specific | Not available — returns `False` | Not available — returns `False` |
+| Heap concern | Moderate | High | High — same WiFi PHY fragmentation risk as ESP32 | High — same WiFi PHY fragmentation risk |
+
+**I2C devices on the shared bus** (addresses are the same across all ESP32-S3 variants):
+
+| Device | I2C Address |
+|--------|------------|
+| AHT10 / AHT21 (temp/humidity) | 0x38 |
+| OLED (SSD1306/SH1106) | 0x3C |
+| INA219 (battery/current monitor) | 0x40 |
+| SCD41 (CO2 — alternate sensor) | 0x62 |
+| DS3231 (RTC) | 0x68 |
 
 **Platform detection** (`src/hal/platform.py`):
 ```python
 from src.hal.platform import platform_tag
-tag = platform_tag()   # "pico" | "esp32" | "unknown"
+tag = platform_tag()   # "pico" | "esp32" | "esp32s3" | "xiao_esp32s3" | "unknown"
 ```
 
-**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`. Always import from `src.hal.board`, never from the platform-specific files directly.
+> **Note:** `sys.platform` returns `"esp32"` for all ESP32 variants. `platform.py` resolves this by checking `uos.uname().machine` first: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. If `uname` is unavailable (very old firmware), the fallback returns `"esp32"` for all ESP32 targets, which would load the wrong pin map.
+
+**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`. Always import from `src.hal.board`, never from the platform-specific files directly.
 
 ---
 
@@ -381,6 +397,12 @@ The `timezone_offset_min` config key is applied only at display time in `TimeScr
 ### 11. `telemetry_enabled` is shared between Online and Telemetry screens
 Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-click on either screen toggles the same setting. Reload config after toggling to stay in sync.
 
+### 12. ESP32 platform detection via `uos.uname().machine`
+`sys.platform` returns `"esp32"` on all ESP32 variants (plain ESP32, ESP32-S3, and XIAO ESP32-S3). `platform_tag()` resolves this by checking `uos.uname().machine` in priority order: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"esp32s3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings. If `uname` is unavailable (old firmware), the fallback returns `"esp32"` for all ESP32 targets, loading the wrong pin map.
+
+### 13. ESP32-S3 USB/VBUS power detection
+The ESP32-S3-N16-R8 has no standard VBUS-detect GPIO (unlike Pico's GP24). `usb_power_present()` in `board_esp32_s3.py` returns `False` by default. Battery monitoring will be handled by the INA219 sensor over I2C (0x40) — wire it on the shared bus when ready and set `USB_DETECT_PIN` if you also want explicit VBUS detection.
+
 ---
 
 ## Key file locations at a glance
@@ -394,6 +416,8 @@ Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-cl
 | HAL facade | `device/src/hal/board.py` |
 | Pico pin map | `device/src/hal/board_pico.py` |
 | ESP32 pin map | `device/src/hal/board_esp32.py` |
+| ESP32-S3 pin map | `device/src/hal/board_esp32_s3.py` |
+| XIAO ESP32-S3 pin map | `device/src/hal/board_xiao_esp32_s3.py` |
 | Button handler | `device/src/input/button.py` |
 | Screen carousels | `device/src/ui/flows.py` |
 | OLED wrapper | `device/src/ui/oled.py` |

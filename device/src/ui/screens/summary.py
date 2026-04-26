@@ -26,7 +26,10 @@ class SummaryScreen:
         tvoc = int(getattr(r, "tvoc_ppb", 0) or 0)
         ready = bool(getattr(r, "ready", True))
 
-        if (not ready) or (ppm <= 0):
+        # `ready` reflects ENS160 readiness only. If SCD41 has a valid CO2
+        # reading, it is independently reliable — don't fall back to "poor".
+        scd41_ok = scd41_co2 > 0
+        if (not ready and not scd41_ok) or (ppm <= 0):
             return 2  # "poor" default when not ready
 
         # --- CO2 severity (0..4) ---

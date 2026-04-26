@@ -46,10 +46,12 @@ class TelemetryState:
     MemoryError at import-time.
     """
 
-    def __init__(self, air_sensor, rtc_info_getter, wifi_manager):
+    def __init__(self, air_sensor, rtc_info_getter, wifi_manager, gps=None, battery_sensor=None):
         self.air_sensor = air_sensor
         self.rtc_info_getter = rtc_info_getter
         self.wifi_manager = wifi_manager
+        self.gps = gps
+        self.battery_sensor = battery_sensor
 
         self.scheduler = None  # created lazily
 
@@ -70,6 +72,8 @@ class TelemetryState:
                 air_sensor=self.air_sensor,
                 rtc_info_getter=self.rtc_info_getter,
                 wifi_manager=self.wifi_manager,
+                gps=self.gps,
+                battery_sensor=self.battery_sensor,
             )
             return True
         except MemoryError:

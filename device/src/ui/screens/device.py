@@ -146,10 +146,10 @@ class DeviceScreen:
             except Exception:
                 pass
 
-        # connectivity icons top-right at y=1
+        # connectivity icons top-right at y=1 — GPS/WiFi: previous; API: cache
         if _ch:
             try:
-                _ch.draw(fb, ow, gps_state=GPS_NONE, icon_y=1)
+                _ch.draw(fb, ow, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
@@ -183,6 +183,18 @@ class DeviceScreen:
             gc.collect()
         except Exception:
             pass
+
+    # -------------------------------------------------
+    # SHOW LOADING (hollow API — call before the fetch)
+    # -------------------------------------------------
+    def show_loading(self):
+        """Render immediately with API icon hollow, before the device fetch runs."""
+        if _ch:
+            try:
+                _ch.set_api_ok(False)
+            except Exception:
+                pass
+        self._render({})
 
     # -------------------------------------------------
     # SHOW (brief)

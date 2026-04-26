@@ -27,7 +27,7 @@ class SCD4X:
     _CMD_READ_MEASUREMENT = 0xEC05
     _CMD_GET_SERIAL = 0x3682
 
-    def __init__(self, i2c, addr=_DEFAULT_ADDR):
+    def __init__(self, i2c, addr=0x62):
         self.i2c = i2c
         self.addr = int(addr)
         self._started = False

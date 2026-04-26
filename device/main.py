@@ -96,9 +96,19 @@ def init_oled():
             print("[BOOT] OLED: not found — running headless")
         else:
             print("[BOOT] OLED: init failed:", repr(e))
+            try:
+                import sys
+                sys.print_exception(e)
+            except Exception:
+                pass
         return None
     except Exception as e:
         print("[BOOT] OLED: init failed:", repr(e))
+        try:
+            import sys
+            sys.print_exception(e)
+        except Exception:
+            pass
         return None
 
 
@@ -332,18 +342,18 @@ def gps_boot_check(cfg):
             info["detected"] = False
             return True, "NOT DETECTED", info
 
+        # Presence-only check: just wait for any bytes on the UART — no read needed.
+        # Max 5 seconds. Avoids uart.read(n) blocking on inter-character timeouts.
         start = time.ticks_ms()
         seen = False
-        while time.ticks_diff(time.ticks_ms(), start) < 1200:
+        while time.ticks_diff(time.ticks_ms(), start) < 5000:
             try:
-                if gps.any():
-                    b = gps.read(64) or b""
-                    if b:
-                        seen = True
-                        break
+                if gps.uart.any():
+                    seen = True
+                    break
             except Exception:
                 pass
-            time.sleep_ms(50)
+            time.sleep_ms(100)
 
         info["detected"] = bool(seen)
         info["ok"] = bool(seen)
@@ -399,9 +409,14 @@ def _preload_screens(oled):
     Also pre-warm font metric paths on each writer.
     Both operations must complete before step_wifi() runs.
 
-    ESP32 ONLY — on Pico there is no WiFi PHY to fragment the heap, so
-    preloading all these modules upfront just wastes RAM and causes the
-    AirSensor allocation to fail.  Call _gc() instead on Pico.
+    Required on ESP32 AND Pico W when wifi_enabled=True.
+    On ESP32: the WiFi PHY allocates ~16 KB of C-heap rx buffers; loading
+    module bytecodes after that causes fragmentation-induced MemoryErrors.
+    On Pico W: the CYW43 driver allocates Python-heap memory on connect;
+    post-WiFi the heap is fragmented enough that even a 1280-byte bytecode
+    (e.g. src.input.button) fails with MemoryError.
+    Only skip when WiFi is disabled — then no PHY allocation occurs and the
+    RAM cost of loading ~52 KB of bytecodes upfront is pure waste.
     """
     _gc()
     try:
@@ -473,23 +488,28 @@ def _preload_screens(oled):
     _gc()
 
 
-# _preload_screens is ESP32-only: on Pico/RP2040 there is no WiFi PHY
-# allocation that fragments the heap, so loading ~15 modules upfront
-# burns most of the available RAM before AirSensor gets a chance.
+# Preload screen modules before WiFi runs on any WiFi-capable platform.
+# Both ESP32 and Pico W suffer post-WiFi heap fragmentation that prevents
+# large module-bytecode allocations (see _preload_screens docstring).
 #
 # IMPORTANT: Only preload when WiFi will actually run.
-# The preload exists solely to protect against post-WiFi-PHY heap fragmentation.
-# If wifi_enabled=False, the PHY never allocates, so preloading 17 modules
-# is pure cost — it exhausts the heap and starves AirSensor init.
+# If wifi_enabled=False, the PHY never allocates, so preloading ~52 KB of
+# bytecodes is pure cost — it exhausts the heap and starves AirSensor init.
 # Load config early (before the usual boot step) so we can make this decision.
 try:
     from src.hal.platform import platform_tag as _platform_tag
-    _is_esp32 = (_platform_tag() == "esp32")
+    _pt = _platform_tag()
+    _is_esp32 = (_pt == "esp32")
+    _is_pico  = (_pt == "pico")
+    print("[BOOT] Board: {}".format(_pt))
 except Exception:
+    _pt = "unknown"
     _is_esp32 = False  # safe default: skip preload
+    _is_pico  = False
+    print("[BOOT] Board: unknown")
 
 _preload_needed = False
-if _is_esp32:
+if _is_esp32 or _is_pico:
     try:
         _early_cfg = load_cfg_dict()
         # Preload only if WiFi is enabled (or config unreadable — safe default)
@@ -497,15 +517,22 @@ if _is_esp32:
     except Exception:
         _preload_needed = True  # safe default: preload when uncertain
 
-# ESP32: Pre-activate the WiFi PHY *before* preloading fragments the C heap.
-# wlan.active(True) allocates ~16 KB of static rx buffers from C heap.
+# Pre-activate the WiFi PHY *before* preloading fragments the heap.
+#
+# ESP32: wlan.active(True) allocates ~16 KB of static rx buffers from C heap.
 # After _preload_screens() those buffers can't fit contiguously → only 3 of 10
 # succeed → "Expected to init 10 rx buffer, actual is 3" → broken driver state.
 # Activating the radio here (C heap still unfragmented) gives WiFi all 10 buffers.
+#
+# Pico W / CYW43: creating WLAN(STA_IF) initialises the CYW43 driver and
+# allocates its Python-heap working memory.  Doing this before preloading
+# ensures those allocations land in the clean, unfragmented heap; after
+# preloading, only the much-smaller per-connection state is allocated.
+#
 # wifi_manager.connect() is patched to skip active(False)→active(True) when
 # the radio is already up, so this allocation is preserved through boot.
 _wlan_pre = None
-if _is_esp32 and _preload_needed:
+if (_is_esp32 or _is_pico) and _preload_needed:
     _net_pre = None
     try:
         import network as _net_pre
@@ -513,28 +540,25 @@ if _is_esp32 and _preload_needed:
         _wlan_pre.active(True)
         print("[BOOT] WiFi PHY pre-activated")
         # NOTE: do NOT call _wlan_pre.connect() here.
-        # Starting a connection early puts the ESP32 WiFi task into an active
-        # association loop that holds an internal mutex.  When step_wifi() later
-        # calls network.WLAN(STA_IF) or wlan.status(), those calls try to acquire
-        # the same mutex and deadlock indefinitely.  The PHY activation above is
-        # all that is needed: it allocates the WiFi rx buffers from the clean C
-        # heap before _preload_screens() fragments it.  step_wifi() connects from
-        # idle state, which is safe.
+        # On ESP32: connecting early deadlocks step_wifi() via WiFi-task mutex.
+        # On Pico:  connecting early is safe but unnecessary — step_wifi() will
+        # connect cleanly from IDLE state once the radio is already active.
     except Exception as _pre_e:
         print("[BOOT] WiFi PHY pre-activate failed:", repr(_pre_e))
         _wlan_pre = None
-        # Pre-activation failed — WiFi C driver is in a broken state.
-        # Skip preload: its only purpose is to protect post-WiFi heap; if WiFi
-        # can't init, preloading 52 KB of bytecode wastes RAM for no benefit.
+        # Pre-activation failed — skip preload (its only purpose is to protect
+        # against post-WiFi heap fragmentation; without WiFi there is no benefit).
         _preload_needed = False
-        # Kill the half-started C WiFi task so it stops retrying and spamming
+        # ESP32 only: kill the half-started C WiFi task to stop it spamming
         # "esp_netif_new_api / nvs alloc out of memory" errors after boot.
-        if _net_pre is not None:
+        # Pico W: never call deinit() — it permanently destroys the CYW43 driver
+        # and prevents any reconnection attempt later in the session.
+        if _is_esp32 and _net_pre is not None:
             try:
                 _net_pre.deinit()
             except Exception:
                 pass
-    # Drop the Python reference — the C radio stays active (idle) when pre-activated.
+    # Drop the Python reference — the C/CYW43 radio stays active (idle).
     _wlan_pre = None
     _net_pre = None
 
@@ -642,10 +666,12 @@ def step_wifi():
         ok, ip, status = wifi.connect(
             cfg.get("wifi_ssid", ""),
             cfg.get("wifi_password", ""),
-            # ESP32: RTCWDT fires at ~15s when WiFi task starves the IDLE task.
-            # Keep timeout under that threshold so boot always completes cleanly.
+            # ESP32/ESP32-S3: RTCWDT fires at ~15s — stay under that threshold.
+            # Pico W / CYW43: no RTCWDT constraint; allow one retry because the
+            # CYW43 driver often needs a second attempt on first cold-boot
+            # (first attempt times out at 12s; retry succeeds cleanly).
             timeout_s=12,
-            retry=0,
+            retry=1 if _is_pico else 0,
             tick_cb=_wifi_tick
         )
 
@@ -719,6 +745,42 @@ def step_rtc():
         return True, "NOT DETECTED"
 
     if info.get("synced"):
+        dt = info.get("dt_utc")
+        if dt and len(dt) >= 7:
+            y, mo, d, _wd, h, mi, s = dt[0], dt[1], dt[2], dt[3], dt[4], dt[5], dt[6]
+            utc_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(y, mo, d, h, mi, s)
+
+            # Prefer tz_offset_min from API response, fall back to config
+            tz_min = None
+            try:
+                if isinstance(api_boot, dict):
+                    tz_min = api_boot.get("tz_offset_min")
+            except Exception:
+                pass
+            if tz_min is None and cfg:
+                try:
+                    tz_min = cfg.get("timezone_offset_min")
+                except Exception:
+                    pass
+
+            if tz_min is not None:
+                try:
+                    tz_min = int(tz_min)
+                    total_min = h * 60 + mi + tz_min
+                    lh = (total_min // 60) % 24
+                    lmi = total_min % 60
+                    tz_sign = "+" if tz_min >= 0 else "-"
+                    tz_abs = abs(tz_min)
+                    tz_hh = tz_abs // 60
+                    tz_mm = tz_abs % 60
+                    tz_label = "UTC{}{}".format(tz_sign, tz_hh) if tz_mm == 0 else "UTC{}{}:{:02d}".format(tz_sign, tz_hh, tz_mm)
+                    print("[BOOT] RTC time: {} / {:02d}:{:02d}:{:02d} local ({})".format(
+                        utc_str, lh, lmi, s, tz_label))
+                except Exception:
+                    print("[BOOT] RTC time:", utc_str)
+            else:
+                print("[BOOT] RTC time:", utc_str)
+
         return True, "OK"
 
     return True, "SYNC FAIL"

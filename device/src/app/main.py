@@ -112,6 +112,16 @@ def run(
         from machine import I2C, Pin
         i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
 
+    _ina_dev = None
+    try:
+        from src.drivers.ina219 import INA219 as _INA219
+        _gc()
+        _ina_dev = _INA219(i2c, auto_init=True)
+        if not _ina_dev.is_present:
+            _ina_dev = None
+    except Exception:
+        _ina_dev = None
+
     rtc = rtc_info if isinstance(rtc_info, dict) else {}
 
     # ------------------------------------------------------------
@@ -137,6 +147,10 @@ def run(
         gps = None
 
     from src.ui.connection_header import GPS_NONE, GPS_INIT, GPS_FIXED
+    try:
+        from src.ui import connection_header as _ch_mod
+    except Exception:
+        _ch_mod = None
     gps_state = GPS_NONE
 
     def _probe_gps():
@@ -144,13 +158,13 @@ def run(
         if gps is None:
             gps_state = GPS_NONE
             return
-        # Hardware present — assume INIT until we see UART data
+        # Hardware present — check UART buffer for incoming bytes.
+        # Ublox6GPS exposes gps.uart, not gps.any() directly.
         gps_state = GPS_INIT
         try:
-            if hasattr(gps, "any") and gps.any():
-                data = gps.read(32) or b""
-                if data:
-                    gps_state = GPS_FIXED
+            uart = getattr(gps, "uart", None)
+            if uart is not None and uart.any():
+                gps_state = GPS_FIXED
         except Exception:
             pass
 
@@ -255,6 +269,8 @@ def run(
                 air_sensor=air,
                 rtc_info_getter=_get_rtc_fresh,
                 wifi_manager=wifi,
+                gps=gps,
+                battery_sensor=_ina_dev,
             )
             telemetry_started = True
             print("[TELEMETRY] Started.")
@@ -422,7 +438,7 @@ def run(
 
             elif name == "battery":
                 from src.ui.screens.battery import BatteryScreen
-                screens[name] = BatteryScreen(oled, i2c=i2c)
+                screens[name] = BatteryScreen(oled, i2c=i2c, ina=_ina_dev)
 
             elif name == "sleep":
                 from src.ui.screens.sleep import SleepScreen
@@ -489,6 +505,11 @@ def run(
                 status["gps_on"] = GPS_NONE
         except Exception:
             status["gps_on"] = GPS_NONE
+        if _ch_mod:
+            try:
+                _ch_mod.set_gps_state(status["gps_on"])
+            except Exception:
+                pass
 
         # --- RTC temp refresh (throttled internally to ~70s) ---
         if _refresh_rtc_temp is not None:

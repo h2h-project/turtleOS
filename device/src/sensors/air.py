@@ -130,18 +130,17 @@ class AHT21:
         return False
 
     def _init_sensor(self):
-        # Best effort reset/init
+        # Soft reset (best-effort — no sensor present means both calls NACK)
         try:
             self.i2c.writeto(self.addr, self._CMD_SOFTRESET)
             time.sleep_ms(25)
         except Exception:
             pass
 
-        try:
-            self.i2c.writeto(self.addr, self._CMD_INIT)
-            time.sleep_ms(10)
-        except Exception:
-            pass
+        # Init command — if this NACKs the device is not on the bus; raise so
+        # the caller (AirSensor._ensure_hw) can set self._aht = None.
+        self.i2c.writeto(self.addr, self._CMD_INIT)
+        time.sleep_ms(10)
 
         self._wait_ready(200)
         self._inited = True
@@ -322,6 +321,11 @@ class AirSensor:
         self._last_eco2_ppm = None
         self._last_aqi = None
         self._last_scd41_co2_ppm = None
+
+        # SCD41 staleness / freeze detection
+        self._scd41_stale_count = 0
+        self._scd41_prev_co2 = None
+        self._scd41_prev_temp = None
 
         self._log_inited = False
 
@@ -544,7 +548,50 @@ class AirSensor:
             if not (0.0 <= float(rh) <= 100.0):
                 return None, None, None, False, "scd41 humidity out of range"
 
-            return int(co2), float(temp_c), float(rh), True, ""
+            co2_int = int(co2)
+            temp_f = float(temp_c)
+            rh_f = float(rh)
+
+            # Freeze detection: temp < 5 °C AND rh < 1 % is physically impossible
+            # indoors and indicates the sensor is returning a frozen/zeroed frame.
+            # Restart immediately and discard the reading.
+            if temp_f < 5.0 and rh_f < 1.0:
+                try:
+                    self._scd41.stop_periodic_measurement()
+                    self._scd41.start_periodic_measurement()
+                except Exception:
+                    pass
+                self._scd41_stale_count = 0
+                self._scd41_prev_co2 = None
+                self._scd41_prev_temp = None
+                return None, None, None, False, "scd41 restarted (frozen)"
+
+            # Staleness detection: same CO2 and temp returned 3+ times in a row
+            # means the sensor's data-ready flag is not clearing between reads.
+            same = (
+                self._scd41_prev_co2 is not None
+                and co2_int == self._scd41_prev_co2
+                and abs(temp_f - self._scd41_prev_temp) < 0.1
+            )
+            if same:
+                self._scd41_stale_count += 1
+            else:
+                self._scd41_stale_count = 0
+            self._scd41_prev_co2 = co2_int
+            self._scd41_prev_temp = temp_f
+
+            if self._scd41_stale_count >= 3:
+                try:
+                    self._scd41.stop_periodic_measurement()
+                    self._scd41.start_periodic_measurement()
+                except Exception:
+                    pass
+                self._scd41_stale_count = 0
+                self._scd41_prev_co2 = None
+                self._scd41_prev_temp = None
+                return None, None, None, False, "scd41 restarted (stale)"
+
+            return co2_int, temp_f, rh_f, True, ""
         except Exception as e:
             return None, None, None, False, "scd41 read failed: {}".format(e)
 
@@ -569,7 +616,8 @@ class AirSensor:
             return False
         return True
 
-    def _select_env_values(self, aht21_temp, aht21_rh, aht10_temp, aht10_rh):
+    def _select_env_values(self, aht21_temp, aht21_rh, aht10_temp, aht10_rh,
+                           scd41_temp=None, scd41_rh=None):
         # Prefer AHT21
         if self._env_values_reasonable(aht21_temp, aht21_rh):
             return float(aht21_temp), float(aht21_rh), "aht21"
@@ -581,6 +629,10 @@ class AirSensor:
         # Then last known good
         if self._last is not None and self._env_values_reasonable(self._last.temp_c, self._last.humidity):
             return float(self._last.temp_c), float(self._last.humidity), "last"
+
+        # SCD41 provides its own temp/rh — use it before falling back to 0/0
+        if self._env_values_reasonable(scd41_temp, scd41_rh):
+            return float(scd41_temp), float(scd41_rh), "scd41"
 
         # Absolute fallback only if we have nothing else
         return 0.0, 0.0, "none"
@@ -617,7 +669,8 @@ class AirSensor:
 
         # Choose primary env for ENS160 + UI
         temp_c, rh, env_src = self._select_env_values(
-            aht21_temp, aht21_rh, aht10_temp, aht10_rh
+            aht21_temp, aht21_rh, aht10_temp, aht10_rh,
+            scd41_temp=scd41_temp_c, scd41_rh=scd41_rh,
         )
 
         # If env source is "none", do not feed 0/0 into ENS compensation
@@ -627,6 +680,13 @@ class AirSensor:
         aqi, tvoc_ppb, eco2_ppm, ready, reason = self._read_ens160_with_retry(
             ens_temp, ens_rh, timeout_ms=4500, step_ms=250
         )
+
+        # If ENS160 is absent but SCD41 has valid CO2, promote it to the primary reading
+        if eco2_ppm == 0 and scd41_co2_ppm is not None and scd41_co2_ppm > 0:
+            eco2_ppm = int(scd41_co2_ppm)
+            ready = True
+            reason = ""
+            source = "scd41"
 
         rating = self._rating_from_aqi(aqi) if ready else "Not ready"
 

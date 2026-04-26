@@ -21,7 +21,6 @@ class GPSScreen:
 
         self._top_pad = 5
 
-        # Smaller toggle — same geometry as WiFi screen
         w = int(getattr(oled, "width", 128))
         h = int(getattr(oled, "height", 64))
 
@@ -43,12 +42,18 @@ class GPSScreen:
         self.last_lon = None
         self.last_sats = None
 
-        # "Checking GPS..." animation state
-        self._checking = False
+        # Hardware-present flag: True once any NMEA sentence arrives
+        self._hw_present = False
+
+        # Animated-check state
+        self._check_active = False
+        self._check_deadline_ms = 0
+        self._next_gps_flash_ms = 0
+        self._gps_flash_on = True
+
+        # Text animation
         self._dot_phase = 0
-        self._next_anim_ms = 0
-        self._check_pending = False
-        self._next_check_ms = 0
+        self._next_text_ms = 0
         self._status = ""
 
         self._load_config()
@@ -100,6 +105,7 @@ class GPSScreen:
             p = line.split(",")
             if len(p) < 7:
                 return
+            self._hw_present = True
             self.last_fix = (p[2] == "A")
             if p[3] and p[4] and p[5] and p[6]:
                 lat = self._nmea_degmin_to_deg(p[3], p[4])
@@ -115,6 +121,7 @@ class GPSScreen:
             p = line.split(",")
             if len(p) < 8:
                 return
+            self._hw_present = True
             if p[6] and p[6] != "0":
                 self.last_fix = True
             if p[7]:
@@ -136,8 +143,15 @@ class GPSScreen:
         self.last_lat = None
         self.last_lon = None
         self.last_sats = None
+        self._hw_present = False
 
-    def _consume_once(self, gps, max_ms=800):
+    def _consume_short(self, gps, max_ms=60):
+        """
+        Short non-blocking NMEA read. Called repeatedly from the check loop
+        so the display can update between reads.
+        """
+        if not gps:
+            return
         try:
             t = time.ticks_ms()
             while time.ticks_diff(time.ticks_ms(), t) < int(max_ms):
@@ -152,67 +166,92 @@ class GPSScreen:
             pass
 
     # ----------------------------
-    # Checking animation
+    # Animated check
     # ----------------------------
 
-    def _set_checking(self, on):
-        self._checking = bool(on)
-        if on:
-            self._dot_phase = 0
-            self._next_anim_ms = time.ticks_ms()
-
-    def _tick_checking(self):
-        if not self._checking:
-            return
+    def _start_animated_check(self, min_ms=1000):
+        """Begin the animated GPS check cycle."""
         now = time.ticks_ms()
-        if time.ticks_diff(now, self._next_anim_ms) < 0:
-            return
-        self._next_anim_ms = time.ticks_add(now, 400)
-        self._dot_phase = (self._dot_phase + 1) % 4
-        dots = "." * self._dot_phase
-        self._status = "Checking GPS" + dots
-        self._draw()
+        self._check_active = True
+        self._check_deadline_ms = time.ticks_add(now, int(min_ms))
+        self._next_gps_flash_ms = now   # first flash fires immediately
+        self._gps_flash_on = True
+        self._dot_phase = 0
+        self._next_text_ms = now
+        self._status = "Checking GPS"
 
-    # ----------------------------
-    # GPS probe
-    # ----------------------------
+    def _tick_animated_check(self, gps):
+        """
+        Drive the animated GPS check: short reads + icon flash every 300 ms.
+        Call every main-loop iteration while _check_active is True.
+        Returns True when the check phase is complete.
+        """
+        if not self._check_active:
+            return True
 
-    def _do_check(self, gps):
-        """Try to read NMEA data to confirm GPS hardware is present."""
-        if not gps:
-            return
-        try:
-            gps.enable()
-        except Exception:
-            pass
-        gc.collect()
-        self._consume_once(gps, max_ms=800)
+        now = time.ticks_ms()
+        redraw = False
+
+        # Flash GPS icon every 300 ms
+        if time.ticks_diff(now, self._next_gps_flash_ms) >= 0:
+            self._next_gps_flash_ms = time.ticks_add(now, 300)
+            self._gps_flash_on = not self._gps_flash_on
+            redraw = True
+
+        # Text dots every 400 ms
+        if time.ticks_diff(now, self._next_text_ms) >= 0:
+            self._next_text_ms = time.ticks_add(now, 400)
+            self._dot_phase = (self._dot_phase + 1) % 4
+            self._status = "Checking GPS" + "." * self._dot_phase
+            redraw = True
+
+        if redraw:
+            self._draw(gps_flash=self._gps_flash_on)
+
+        # Short read each iteration (50 ms at most)
+        self._consume_short(gps, max_ms=50)
+
+        # Done once min_ms has elapsed
+        if time.ticks_diff(now, self._check_deadline_ms) >= 0:
+            self._check_active = False
+            return True
+
+        return False
 
     # ----------------------------
     # Drawing
     # ----------------------------
 
-    def _draw(self):
+    def _draw(self, gps_flash=None):
+        """
+        gps_flash : when not None, overrides GPS icon state for animation.
+                    True  → GPS_INIT (half-full = "checking")
+                    False → GPS_NONE (hollow  = "off / waiting")
+        """
         o = self.oled
         fb = o.oled
         fb.fill(0)
 
-        # Connectivity icons: top-right (GPS state)
         if _ch:
             try:
-                if self._checking:
+                # Determine GPS icon state
+                if gps_flash is not None:
+                    # Animation override: alternate INIT ↔ NONE
+                    gps_state = GPS_INIT if gps_flash else GPS_NONE
+                elif self._check_active:
                     gps_state = GPS_INIT
                 elif self.last_fix:
                     gps_state = GPS_FIXED
+                elif self._hw_present:
+                    gps_state = GPS_INIT   # hardware found but no fix yet
                 else:
                     gps_state = GPS_NONE
+
+                # WiFi: live probe; API: cache — no overrides needed here
                 _ch.draw(
                     fb,
                     o.width,
                     gps_state=gps_state,
-                    wifi_ok=False,
-                    api_connected=False,
-                    api_sending=False,
                     icon_y=1,
                 )
             except Exception:
@@ -231,22 +270,24 @@ class GPSScreen:
         line_h = 13
 
         # Status line
-        if self._checking:
+        if self._check_active:
             status_text = self._status
         elif not self.enabled:
             status_text = "GPS off"
         elif self.last_fix:
             status_text = "Fix acquired"
-        else:
+        elif self._hw_present:
             status_text = "No fix"
+        else:
+            status_text = "No GPS found"
 
         o.f_med.write(status_text[:18], 0, data_y)
 
-        if self.enabled and not self._checking:
+        if self.enabled and not self._check_active:
             if self.last_fix and self.last_lat is not None and self.last_lon is not None:
                 o.f_med.write("LAT:{:.4f}".format(self.last_lat), 0, data_y + line_h)
                 o.f_med.write("LON:{:.4f}".format(self.last_lon), 0, data_y + line_h * 2)
-            else:
+            elif self._hw_present:
                 sats = "--" if self.last_sats is None else str(int(self.last_sats))
                 o.f_med.write("Sats: " + sats, 0, data_y + line_h)
 
@@ -259,23 +300,25 @@ class GPSScreen:
 
     def show_live(self, gps, btn):
         """
-        Single click: advance to next screen.
-        Double click: toggle GPS enabled, re-check on enable.
+        Single click : advance carousel.
+        Double click : toggle GPS enabled and re-check if turning on.
         """
         btn.reset()
         self._load_config()
         self._clear_data()
 
-        # Always probe on entry — show animated "Checking GPS..."
-        self._set_checking(True)
-        self._status = "Checking GPS"
-        self._draw()
-        self._check_pending = True
-        self._next_check_ms = time.ticks_add(time.ticks_ms(), 600)
+        try:
+            if gps:
+                gps.enable()
+        except Exception:
+            pass
+        gc.collect()
+
+        # Always animate the GPS check on entry (at least 1 s)
+        self._start_animated_check(min_ms=1000)
+        self._draw(gps_flash=True)
 
         while True:
-            self._tick_checking()
-
             try:
                 action = btn.poll_action()
             except Exception:
@@ -297,28 +340,26 @@ class GPSScreen:
                 self._clear_data()
 
                 if self.enabled:
-                    # Re-probe after enabling
-                    self._set_checking(True)
-                    self._status = "Checking GPS"
-                    self._draw()
-                    self._check_pending = True
-                    self._next_check_ms = time.ticks_add(time.ticks_ms(), 300)
+                    try:
+                        gps.enable()
+                    except Exception:
+                        pass
+                    self._start_animated_check(min_ms=1000)
+                    self._draw(gps_flash=True)
                 else:
                     try:
                         gps.disable()
                     except Exception:
                         pass
-                    self._set_checking(False)
+                    self._check_active = False
                     self._draw()
 
                 btn.reset()
 
-            if self._check_pending:
-                now = time.ticks_ms()
-                if time.ticks_diff(now, self._next_check_ms) >= 0:
-                    self._check_pending = False
-                    self._set_checking(False)
-                    self._do_check(gps)
-                    self._draw()
+            # Drive the animated check
+            if self._check_active:
+                done = self._tick_animated_check(gps)
+                if done:
+                    self._draw()   # settle on final icon state
 
             time.sleep_ms(25)

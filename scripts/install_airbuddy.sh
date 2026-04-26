@@ -5,20 +5,23 @@ set -euo pipefail
 # AirBuddy Device Installer
 # ------------------------------------------------------------
 # Uploads AirBuddy MicroPython firmware from /device onto a
-# connected Pico (RP2040) or ESP/32 board using mpremote.
+# connected Pico (RP2040), ESP32, ESP32-S3, or XIAO ESP32-S3
+# board using mpremote.
 #
 # Usage:
 #   ./scripts/install_airbuddy.sh
 #   ./scripts/install_airbuddy.sh --fresh
 #   ./scripts/install_airbuddy.sh --port /dev/ttyUSB0
 #   ./scripts/install_airbuddy.sh --board esp32
+#   ./scripts/install_airbuddy.sh --board esp32s3
+#   ./scripts/install_airbuddy.sh --board xiao_esp32s3
 #   ./scripts/install_airbuddy.sh --board pico
 #   ./scripts/install_airbuddy.sh --overwrite-config
 #
 # Notes:
 # - Flash MicroPython onto your board before running this.
 # - Generates config.json interactively and uploads it.
-# - Board type is auto-detected from sys.platform.
+# - Board type is auto-detected from sys.platform + uname.machine.
 # ============================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,14 +49,14 @@ Options:
   --fresh              Wipe old files from board before uploading
   --overwrite-config   Replace existing config.json on the board
   --port PORT          Serial port to use (default: auto)
-  --board TYPE         Force board type: esp32 or pico
+  --board TYPE         Force board type: pico | esp32 | esp32s3 | xiao_esp32s3
   --help               Show this help
 
 Examples:
   ./scripts/install_airbuddy.sh
   ./scripts/install_airbuddy.sh --fresh
   ./scripts/install_airbuddy.sh --port /dev/ttyUSB0
-  ./scripts/install_airbuddy.sh --board esp32
+  ./scripts/install_airbuddy.sh --board xiao_esp32s3
   ./scripts/install_airbuddy.sh --fresh --overwrite-config
 EOF
 }
@@ -218,21 +221,32 @@ BOARD_TYPE=""
 
 if [[ -n "$BOARD_OVERRIDE" ]]; then
   case "$BOARD_OVERRIDE" in
-    esp32|pico)
+    pico|esp32|esp32s3|xiao_esp32s3)
       BOARD_TYPE="$BOARD_OVERRIDE"
       echo "Using board override: $BOARD_TYPE"
       ;;
     *)
-      die "Unsupported --board value: $BOARD_OVERRIDE (use esp32 or pico)"
+      die "Unsupported --board value: $BOARD_OVERRIDE (use pico | esp32 | esp32s3 | xiao_esp32s3)"
       ;;
   esac
 else
   case "$RAW_PLATFORM" in
-    esp32)
-      BOARD_TYPE="esp32"
-      ;;
     rp2)
       BOARD_TYPE="pico"
+      ;;
+    esp32)
+      # sys.platform is "esp32" for all ESP32 variants; query uname.machine to
+      # distinguish the XIAO ESP32-S3 and generic ESP32-S3 from plain ESP32.
+      RAW_MACHINE="$("${MPREMOTE[@]}" exec "import uos; print(uos.uname().machine)" 2>/dev/null | tail -n 1 | tr -d '\r')"
+      RAW_MACHINE_LC="${RAW_MACHINE,,}"
+      echo "Detected uname.machine = $RAW_MACHINE"
+      if [[ "$RAW_MACHINE_LC" == *"xiao"* ]]; then
+        BOARD_TYPE="xiao_esp32s3"
+      elif [[ "$RAW_MACHINE_LC" == *"esp32s3"* ]]; then
+        BOARD_TYPE="esp32s3"
+      else
+        BOARD_TYPE="esp32"
+      fi
       ;;
     *)
       die "Unsupported MicroPython platform: $RAW_PLATFORM"
@@ -379,7 +393,17 @@ fi
 
 msg "Uploading AirBuddy firmware"
 
-"${MPREMOTE[@]}" fs cp -r "$DEVICE_DIR/." : || die "Failed to upload device files."
+# Stage a clean copy of device/ — rsync excludes __pycache__ and *.pyc so
+# CPython bytecode artefacts never land on the board's flash.
+STAGE_DIR="$TMP_DIR/stage"
+rm -rf "$STAGE_DIR"
+rsync -a \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude '*.pyo' \
+  "$DEVICE_DIR/" "$STAGE_DIR/"
+
+"${MPREMOTE[@]}" fs cp -r "$STAGE_DIR/." : || die "Failed to upload device files."
 
 echo "Firmware uploaded."
 

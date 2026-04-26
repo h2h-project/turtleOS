@@ -48,13 +48,13 @@ class LoggingScreen:
         fb = o.oled
         fb.fill(0)
 
-        # Connectivity icons: top-right
+        # Connectivity icons: top-right — assume all previous values
         if _ch:
             try:
                 _ch.draw(
                     fb,
                     o.width,
-                    gps_state=GPS_NONE,
+                    gps_state=_ch.get_gps_state(),
                     icon_y=1,
                 )
             except Exception:

@@ -55,16 +55,13 @@ class SleepScreen:
         fb = o.oled
         fb.fill(0)
 
-        # Connectivity icons: top-right (all off — sleep context)
+        # Connectivity icons: top-right — assume previous values
         if _ch:
             try:
                 _ch.draw(
                     fb,
                     o.width,
-                    gps_state=GPS_NONE,
-                    wifi_ok=False,
-                    api_connected=False,
-                    api_sending=False,
+                    gps_state=_ch.get_gps_state(),
                     icon_y=1,
                 )
             except Exception:

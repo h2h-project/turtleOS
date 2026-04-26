@@ -39,6 +39,7 @@ HEIGHT = 6   # height of the header strip
 # Module-level state cache — mirrors set_api_ok() pattern.
 # ---------------------------------------------------------------------------
 _api_ok = False
+_gps_state = 0  # 0 == GPS_NONE
 
 # _wifi_hw_enabled: True  = WiFi driver was initialised at boot (safe to probe live)
 #                   False = WiFi was disabled/skipped — do NOT touch network.WLAN()
@@ -56,6 +57,21 @@ def set_api_ok(ok):
     """
     global _api_ok
     _api_ok = bool(ok)
+
+
+def set_gps_state(state):
+    """
+    Update the cached GPS state (GPS_NONE=0, GPS_INIT=1, GPS_FIXED=2).
+    Call from the main loop whenever status["gps_on"] changes, and from
+    waiting.py's _apply_idle_ret so all carousel screens see the current value.
+    """
+    global _gps_state
+    _gps_state = int(state)
+
+
+def get_gps_state():
+    """Return the cached GPS state integer."""
+    return _gps_state
 
 
 def set_wifi_enabled(ok):
@@ -90,7 +106,8 @@ def draw(
         oled_width,
         gps_state=GPS_NONE,
         api_connected=None,
-        wifi_ok=None,        # accepted for compat; live probe is always used instead
+        wifi_ok=None,          # accepted for compat; live probe is used unless wifi_override set
+        wifi_override=None,    # when not None, forces WiFi icon state (bypasses live probe)
         api_sending=False,
         now_ms=None,
         icon_y=1,
@@ -108,15 +125,19 @@ def draw(
     oled_width    : screen width in pixels
     gps_state     : GPS_NONE (0), GPS_INIT (1), or GPS_FIXED (2)
     api_connected : True/False to override the module cache, or None to use it
-    wifi_ok       : deprecated — live probe is always used; ignored
+    wifi_ok       : deprecated — live probe is always used unless wifi_override is set
+    wifi_override : when not None, forces WiFi icon True/False (used for flash animation)
     api_sending   : True during an active telemetry send pulse
     now_ms        : current time.ticks_ms() value, or None to sample internally
     icon_y        : top-y pixel of the icon row
     right_inset   : pixels inset from right edge before the first icon
     gap           : pixels between icons
     """
-    # WiFi: always probe live.
-    wifi_actual = _probe_wifi()
+    # WiFi: use override when provided (animation), else live probe.
+    if wifi_override is not None:
+        wifi_actual = bool(wifi_override)
+    else:
+        wifi_actual = _probe_wifi()
 
     # API: use the caller-supplied value if explicit; fall back to cache.
     # The cache is only updated via set_api_ok() — passing an explicit value

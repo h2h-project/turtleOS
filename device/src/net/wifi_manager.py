@@ -11,6 +11,12 @@ _IS_ESP32 = getattr(_sys, "platform", "") == "esp32"
 # AUTH_WPA3_PSK=6, AUTH_WPA2_WPA3_PSK=7 — neither is supported by ESP32 MicroPython.
 _WPA3_AUTHMODES = (6, 7)
 
+# ESP32 WiFi TX power cap (dBm).  Default firmware value is 20 dBm, which
+# causes a 300-500 mA current spike on association that can brownout a battery
+# supply.  13 dBm is sufficient for indoor use and brings peak draw within
+# typical LiPo/battery limits.
+_ESP32_TX_POWER_DBM = 13
+
 try:
     import network
 except ImportError:
@@ -195,6 +201,16 @@ class WiFiManager:
                 self.wlan.config(pm=0xA11140)
             except Exception:
                 pass
+        else:
+            # Cap TX power after radio init so the association handshake doesn't
+            # spike current high enough to brownout a battery supply.
+            # Extra settle delay gives the power supply time to stabilize after
+            # the wlan.active(True) PHY init spike before connect() runs.
+            try:
+                self.wlan.config(txpower=_ESP32_TX_POWER_DBM)
+            except Exception:
+                pass
+            time.sleep_ms(300)
 
     def connect(self, ssid, password, timeout_s=12, retry=2, tick_cb=None):
         """
@@ -221,6 +237,11 @@ class WiFiManager:
         # fragmented heap it will fail with "only 3 of 10 buffers allocated".
         if self.wlan.active():
             if _IS_ESP32:
+                # Cap TX power before connecting to reduce peak current on battery.
+                try:
+                    self.wlan.config(txpower=_ESP32_TX_POWER_DBM)
+                except Exception:
+                    pass
                 # WPA3 detection: scan before connecting.
                 # ESP32 MicroPython does not support SAE/WPA3 and hangs for the
                 # full timeout_s when connecting to a WPA3 network.  Scan first
