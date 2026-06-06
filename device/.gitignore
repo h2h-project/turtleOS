@@ -1,0 +1,7 @@
+# CPython bytecode cache — never belongs on a MicroPython device
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS metadata
+.DS_Store

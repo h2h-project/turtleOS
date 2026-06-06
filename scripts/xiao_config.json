@@ -1,0 +1,19 @@
+{
+    "board_type": "xiao_esp32s3",
+    "wifi_enabled": true,
+    "wifi_ssid": "Russs",
+    "wifi_password": "earthconnect",
+    "gps_enabled": true,
+    "api_base": "http://air2.earthen.io",
+    "device_id": "AB_09",
+    "device_key": "2Y3WeIeKIyKzG6SKc__XphZt",
+    "telemetry_enabled": true,
+    "telemetry_post_every_s": 120,
+    "timezone_offset_min": -240,
+    "oled_col_offset": 2,
+    "compass_offset_deg": -80,
+    "turtle_mode": true,
+    "joke_mode": true,
+    "morse_bless": true,
+    "servo_present": true
+}

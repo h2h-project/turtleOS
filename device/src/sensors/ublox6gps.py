@@ -3,6 +3,14 @@ from machine import UART, Pin
 import time
 
 
+def _ubx_checksum(body):
+    ck_a = ck_b = 0
+    for b in body:
+        ck_a = (ck_a + b) & 0xFF
+        ck_b = (ck_b + ck_a) & 0xFF
+    return ck_a, ck_b
+
+
 class Ublox6GPS:
     def __init__(
             self,
@@ -50,6 +58,7 @@ class Ublox6GPS:
             tx=Pin(int(tx_pin)),
             rx=Pin(int(rx_pin)),
             timeout=timeout,
+            rxbuf=2048,
         )
 
         self._rxbuf = b""
@@ -61,6 +70,35 @@ class Ublox6GPS:
         if self.uart.any():
             return self.uart.readline()
         return None
+
+    def send_ubx(self, data):
+        self.uart.write(data)
+
+    def configure_mode(self, turtle_mode=False):
+        # NMEA sentence IDs (class 0xF0):
+        #   GGA=0x00, GLL=0x01, GSA=0x02, GSV=0x03, RMC=0x04, VTG=0x05
+        #
+        # static:     keep GGA + RMC only (disable GLL, GSA, GSV, VTG), 1 Hz
+        # navigation: keep GGA, GSA, GSV, RMC, VTG (disable GLL only), 5 Hz
+        if turtle_mode:
+            rates = {0x00: 1, 0x01: 0, 0x02: 1, 0x03: 1, 0x04: 1, 0x05: 1}
+            meas_lo, meas_hi = 0xC8, 0x00  # 200 ms = 5 Hz
+        else:
+            rates = {0x00: 1, 0x01: 0, 0x02: 0, 0x03: 0, 0x04: 1, 0x05: 0}
+            meas_lo, meas_hi = 0xE8, 0x03  # 1000 ms = 1 Hz
+
+        for msg_id, rate in rates.items():
+            pl = bytes([0xF0, msg_id, 0x00, rate, 0x00, 0x00, 0x00, 0x00])
+            body = bytes([0x06, 0x01, 0x08, 0x00]) + pl
+            ck_a, ck_b = _ubx_checksum(body)
+            self.send_ubx(bytes([0xB5, 0x62]) + body + bytes([ck_a, ck_b]))
+            time.sleep_ms(20)
+
+        pl = bytes([meas_lo, meas_hi, 0x01, 0x00, 0x00, 0x00])
+        body = bytes([0x06, 0x08, 0x06, 0x00]) + pl
+        ck_a, ck_b = _ubx_checksum(body)
+        self.send_ubx(bytes([0xB5, 0x62]) + body + bytes([ck_a, ck_b]))
+        time.sleep_ms(20)
 
     def read_nmea(self, max_ms=0):
         # Pull whatever is available

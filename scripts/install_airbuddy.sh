@@ -300,8 +300,8 @@ echo "Don't stress — you can always re-run this script or edit config.json"
 echo "directly on the device to change anything later."
 echo
 
-GPS_ENABLED="$(prompt_yes_no "Would you like to enable GPS? Totally optional: only enable if you will be installing a GPS module to your board." "n")"
-WIFI_ENABLED="$(prompt_yes_no "Would you like to enable WiFi? Important: only enable if your board has a WiFi chip." "y")"
+GPS_ENABLED="$(prompt_yes_no "Would you like to enable GPS?  Totally optional:  only enable if you will be installing a GPS module to your board." "n")"
+WIFI_ENABLED="$(prompt_yes_no "Would you like to enable WiFi?  Important: Only enable if your board has a Wifi chip." "y")"
 
 WIFI_SSID=""
 WIFI_PASSWORD=""
@@ -326,10 +326,15 @@ DEVICE_ID="$(prompt_required "Device ID")"
 DEVICE_KEY="$(prompt_required "Device key")"
 
 echo
-echo "Timezone offset is the number of minutes ahead of (or behind) UTC."
-echo "  Examples: 480 = HKT/PHT,  420 = WIB,  330 = IST,  0 = UTC"
-echo "  Negative: -300 = EST,  -360 = CST,  -480 = PST"
-TIMEZONE_OFFSET_MIN="$(prompt_default "Timezone offset in minutes (leave blank to skip)" "")"
+echo "How many hours ahead of (or behind) UTC is your timezone?"
+echo "  Examples:  +8 = Hong Kong / Manila,  +7 = Jakarta,  +5.5 = India,  0 = UTC"
+echo "  Behind UTC:  -5 = New York,  -6 = Chicago,  -8 = Los Angeles"
+TIMEZONE_HOURS="$(prompt_default "Hours offset from UTC (e.g. 8, -5, 5.5 — leave blank to skip)" "")"
+
+TIMEZONE_OFFSET_MIN=""
+if [[ -n "$TIMEZONE_HOURS" ]]; then
+  TIMEZONE_OFFSET_MIN="$(awk "BEGIN{printf \"%d\", $TIMEZONE_HOURS * 60}")"
+fi
 
 echo
 echo "Are you using a large OLED display or a small one?  They have slightly"
