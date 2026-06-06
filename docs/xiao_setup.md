@@ -91,7 +91,7 @@ The board is now in bootloader mode and ready to be flashed.
 
 ## Find the Port
 
-With the board in bootloader mode, check which port it appears on:
+With the board in bootloader mode, check which port it appears on...
 
 ```
 ls /dev/ttyACM*
