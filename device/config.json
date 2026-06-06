@@ -1,13 +1,20 @@
 {
-  "gps_enabled": false,
-  "wifi_enabled": true,
-  "wifi_ssid": "Russs",
-  "wifi_password": "earthconnect",
-  "telemetry_enabled": true,
-  "telemetry_post_every_s": 120,
-  "api_base": "http://air2.earthen.io/",
-  "device_id": "AB_01",
-  "device_key": "zFKf_GEg-m_-aS7Wqt5posEU",
-  "timezone_offset_min": 420,
-  "oled_col_offset": 2
+    "wifi_ssid": "Wu-Tang LAN",
+    "wifi_password": "W3L0v3b008135!",
+    "wifi_enabled": true,
+    "gps_enabled": true,
+    "api_base": "http://air2.earthen.io",
+    "device_id": "AB_01",
+    "device_key": "TBhP4E0j6MHxXG8xA9ZdfzKf",
+    "telemetry_enabled": true,
+    "telemetry_post_every_s": 120,
+    "timezone_offset_min": 60,
+    "oled_col_offset": 2,
+    "board_type": "xiao_esp32s3",
+    "compass_offset_deg": -80,
+    "turtle_mode": true,
+    "joke_mode": true,
+    "morse_bless": true,
+    "servo_present": true
+
 }

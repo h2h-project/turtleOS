@@ -300,8 +300,8 @@ echo "Don't stress — you can always re-run this script or edit config.json"
 echo "directly on the device to change anything later."
 echo
 
-GPS_ENABLED="$(prompt_yes_no "Would you like to enable GPS? Totally optional: only enable if you will be installing a GPS module to your board." "n")"
-WIFI_ENABLED="$(prompt_yes_no "Would you like to enable WiFi? Important: only enable if your board has a WiFi chip." "y")"
+GPS_ENABLED="$(prompt_yes_no "Would you like to enable GPS?  Totally optional:  only enable if you will be installing a GPS module to your board." "n")"
+WIFI_ENABLED="$(prompt_yes_no "Would you like to enable WiFi?  Important: Only enable if your board has a Wifi chip." "y")"
 
 WIFI_SSID=""
 WIFI_PASSWORD=""
@@ -326,16 +326,52 @@ DEVICE_ID="$(prompt_required "Device ID")"
 DEVICE_KEY="$(prompt_required "Device key")"
 
 echo
-echo "Timezone offset is the number of minutes ahead of (or behind) UTC."
-echo "  Examples: 480 = HKT/PHT,  420 = WIB,  330 = IST,  0 = UTC"
-echo "  Negative: -300 = EST,  -360 = CST,  -480 = PST"
-TIMEZONE_OFFSET_MIN="$(prompt_default "Timezone offset in minutes (leave blank to skip)" "")"
+echo "How many hours ahead of (or behind) UTC is your timezone?"
+echo "  Examples:  +8 = Hong Kong / Manila,  +7 = Jakarta,  +5.5 = India,  0 = UTC"
+echo "  Behind UTC:  -5 = New York,  -6 = Chicago,  -8 = Los Angeles"
+TIMEZONE_HOURS="$(prompt_default "Hours offset from UTC (e.g. 8, -5, 5.5 — leave blank to skip)" "")"
+
+TIMEZONE_OFFSET_MIN=""
+if [[ -n "$TIMEZONE_HOURS" ]]; then
+  TIMEZONE_OFFSET_MIN="$(awk "BEGIN{printf \"%d\", $TIMEZONE_HOURS * 60}")"
+fi
 
 echo
 echo "Are you using a large OLED display or a small one?  They have slightly"
 echo "different pixel dimensions.  Small ones need a horizontal 2 pixel offset,"
 echo "large ones 0.  Please specify your OLED offset:"
 OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
+
+# ------------------------------------------------------------
+# XIAO ESP32-S3 extras
+# ------------------------------------------------------------
+
+SERVO_PRESENT="false"
+TURTLE_MODE="false"
+MORSE_BLESS="false"
+JOKE_MODE="false"
+COMPASS_OFFSET_DEG=0
+
+if [[ "$BOARD_TYPE" == "xiao_esp32s3" ]]; then
+  echo
+  msg "XIAO ESP32-S3 extras"
+  echo "Your XIAO board supports a few optional features. Answer n to anything"
+  echo "you haven't wired yet — you can always re-run this script to reconfigure."
+  echo
+
+  SERVO_PRESENT="$(prompt_yes_no "Is a servo (MG996R) physically wired to pin D8 / GPIO7?" "n")"
+  TURTLE_MODE="$(prompt_yes_no "Enable Turtle mode? (Boot screen shows 'turtleOS' instead of 'airOS')" "n")"
+  JOKE_MODE="$(prompt_yes_no "Enable Joke mode? (Quad-click shows the scary self-destruct screen instead of the chill turtle animation)" "n")"
+  MORSE_BLESS="$(prompt_yes_no "Enable Morse bless? (Button LED blinks in Morse before each telemetry upload — only useful if a button LED is wired to D0)" "n")"
+
+  echo
+  echo "Compass calibration: point the board North, note the raw heading on the"
+  echo "Compass screen, then enter the negative of that value here to zero the"
+  echo "offset.  For example, if the raw reading is 80, enter -80."
+  echo "Leave blank to use 0 and calibrate later."
+  COMPASS_INPUT="$(prompt_default "Compass offset (degrees)" "0")"
+  COMPASS_OFFSET_DEG="${COMPASS_INPUT:-0}"
+fi
 
 # ------------------------------------------------------------
 # Generate config.json
@@ -362,7 +398,12 @@ cat > "$TMP_CONFIG" <<EOF
   "device_id": "$(escape_json_string "$DEVICE_ID")",
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
   "timezone_offset_min": $TZ_JSON,
-  "oled_col_offset": $OLED_COL_OFFSET
+  "oled_col_offset": $OLED_COL_OFFSET,
+  "servo_present": $SERVO_PRESENT,
+  "turtle_mode": $TURTLE_MODE,
+  "joke_mode": $JOKE_MODE,
+  "morse_bless": $MORSE_BLESS,
+  "compass_offset_deg": $COMPASS_OFFSET_DEG
 }
 EOF
 

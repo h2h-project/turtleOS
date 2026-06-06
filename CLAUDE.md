@@ -43,6 +43,7 @@ device/               ← everything deployed to the microcontroller
     │   │   ├── co2.py, tvoc.py, temp.py, summary.py
     │   │   ├── time.py, wifi.py, online.py, logging.py
     │   │   ├── device.py, gps.py, sleep.py, selfdestruct.py
+    │   │   ├── servo.py          ← servo status screen (turtle mode)
     │   └── fonts/                ← ezFBfont bitmap font modules
     ├── net/
     │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
@@ -57,6 +58,7 @@ device/               ← everything deployed to the microcontroller
     ├── drivers/
     │   ├── ds3231.py             ← RTC driver
     │   ├── aht10.py              ← temp/humidity driver
+    │   ├── servo.py              ← MG996R sail servo driver (PWM, 50 Hz)
     │   └── ezFBfont.py           ← font renderer
     └── lib/
         └── urequests.py          ← lightweight HTTP (no ssl by default)
@@ -109,8 +111,9 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | `board_xiao_esp32_s3.py` |
 | Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
 | Button LED | GP18 | GPIO18 | GPIO48 | None |
-| I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=9, SDA=6, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
+| I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
+| Servo PWM | — | — | — | GPIO7 (D8) — MG996R sail actuator |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
 | USB power detect | GP24 (VBUS) | board-specific | Not available — returns `False` | Not available — returns `False` |
 | Heap concern | Moderate | High | High — same WiFi PHY fragmentation risk as ESP32 | High — same WiFi PHY fragmentation risk |
@@ -119,9 +122,11 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 
 | Device | I2C Address |
 |--------|------------|
+| QMC5883L (compass — GY-271 clone) | 0x0D |
 | AHT10 / AHT21 (temp/humidity) | 0x38 |
 | OLED (SSD1306/SH1106) | 0x3C |
 | INA219 (battery/current monitor) | 0x40 |
+| ENS160 (CO2/TVOC) | 0x53 |
 | SCD41 (CO2 — alternate sensor) | 0x62 |
 | DS3231 (RTC) | 0x68 |
 
@@ -133,7 +138,7 @@ tag = platform_tag()   # "pico" | "esp32" | "esp32s3" | "xiao_esp32s3" | "unknow
 
 > **Note:** `sys.platform` returns `"esp32"` for all ESP32 variants. `platform.py` resolves this by checking `uos.uname().machine` first: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. If `uname` is unavailable (very old firmware), the fallback returns `"esp32"` for all ESP32 targets, which would load the wrong pin map.
 
-**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`. Always import from `src.hal.board`, never from the platform-specific files directly.
+**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`, `servo_pin()`, `servo_pwm_config()`. Always import from `src.hal.board`, never from the platform-specific files directly. `servo_pin()` and `servo_pwm_config()` return `None` on boards that have no servo wired (Pico, ESP32, ESP32-S3).
 
 ---
 
@@ -271,7 +276,7 @@ Legacy key migration handled automatically: `"api-base"` → `"api_base"`, boole
 | `f_vsmall` | PTSansNarrow 7 | 7 px |
 | `f_small` | Narrow 7 (aliased) | 7 px |
 | `f_med` | Mulish 14 | 11 px |
-| `f_large` | Arvo 24 | 20 px |
+| `f_large` | Arvo 24 | 20 px | **trimmed set: space · 0-9 · - · . · : · C · E · N · S · W only** |
 | `f_arvo16` | Arvo 16 | 14 px |
 | `f_arvo20` | Arvo 20 | 17 px |
 

@@ -1,4 +1,4 @@
-# src/ui/booter.py  (MicroPython / Pico-safe)
+# src/app/booter.py  (MicroPython / Pico-safe)
 import time
 import gc
 from src.ui.thermobar import ThermoBar
@@ -39,8 +39,8 @@ class Booter:
 
         # Version label content
         self.brand = "airOS"
-        self.version_num = "2.1.41"
-        self.version = "airOS version 2.1.41"  # used for serial logging
+        self.version_num = "2.2.4"
+        self.version = "airOS version 2.2.4"  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None
@@ -154,7 +154,7 @@ class Booter:
         }
 
     # -------------------------------------------------
-    # Version line: "abOS" (arvo24) + "v2.1.33" (med) centred as a pair
+    # Version line: "abOS" (arvo24) + "v2.X.X" (med) centred as a pair
     # -------------------------------------------------
     def _draw_version_line(self, y):
         w = int(getattr(self.oled, "width", 128))

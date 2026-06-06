@@ -15,3 +15,6 @@ dist/
 
 # Local tooling output
 *.log
+
+scripts/basic_config.json
+config.json
