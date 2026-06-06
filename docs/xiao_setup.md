@@ -72,6 +72,8 @@ Be sure to download the **Octal-SPIRAM** variant in `.bin` format.
 
 ## Install Flashing Tools
 
+In order to install, you must have certain tools running already on your Linux computer.  Run these commands in terminal to get setup...
+
 ```
 sudo apt update
 sudo apt install python3-pip python3-venv
@@ -111,11 +113,13 @@ esptool --chip esp32s3 --port /dev/ttyACM0 erase_flash
 
 ## Flash the Firmware
 
-Replace the filename below with the exact name of the `.bin` file you downloaded:
+Once downloaded run this command:
 
 ```
 esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 write_flash -z 0x0 ~/Downloads/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
 ```
+
+Note you may have to update the filename with the name of the file you actually downloaded in case updates have been released since the writing of this guide.
 
 ## Verify the Connection
 
