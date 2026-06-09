@@ -46,5 +46,13 @@ The hope turtle is a wind-powered vessel. turtleOS closes the navigation loop en
 | Tactile button | User input — screen carousel, config toggles, debug gate | Active |
 | ENS160 CO₂ / TVOC sensor | Air quality (airOS mode only) | Legacy / optional |
 | AHT21 temperature + humidity | Ambient climate (airOS mode only) | Legacy / optional |
+| BME280 pressure / temp / humidity | Weather sensing — barometric pressure and ambient conditions | Planned / optional |
+| BNO085 IMU | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | Recommended / planned |
+| Pololu S13V25F6 voltage regulator | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | Planned |
+| Adafruit bq25185 solar charger | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | Planned |
+| 21700 Li-ion cell (4200mAh 3.7V 30A) | Primary energy storage — high-capacity, high-discharge cell for extended voyages | Planned |
+| Physical on/off switch | Main power cutoff — required for field safety and battery conservation between deployments | Planned |
+| Reset button | Hardware reset accessible to the user without opening the hull | Planned |
+| LoRa / Meshtastic module | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future |
 
 
