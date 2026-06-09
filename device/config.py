@@ -55,7 +55,7 @@ DEFAULTS = {
 
     # --- Turtle mode ---
     # When true, replaces "airOS" with "turtleOS" on the boot screen.
-    "turtle_mode": False,
+    "turtle_mode": True,
 
     # --- Joke mode ---
     # When true, quad-click shows the self-destruct screen (scary).

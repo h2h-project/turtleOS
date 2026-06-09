@@ -1,6 +1,26 @@
-# AirBuddy 2.1 — Developer Guide
+# turtleOS 2.x — Developer Guide
 
-AirBuddy is a MicroPython air quality monitor that runs on a **Raspberry Pi Pico (RP2040)**, **ESP32**, or **ESP32-S3** (current primary target: ESP32-S3-N16-R8). It reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair, displays readings on a 128×64 OLED, and periodically posts telemetry to a REST API at `http://air.earthen.io` (configurable).
+turtleOS is a MicroPython firmware for a **Seeed Studio XIAO ESP32-S3** (primary target) that drives a sail-servo actuator, reads GPS and compass, monitors battery via INA219, and displays a live turtle animation on a 128×64 OLED. It is designed for marine and field navigation applications.
+
+**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air.earthen.io`. The Hardware Abstraction Layer is intentionally maintained for all supported boards so the firmware can be ported to future hardware without rewriting application code.
+
+---
+
+## Operating modes
+
+| Config key | Value | Active mode |
+|---|---|---|
+| `turtle_mode` | `true` (default) | **turtleOS** — turtle idle animation, servo/compass/sailpoint/battery screens |
+| `turtle_mode` | `false` | **airOS** — "Know thy air…" idle screen, CO2/TVOC/temp/summary carousel |
+
+The mode is read from `config.json` at boot and again at the top of every main-loop iteration. Changing the value on the device takes effect on the next power-cycle; there is no hot-reload.
+
+**What changes between modes:**
+- Idle / waiting screen (`TurtleWaitingScreen` vs `WaitingScreen`)
+- Single-click carousel content (turtle navigation screens vs air quality screens)
+- GPS configure_mode call (turtle tracking vs air-quality logging)
+
+Everything else — WiFi, telemetry, connectivity carousel, time screen, button gestures, HAL — is shared by both modes.
 
 ---
 
@@ -15,57 +35,90 @@ device/               ← everything deployed to the microcontroller
 └── src/
     ├── app/
     │   ├── main.py               ← main event loop (run())
-    │   ├── telemetry_scheduler.py
-    │   ├── telemetry_payload.py
-    │   ├── telemetry_state.py
+    │   ├── main_pico.py          ← Pico-only override (legacy)
+    │   ├── booter.py             ← animated boot progress bar
     │   ├── boot_guard.py         ← debug-mode REPL gate
-    │   ├── gps_init.py
     │   ├── rtc_sync.py
-    │   └── sysinfo.py
+    │   ├── telemetry_scheduler.py
+    │   └── telemetry_state.py
     ├── hal/
-    │   ├── platform.py           ← detects "pico", "esp32", or "unknown"
+    │   ├── platform.py           ← detects "pico", "esp32", "esp32s3", "xiao_esp32s3"
     │   ├── board.py              ← facade: delegates to the correct board module
     │   ├── board_pico.py         ← Pico pin constants + init helpers
     │   ├── board_esp32.py        ← ESP32 pin constants + init helpers
-    │   └── board_esp32_s3.py     ← ESP32-S3 pin constants + init helpers (current target)
+    │   ├── board_esp32_s3.py     ← ESP32-S3 pin constants + init helpers
+    │   └── board_xiao_esp32_s3.py ← XIAO ESP32-S3 pin map (current primary target)
     ├── input/
     │   └── button.py             ← AirBuddyButton (debounce, multi-click, hold)
     ├── ui/
     │   ├── oled.py               ← OLED wrapper (SSD1306/SH1106, font helpers)
     │   ├── flows.py              ← screen carousel orchestration
+    │   ├── flows_pico.py         ← Pico-only carousel variant (legacy)
     │   ├── clicks.py             ← low-level click/dwell helpers used by flows
     │   ├── connection_header.py  ← GPS/API/WiFi icon cluster (top-right)
     │   ├── toggle.py             ← vertical toggle switch widget
-    │   ├── glyphs.py             ← pixel-art icons (wifi, gps, api, degree °, circle)
-    │   ├── waiting.py            ← idle "Know your air..." screen
-    │   ├── booter.py             ← animated boot progress bar
-    │   ├── screens/
-    │   │   ├── co2.py, tvoc.py, temp.py, summary.py
-    │   │   ├── time.py, wifi.py, online.py, logging.py
-    │   │   ├── device.py, gps.py, sleep.py, selfdestruct.py
-    │   │   ├── servo.py          ← servo status screen (turtle mode)
-    │   └── fonts/                ← ezFBfont bitmap font modules
-    ├── net/
-    │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
-    │   ├── wifi_manager_null.py  ← no-op stub for no-WiFi builds
-    │   ├── device_client.py      ← GET /api/v1/device?compact=1
-    │   ├── telemetry_client.py   ← POST telemetry readings
-    │   └── net_caps.py           ← wifi_supported() probe
-    ├── sensors/
-    │   ├── air.py                ← AirSensor + AirReading (ENS160 + AHT21)
-    │   ├── co2_confidence.py
-    │   └── ublox6gps.py
+    │   ├── glyphs.py             ← pixel-art icons (wifi, gps, api, gear, °, circle)
+    │   ├── glyphs_pico.py        ← Pico-only glyph variant (legacy)
+    │   ├── thermobar.py          ← horizontal thermometer bar widget
+    │   ├── waiting.py            ← airOS idle screen ("Know thy air…")
+    │   ├── logo_airbuddy.py      ← airOS splash logo
+    │   └── screens/
+    │       ├── — turtleOS screens —
+    │       ├── turtle_waiting.py ← animated turtle idle screen (turtle_mode=true)
+    │       ├── servo.py          ← sail servo status + test sweep
+    │       ├── compass.py        ← live heading from QMC5883L
+    │       ├── sailpoint.py      ← sail-angle overlay on compass reading
+    │       ├── destination.py    ← destination/waypoint screen
+    │       ├── battery.py        ← INA219 voltage/current/charge screen
+    │       ├── — airOS screens (turtle_mode=false) —
+    │       ├── co2.py            ← raw CO2 reading (ENS160)
+    │       ├── eco2.py           ← eCO2 reading (alternate layout)
+    │       ├── tvoc.py           ← TVOC reading
+    │       ├── temp.py           ← temperature + humidity
+    │       ├── temp2.py          ← alternate temp layout
+    │       ├── summary.py        ← combined air quality summary
+    │       ├── — shared screens —
+    │       ├── time.py           ← local time / UTC / date
+    │       ├── wifi.py           ← WiFi toggle screen
+    │       ├── online.py         ← API/telemetry toggle screen
+    │       ├── logging.py        ← telemetry rate screen
+    │       ├── device.py         ← device info from API
+    │       ├── gps.py            ← GPS fix status
+    │       ├── sleep.py          ← low-power screen
+    │       ├── selfdestruct.py   ← factory reset / wipe (joke_mode gate)
+    │       └── frowny.py         ← error / sad-face screen
+    ├── fonts/
+    │   ├── arvo16.py, arvo20.py, arvo24.py
+    │   ├── mulish14.py
+    │   └── ezFBfont_PTSansNarrow_07_ascii_11.py
     ├── drivers/
     │   ├── ds3231.py             ← RTC driver
     │   ├── aht10.py              ← temp/humidity driver
     │   ├── servo.py              ← MG996R sail servo driver (PWM, 50 Hz)
+    │   ├── hmc5883l_qmc5883l.py  ← compass driver (GY-271 QMC5883L clone)
+    │   ├── ina219.py             ← battery / power monitor
+    │   ├── as5600.py             ← magnetic angle encoder
+    │   ├── scd4x.py              ← SCD41 CO2 sensor (alternate)
+    │   ├── bme280.py             ← BME280 temp/pressure/humidity (alternate)
     │   └── ezFBfont.py           ← font renderer
+    ├── sensors/
+    │   ├── air.py                ← AirSensor + AirReading (ENS160 + AHT21)
+    │   ├── co2_test.py
+    │   └── ublox6gps.py          ← u-blox NEO-6M GPS parser
+    ├── net/
+    │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
+    │   ├── wifi_manager_null.py  ← no-op stub for no-WiFi builds
+    │   ├── telemetry_client.py   ← POST telemetry readings
+    │   └── net_caps.py           ← wifi_supported() probe
     └── lib/
-        └── urequests.py          ← lightweight HTTP (no ssl by default)
+        └── urequests.py          ← lightweight HTTP (no SSL by default)
 
 docs/                 ← development notes
+scripts/              ← host-side deploy helpers
+  ├── xiao_synker.sh  ← primary deploy script for XIAO ESP32-S3
+  └── xiao_config.json ← base config installed by xiao_synker.sh
 tests/                ← hardware/integration scripts (not unit tests)
-tools/                ← host-side deploy helpers
+backups/              ← archived experiment files
 ```
 
 ---
@@ -87,11 +140,11 @@ Six sequential steps run inside an animated `Booter` progress bar on the OLED. E
 | 2 | **WiFi connect** | Probes `net_caps.wifi_supported()`. If supported, connects with a 4 s timeout and 0 retries (fast-fail). **Must run before AirSensor on ESP32** — see Gotchas. |
 | 3 | **Device API check** | GET `/api/v1/device?compact=1` with `X-Device-Id` / `X-Device-Key` headers. Fetches device name, home, room, and community for the Device screen. Skipped if WiFi failed. |
 | 4 | **RTC clock** | Reads DS3231 (I2C 0x68). Syncs `machine.RTC()` to UTC. DS3231 is always kept in UTC. |
-| 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). |
+| 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
 
 After the pipeline, `main.py`:
-1. Draws the **waiting screen** once (idle state with connection status icons).
+1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`).
 2. Checks HAL for `btn_pin()` — if missing, shows an error and waits 30 s then auto-resets.
 3. Calls `src.app.main.run(...)`, which is the permanent event loop.
 
@@ -102,33 +155,33 @@ Hold the button **at power-on for 2 seconds** → boot halts and drops to the Mi
 
 ## Board pin maps
 
-All board-specific code lives in `src/hal/`. Never hardcode pins outside these files.
+All board-specific code lives in `src/hal/`. Never hardcode pins outside these files. The HAL is maintained for all supported boards for backwards and forwards compatibility.
 
-| | Raspberry Pi Pico | ESP32 | ESP32-S3-N16-R8 | XIAO ESP32-S3 |
+| | Raspberry Pi Pico | ESP32 | ESP32-S3-N16-R8 | **XIAO ESP32-S3** (primary) |
 |---|---|---|---|---|
 | `sys.platform` | `"rp2"` | `"esp32"` | `"esp32"` | `"esp32"` |
-| `platform_tag()` | `"pico"` | `"esp32"` | `"esp32s3"` | `"xiao_esp32s3"` |
-| HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | `board_xiao_esp32_s3.py` |
+| `platform_tag()` | `"pico"` | `"esp32"` | `"esp32s3"` | **`"xiao_esp32s3"`** |
+| HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | **`board_xiao_esp32_s3.py`** |
 | Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
 | Button LED | GP18 | GPIO18 | GPIO48 | None |
 | I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
-| Servo PWM | — | — | — | GPIO7 (D8) — MG996R sail actuator |
+| Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
-| USB power detect | GP24 (VBUS) | board-specific | Not available — returns `False` | Not available — returns `False` |
-| Heap concern | Moderate | High | High — same WiFi PHY fragmentation risk as ESP32 | High — same WiFi PHY fragmentation risk |
+| USB power detect | GP24 (VBUS) | board-specific | Returns `False` | Returns `False` |
+| Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | High — same risk |
 
-**I2C devices on the shared bus** (addresses are the same across all ESP32-S3 variants):
+**I2C devices on the shared bus** (addresses the same across all ESP32-S3 variants):
 
-| Device | I2C Address |
-|--------|------------|
-| QMC5883L (compass — GY-271 clone) | 0x0D |
-| AHT10 / AHT21 (temp/humidity) | 0x38 |
-| OLED (SSD1306/SH1106) | 0x3C |
-| INA219 (battery/current monitor) | 0x40 |
-| ENS160 (CO2/TVOC) | 0x53 |
-| SCD41 (CO2 — alternate sensor) | 0x62 |
-| DS3231 (RTC) | 0x68 |
+| Device | I2C Address | Mode |
+|--------|------------|------|
+| QMC5883L (compass — GY-271 clone) | 0x0D | turtleOS |
+| AHT10 / AHT21 (temp/humidity) | 0x38 | airOS |
+| OLED (SSD1306/SH1106) | 0x3C | shared |
+| INA219 (battery/current monitor) | 0x40 | turtleOS |
+| ENS160 (CO2/TVOC) | 0x53 | airOS |
+| SCD41 (CO2 — alternate sensor) | 0x62 | airOS |
+| DS3231 (RTC) | 0x68 | shared |
 
 **Platform detection** (`src/hal/platform.py`):
 ```python
@@ -136,9 +189,9 @@ from src.hal.platform import platform_tag
 tag = platform_tag()   # "pico" | "esp32" | "esp32s3" | "xiao_esp32s3" | "unknown"
 ```
 
-> **Note:** `sys.platform` returns `"esp32"` for all ESP32 variants. `platform.py` resolves this by checking `uos.uname().machine` first: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. If `uname` is unavailable (very old firmware), the fallback returns `"esp32"` for all ESP32 targets, which would load the wrong pin map.
+> **Note:** `sys.platform` returns `"esp32"` for all ESP32 variants. `platform.py` resolves this via `uos.uname().machine` in priority order: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings.
 
-**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`, `servo_pin()`, `servo_pwm_config()`. Always import from `src.hal.board`, never from the platform-specific files directly. `servo_pin()` and `servo_pwm_config()` return `None` on boards that have no servo wired (Pico, ESP32, ESP32-S3).
+**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`, `servo_pin()`, `servo_pwm_config()`. Always import from `src.hal.board`, never from platform-specific files directly. `servo_pin()` and `servo_pwm_config()` return `None` on boards without a servo wired (Pico, ESP32, ESP32-S3).
 
 ---
 
@@ -148,33 +201,56 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 
 ### Click actions
 
-| Gesture | Action | Flow |
-|---------|--------|------|
-| **Single click** | Sensor carousel | CO2 → TVOC → Temp (live) → Summary |
-| **Double click** | Time screen | Local time with blinking colon, date at bottom, UTC top-left |
-| **Triple click** | Connectivity carousel | WiFi → Online → Telemetry → Device |
-| **Quad click** | Self-destruct flow | Factory reset / wipe screen |
-| **Hold 2 s** | Sleep / low-power screen | |
+| Gesture | turtleOS action | airOS action |
+|---------|-----------------|--------------|
+| **Single click** | turtle navigation carousel | air quality carousel |
+| **Double click** | Time screen | Time screen |
+| **Triple click** | Connectivity carousel | Connectivity carousel |
+| **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
+| **Hold 2 s** | Sleep / low-power screen | Sleep / low-power screen |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
 - 50 ms debounce on edges.
-- Clicks are counted within a **500 ms window** after the first press. After the window expires with no more clicks, `poll_action()` returns the count as a string (`"single"`, `"double"`, etc.).
+- Clicks counted within a **500 ms window** after the first press. After the window expires, `poll_action()` returns the count as a string (`"single"`, `"double"`, etc.).
 - Quad fires immediately on the 4th release (no window wait).
 - A hold of ≥ 2 s while pressed returns `"sleep"` immediately.
-- `btn.reset()` clears all pending state — call it at the start of any interactive screen to prevent carry-over clicks from the triggering gesture.
+- `btn.reset()` clears all pending state — call it at the start of any interactive screen.
 
 ### Double-click on toggle screens
 Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-click to flip the enabled state:
 - **WiFi**: toggles `wifi_enabled`, attempts connect or disconnect immediately.
-- **Online**: toggles `telemetry_enabled`; turning on kicks off a fresh API handshake + connecting animation. Turning off shows "API OFF".
+- **Online**: toggles `telemetry_enabled`; turning on kicks off a fresh API handshake + connecting animation.
 - **Telemetry**: toggles `telemetry_enabled` via `_apply_toggle()`.
+
+---
+
+## Single-click carousels
+
+### turtleOS sensor carousel (turtle_mode=true)
+
+Single-click enters `sensor_carousel()` configured for navigation screens:
+1. **Compass** screen — live heading from QMC5883L with cardinal directions.
+2. **Sailpoint** screen — sail-angle overlay on heading.
+3. **Servo** screen — sail servo status; double-click triggers a 60°→120°→60° test sweep.
+4. **Battery** screen — INA219 voltage, current, and charge estimate.
+
+### airOS sensor carousel (turtle_mode=false)
+
+Single-click enters `sensor_carousel()` configured for air quality:
+1. Calls `air.finish_sampling()` for one full reading.
+2. **CO2** screen (static, timed dwell).
+3. **TVOC** screen (static, timed dwell).
+4. **Temp** screen via `show_live()` — live-updating, exits on single click.
+5. **Summary** screen via `show_live()`.
+
+Any non-single click during a dwell exits the carousel early.
 
 ---
 
 ## Connectivity carousel in detail (`src/ui/flows.py`)
 
-Triple-click enters `connectivity_carousel()`, which walks screens in strict order:
+Triple-click enters `connectivity_carousel()` — same in both modes:
 
 ```
 Waiting → WiFi screen
@@ -197,26 +273,15 @@ Waiting → WiFi screen
 
 ---
 
-## Sensor carousel (`sensor_carousel` in `flows.py`)
-
-Single-click enters `sensor_carousel()`:
-1. Calls `air.finish_sampling()` for one full reading.
-2. Shows **CO2** screen (static, timed dwell).
-3. Shows **TVOC** screen (static, timed dwell).
-4. Shows **Temp** screen via `show_live(btn=btn, air=air)` — live-updating, exits on single click.
-5. Shows **Summary** screen via `show_live()`.
-
-Any non-single click during dwell exits the carousel early.
-
----
-
 ## The main event loop (`src/app/main.py`)
 
 `run()` is an infinite loop. It:
-1. Maintains a `status` dict (`wifi_ok`, `api_ok`, `api_sending`, `gps_on`) updated by the telemetry scheduler.
-2. Maintains a `screens` dict cache — screen objects are instantiated lazily on first use and cached. A failed instantiation is **not** cached as `None`; next access retries.
-3. Polls `btn.poll_action()` each iteration and dispatches to the appropriate flow function.
-4. Calls `telemetry_scheduler.tick(...)` on every iteration to handle background posting without blocking.
+1. Reads `config.json` at the top of each iteration; updates `_cfg_cell[0]` so background ticks see the latest config.
+2. Maintains a `status` dict (`wifi_ok`, `api_ok`, `api_sending`, `gps_on`) updated by the telemetry scheduler.
+3. Selects idle screen: `TurtleWaitingScreen` if `turtle_mode=true`, `WaitingScreen` otherwise.
+4. Maintains a `screens` dict cache — screen objects are instantiated lazily and cached. A failed instantiation is **not** cached as `None`; next access retries.
+5. Polls `btn.poll_action()` each iteration and dispatches to the appropriate flow function.
+6. Calls `telemetry_scheduler.tick(...)` on every iteration to handle background posting without blocking.
 
 **Screen cache pattern:**
 ```python
@@ -238,7 +303,7 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 - `telemetry_enabled` is `True` in config.
 - WiFi is connected.
 - The reading has real sensor data: `eco2 > 0`, `tvoc > 0`, temp in a plausible range, `0 ≤ rh ≤ 100`.
-- Sensor warmup is complete (not still in `begin_sampling` window).
+- Sensor warmup is complete.
 
 **Time source:** derives UTC epoch seconds from `machine.RTC().datetime()`, not `time.time()` (which starts at epoch 0 on cold boot until synced).
 
@@ -252,16 +317,22 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
+| `turtle_mode` | bool | `true` | **Primary mode switch** — `true` = turtleOS, `false` = airOS |
 | `wifi_enabled` | bool | `false` | |
 | `wifi_ssid` | str | `""` | |
 | `wifi_password` | str | `""` | |
-| `telemetry_enabled` | bool | `true` | controls both Online and Telemetry screens |
+| `telemetry_enabled` | bool | `true` | controls Online and Telemetry screens |
 | `telemetry_post_every_s` | int | `120` | min 10 |
 | `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
 | `device_id` | str | `""` | |
 | `device_key` | str | `""` | |
 | `gps_enabled` | bool | `false` | |
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
+| `compass_offset_deg` | int | `0` | magnetic declination correction |
+| `servo_present` | bool | `false` | authoritative flag for physical servo wiring |
+| `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
+| `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
+| `board_type` | str | `""` | override for HAL if platform detection is unreliable |
 
 Legacy key migration handled automatically: `"api-base"` → `"api_base"`, boolean strings normalized.
 
@@ -331,38 +402,52 @@ Call `toggle.draw()` on every `_draw()` call — it re-renders from scratch each
 2. Add a case in `src/app/main.py`'s `get_screen()` factory.
 3. Import the connection header if the screen should show connectivity icons.
 4. Pre-load the module in `main.py`'s `_preload_screens()` to avoid post-WiFi MemoryError on ESP32.
+5. If the screen is turtle-mode-specific, document which carousel it appears in.
+
+---
+
+## Deploying to the XIAO ESP32-S3
+
+The primary deploy script is `scripts/xiao_synker.sh`. It stages a XIAO-only copy (excludes Pico HAL and Pico-only overrides), then either hard-resets or syncs the board.
+
+```bash
+# Interactive mode (prompts for hard reset vs sync)
+./scripts/xiao_synker.sh
+
+# Non-interactive hard reset (wipe and re-upload)
+./scripts/xiao_synker.sh --fresh
+
+# Specify port explicitly
+./scripts/xiao_synker.sh --port /dev/cu.usbmodem141301
+```
+
+The script also offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
+
+**Manual mpremote operations:**
+```bash
+# REPL
+mpremote connect auto repl
+
+# Run a single test script
+mpremote connect auto run tests/blink.py
+
+# Check free flash
+mpremote connect auto exec "import uos; s=uos.statvfs('/'); print('Free:', s[0]*s[3]//1024, 'KB')"
+
+# Reset the board
+mpremote connect auto reset
+```
 
 ---
 
 ## Running tests
 
-There is no automated unit test suite. Tests in `tests/` are hardware integration scripts deployed directly to the device.
+There is no automated unit test suite. `tests/` contains hardware integration scripts deployed directly to the device.
 
-**To run a hardware test:**
 ```bash
-# Using mpremote (preferred)
-mpremote connect /dev/ttyACM0 run tests/blink.py
-
-# Using ampy
-ampy --port /dev/ttyACM0 run tests/blink.py
+mpremote connect auto run tests/i2c_scan.py
+mpremote connect auto run tests/sensor_debug.py
 ```
-
-**Manual REPL testing:**
-```bash
-mpremote connect /dev/ttyACM0
-# then type MicroPython code interactively
-```
-
-**Deploy the full app:**
-```bash
-# Sync device/ directory to the board (mpremote)
-mpremote connect /dev/ttyACM0 fs cp -r device/. :
-
-# Or use rshell
-rshell -p /dev/ttyACM0 rsync device /pyboard
-```
-
-After deploy, reset the board: `mpremote connect /dev/ttyACM0 reset` or press the physical reset button.
 
 ---
 
@@ -378,7 +463,7 @@ RAM is the limiting resource. Call `_gc()` before any `import`, sensor init, HTT
 Do not add top-level imports to screen files or flow modules. Import inside functions / `try` blocks. Screen modules are pre-loaded at boot (while heap is clean) but class instances are created lazily.
 
 ### 4. Pre-load screen modules before WiFi (`_preload_screens`)
-After WiFi runs on ESP32, the heap is fragmented. Module bytecode imports (which allocate contiguous RAM for the code object) can then fail. `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen that's used in the carousel, add it to the `_preload_screens()` list.
+After WiFi runs on ESP32, the heap is fragmented. Module bytecode imports can then fail. `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen used in any carousel, add it to the `_preload_screens()` list.
 
 ### 5. Font pre-warming
 Font writers have lazy internal caches. Calling `w.size("A")` once during boot (before WiFi) warms those caches and prevents a MemoryError on first use. `_preload_screens()` does this for all fonts.
@@ -394,19 +479,25 @@ If `get_screen("foo")` raises an exception, the key is not written. The next cal
 The `timezone_offset_min` config key is applied only at display time in `TimeScreen`. Never write local time to the RTC.
 
 ### 9. `api_ok` in status lags the Online screen handshake
-`status["api_ok"]` is updated by the telemetry scheduler after a successful background POST, which may not have run yet when the user opens the Online screen. The Online screen's own `_connected` flag reflects the live handshake result — use that for the connection header icon on that screen. The carousel does not gate progression on `api_ok` for this reason.
+`status["api_ok"]` is updated by the telemetry scheduler after a successful background POST, which may not have run yet when the user opens the Online screen. The Online screen's own `_connected` flag reflects the live handshake result — use that for the connection header icon on that screen.
 
 ### 10. HTTPS is not supported
-`urequests.py` in `src/lib/` does not support TLS on RP2040 without additional firmware. `config.py` forcibly strips `https://` → `http://`. Do not add TLS without also swapping the HTTP library.
+`urequests.py` does not support TLS. `config.py` forcibly strips `https://` → `http://`. Do not add TLS without also swapping the HTTP library.
 
 ### 11. `telemetry_enabled` is shared between Online and Telemetry screens
 Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-click on either screen toggles the same setting. Reload config after toggling to stay in sync.
 
 ### 12. ESP32 platform detection via `uos.uname().machine`
-`sys.platform` returns `"esp32"` on all ESP32 variants (plain ESP32, ESP32-S3, and XIAO ESP32-S3). `platform_tag()` resolves this by checking `uos.uname().machine` in priority order: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"esp32s3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings. If `uname` is unavailable (old firmware), the fallback returns `"esp32"` for all ESP32 targets, loading the wrong pin map.
+`sys.platform` returns `"esp32"` on all ESP32 variants. `platform_tag()` resolves this in priority order: `"xiao"` in machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings.
 
-### 13. ESP32-S3 USB/VBUS power detection
-The ESP32-S3-N16-R8 has no standard VBUS-detect GPIO (unlike Pico's GP24). `usb_power_present()` in `board_esp32_s3.py` returns `False` by default. Battery monitoring will be handled by the INA219 sensor over I2C (0x40) — wire it on the shared bus when ready and set `USB_DETECT_PIN` if you also want explicit VBUS detection.
+### 13. XIAO has no VBUS-detect GPIO
+`usb_power_present()` in `board_xiao_esp32_s3.py` returns `False` by default. Battery monitoring is handled by the INA219 over I2C (0x40).
+
+### 14. `servo_present` is the authoritative wiring flag
+`PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of whether a servo is physically wired, so software cannot detect physical connection. Always gate servo operations on `cfg["servo_present"]`.
+
+### 15. `turtle_mode` is read fresh each main-loop iteration
+The idle screen object (`turtle_waiting_scr`) is instantiated once at startup. Changing `turtle_mode` in config at runtime has no effect until the next power-cycle. Do not add hot-reload for this; the instantiation cost is too high mid-loop.
 
 ---
 
@@ -419,14 +510,20 @@ The ESP32-S3-N16-R8 has no standard VBUS-detect GPIO (unlike Pico's GP24). `usb_
 | Config manager | `device/config.py` |
 | Platform detection | `device/src/hal/platform.py` |
 | HAL facade | `device/src/hal/board.py` |
-| Pico pin map | `device/src/hal/board_pico.py` |
-| ESP32 pin map | `device/src/hal/board_esp32.py` |
+| XIAO ESP32-S3 pin map (primary) | `device/src/hal/board_xiao_esp32_s3.py` |
 | ESP32-S3 pin map | `device/src/hal/board_esp32_s3.py` |
-| XIAO ESP32-S3 pin map | `device/src/hal/board_xiao_esp32_s3.py` |
+| ESP32 pin map | `device/src/hal/board_esp32.py` |
+| Pico pin map | `device/src/hal/board_pico.py` |
 | Button handler | `device/src/input/button.py` |
 | Screen carousels | `device/src/ui/flows.py` |
 | OLED wrapper | `device/src/ui/oled.py` |
 | Connection header | `device/src/ui/connection_header.py` |
+| Turtle idle screen | `device/src/ui/screens/turtle_waiting.py` |
+| Sail servo screen | `device/src/ui/screens/servo.py` |
+| Compass screen | `device/src/ui/screens/compass.py` |
+| Battery screen | `device/src/ui/screens/battery.py` |
 | Telemetry scheduler | `device/src/app/telemetry_scheduler.py` |
 | Air sensor + reading | `device/src/sensors/air.py` |
+| GPS parser | `device/src/sensors/ublox6gps.py` |
 | HTTP client | `device/src/lib/urequests.py` |
+| XIAO deploy script | `scripts/xiao_synker.sh` |
