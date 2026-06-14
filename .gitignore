@@ -18,3 +18,8 @@ dist/
 
 scripts/basic_config.json
 config.json
+
+# Generated/local directories not needed in the repo
+.claude/
+.tem_xiao_sync/
+backups/
