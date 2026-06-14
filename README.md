@@ -35,24 +35,46 @@ The hope turtle is a wind-powered vessel. turtleOS closes the navigation loop en
 
 | Component | Role | Dev Status |
 |---|---|---|
-| Seeed Studio XIAO ESP32-S3 | Main MCU — runs turtleOS, built-in WiFi for telemetry | Active |
+| Seeed Studio XIAO ESP32-S3 | Main MCU — runs turtleOS, built-in WiFi for telemetry | CORE |
 | MG996R sail servo | Sail actuator — PWM-driven boom control at 50 Hz | Active |
 | u-blox NEO-6M GPS | Position fix — NMEA lat/lon stream over UART | Active |
 | GY-271 / QMC5883L compass | Magnetic heading — bearing for course-error calculation | Active |
 | AS5600 magnetic angle encoder | Sail boom position feedback — closed-loop servo control | In development |
 | INA219 current/power monitor | Battery voltage, current, and charge estimation over I2C | In development |
-| SSD1306 / SH1106 OLED (128×64) | Navigation display — heading, GPS state, battery, turtle animation | Active |
-| DS3231 RTC | UTC timekeeping — survives power-off without network sync | Active |
-| Tactile button | User input — screen carousel, config toggles, debug gate | Active |
-| ENS160 CO₂ / TVOC sensor | Air quality (airOS mode only) | Legacy / optional |
-| AHT21 temperature + humidity | Ambient climate (airOS mode only) | Legacy / optional |
-| BME280 pressure / temp / humidity | Weather sensing — barometric pressure and ambient conditions | Planned / optional |
-| BNO085 IMU | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | Recommended / planned |
-| Pololu S13V25F6 voltage regulator | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | Planned |
-| Adafruit bq25185 solar charger | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | Planned |
-| 21700 Li-ion cell (4200mAh 3.7V 30A) | Primary energy storage — high-capacity, high-discharge cell for extended voyages | Planned |
-| Physical on/off switch | Main power cutoff — required for field safety and battery conservation between deployments | Planned |
-| Reset button | Hardware reset accessible to the user without opening the hull | Planned |
-| LoRa / Meshtastic module | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future |
+| SSD1306 / SH1106 OLED (128×64) | Navigation display — heading, GPS state, battery, turtle animation | CORE |
+| DS3231 RTC | UTC timekeeping — survives power-off without network sync | CORE |
+| ProtoMate for XIAO  | Circuit board to place Xiao and connect wires | CORE |
+| AHT21 + ENS160 circuit | One circuit that does temp, humidity and TVOC | active |
+| ICM-20948 | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | CORE - In dev |
+| Pololu S13V25F6 voltage regulator | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | CORE - In dev |
+| Adafruit bq25185 solar charger | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | CORE - In dev |
+| 21700 Li-ion cell (4200mAh 3.7V 30A) | Primary energy storage — high-capacity, high-discharge cell for extended voyages | CORE |
+| Xiao Wio-SX1262 Kit for Meshtastic & LoRa | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future |
+
+## Key Components
+
+| Component | Role | Dev Status |
+|---|---|---|
+| Tactile button | User input — screen carousel, config toggles, debug gate | CORE |
+| Physical on/off switch | Main power cutoff — required for field safety and battery conservation between deployments | CORE |
+| 3M screws x8 | 12mm long Tappered screws for connecting circuit boards to spacers | CORE |
+| 3M PCB spaces x5 | 2cm long spacers to seperate circuit boards | CORE |
+| Blue tact | Glue paste for adding circuits onto boards | optional |
+| 1M screws | 8mm long screws for connecting circuits to boards | CORE |
+| Dupont Cables | Selection of MF, FF, MM 5cm/10cm/20cm colored jumper cables | CORE |
+
+
+## Physical Components
+
+The hope turtles various physical components can be either 3D printed or made out of wood by you or your local carpenter.  Hang tight... we're still setting up the repository of STLs and carpentry PDFs.  It should be ready soon. 
+
+
+
+
+
+
+
+
+
 
 
