@@ -1,8 +1,10 @@
 # turtleOS 2.x — Developer Guide
 
-turtleOS is a MicroPython firmware for a **Seeed Studio XIAO ESP32-S3** (primary target) that drives a sail-servo actuator, reads GPS and compass, monitors battery via INA219, and displays a live turtle animation on a 128×64 OLED. It is designed for marine and field navigation applications.
+turtleOS is a MicroPython firmware for the **Seeed Studio XIAO ESP32-S3** — the **sole deployment target going forward** — that drives a sail-servo actuator, reads GPS and compass, monitors battery via INA219, and displays a live turtle animation on a 128×64 OLED. It is designed for marine and field navigation applications.
 
-**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air.earthen.io`. The Hardware Abstraction Layer is intentionally maintained for all supported boards so the firmware can be ported to future hardware without rewriting application code.
+The XIAO's MicroPython build places the Python heap in its **8 MB Octal PSRAM** (~7,998 KB total; ~7,996 KB free after a full boot). Memory is **not** a practical constraint on this hardware — see [Memory headroom](#memory-headroom-xiao-esp32-s3). The Raspberry Pi Pico W and basic ESP32 are no longer deployment targets; their HAL files remain in the tree as legacy/portability artifacts only.
+
+**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air.earthen.io`. The Hardware Abstraction Layer keeps board-specific code isolated in `src/hal/` so the firmware could be ported to future hardware without rewriting application code — but only the XIAO HAL is actively maintained and tested.
 
 ---
 
@@ -155,7 +157,7 @@ Hold the button **at power-on for 2 seconds** → boot halts and drops to the Mi
 
 ## Board pin maps
 
-All board-specific code lives in `src/hal/`. Never hardcode pins outside these files. The HAL is maintained for all supported boards for backwards and forwards compatibility.
+All board-specific code lives in `src/hal/`. Never hardcode pins outside these files. **The XIAO ESP32-S3 is the only deployment target**; the Pico, ESP32, and generic ESP32-S3 columns below are legacy reference for code that still exists in the tree — do not spend effort keeping them working.
 
 | | Raspberry Pi Pico | ESP32 | ESP32-S3-N16-R8 | **XIAO ESP32-S3** (primary) |
 |---|---|---|---|---|
@@ -169,7 +171,7 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
 | USB power detect | GP24 (VBUS) | board-specific | Returns `False` | Returns `False` |
-| Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | High — same risk |
+| Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | **None — 8 MB PSRAM heap** (see Memory headroom) |
 
 **I2C devices on the shared bus** (addresses the same across all ESP32-S3 variants):
 
@@ -204,10 +206,10 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | Gesture | turtleOS action | airOS action |
 |---------|-----------------|--------------|
 | **Single click** | turtle navigation carousel | air quality carousel |
-| **Double click** | Time screen | Time screen |
+| **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 2 s** | Sleep / low-power screen | Sleep / low-power screen |
+| **Hold 2 s** | Time → Battery → Sleep screens | Time → Battery → Sleep screens |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
@@ -344,8 +346,7 @@ Legacy key migration handled automatically: `"api-base"` → `"api_base"`, boole
 
 | Attribute | Font | Approx height |
 |-----------|------|--------------|
-| `f_vsmall` | PTSansNarrow 7 | 7 px |
-| `f_small` | Narrow 7 (aliased) | 7 px |
+| `f_small` | PTSansNarrow 7 | 7 px |
 | `f_med` | Mulish 14 | 11 px |
 | `f_large` | Arvo 24 | 20 px | **trimmed set: space · 0-9 · - · . · : · C · E · N · S · W only** |
 | `f_arvo16` | Arvo 16 | 14 px |
@@ -451,22 +452,52 @@ mpremote connect auto run tests/sensor_debug.py
 
 ---
 
+## Memory headroom (XIAO ESP32-S3)
+
+The XIAO's MicroPython heap lives in 8 MB PSRAM, so memory pressure is **not an active constraint** on the deployment target. Measured on hardware (June 2026):
+
+| Metric | Value |
+|---|---|
+| Total Python heap | ~7,998 KB |
+| Free after full boot (app + all preloads) | ~7,996 KB |
+| Full `_preload_screens()` cost (all screens + nav stack) | ~91 KB |
+| Entire `src/nav/` stack bytecode | ~30 KB (≈0.4% of heap) |
+| Largest contiguous block allocatable after boot | 4 MB |
+
+Check headroom anytime:
+
+```bash
+mpremote connect auto exec "import gc; gc.collect(); print('free:', gc.mem_free()//1024, 'KB')"
+mpremote connect auto exec "import uos; s=uos.statvfs('/'); print('flash free:', s[0]*s[3]//1024, 'KB')"
+```
+
+The `[PRELOAD] start/done` lines printed at every boot show heap before/after module loading — if those numbers ever trend toward zero, that is the early warning.
+
+---
+
 ## Critical gotchas
 
+> Gotchas 1–5 below are **memory-discipline conventions inherited from the
+> small-heap boards (Pico W ~70 KB free, non-PSRAM ESP32)**. On the XIAO's
+> 8 MB heap they are not active constraints — `MemoryError`s from these
+> paths do not occur in practice. Keep following them as cheap hygiene
+> (they cost nothing and keep the code portable), but do not treat them as
+> blocking design constraints when building new features.
+
 ### 1. WiFi MUST init before AirSensor on ESP32
-ESP32's WiFi PHY allocates a large contiguous block. If AirSensor (also a large allocation) runs first, the heap becomes fragmented and WiFi init crashes with `MemoryError`. The boot pipeline enforces this order. Do not change the step order.
+ESP32's WiFi PHY allocates a large contiguous block. If AirSensor (also a large allocation) runs first, the heap becomes fragmented and WiFi init crashes with `MemoryError` on small-heap boards. The boot pipeline enforces this order; there is no reason to change it.
 
 ### 2. `gc.collect()` before every heavy allocation
-RAM is the limiting resource. Call `_gc()` before any `import`, sensor init, HTTP request, or JSON parse. MicroPython does not compact the heap; fragmentation is permanent until reset.
+Call `_gc()` before any `import`, sensor init, HTTP request, or JSON parse. MicroPython does not compact the heap; fragmentation is permanent until reset. (On the XIAO's 8 MB heap this is hygiene, not survival.)
 
 ### 3. Lazy imports everywhere
-Do not add top-level imports to screen files or flow modules. Import inside functions / `try` blocks. Screen modules are pre-loaded at boot (while heap is clean) but class instances are created lazily.
+Do not add top-level imports to screen files or flow modules. Import inside functions / `try` blocks. Screen modules are pre-loaded at boot but class instances are created lazily.
 
 ### 4. Pre-load screen modules before WiFi (`_preload_screens`)
-After WiFi runs on ESP32, the heap is fragmented. Module bytecode imports can then fail. `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen used in any carousel, add it to the `_preload_screens()` list.
+On small-heap boards, module bytecode imports can fail after WiFi fragments the heap, so `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen used in any carousel, add it to the `_preload_screens()` list — it keeps boot deterministic and costs ~nothing.
 
 ### 5. Font pre-warming
-Font writers have lazy internal caches. Calling `w.size("A")` once during boot (before WiFi) warms those caches and prevents a MemoryError on first use. `_preload_screens()` does this for all fonts.
+Font writers have lazy internal caches. Calling `w.size("A")` once during boot warms those caches. `_preload_screens()` does this for all fonts.
 
 ### 6. `btn.reset()` vs `_post_screen_flush()`
 - `btn.reset()` clears ALL pending click state. Use it at the start of interactive screens (e.g. `WiFiScreen.show_live`).
