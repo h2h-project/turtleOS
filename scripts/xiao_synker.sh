@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ============================================================
-# AirBuddy XIAO Synker
+# turtleOS XIAO Synker
 # ------------------------------------------------------------
-# Uploads the full AirBuddy firmware to a connected XIAO
+# Uploads the full turtleOS firmware to a connected XIAO
 # ESP32-S3 (or generic ESP32-S3).
 #
 # Excluded: Pico HAL, Pico-only override sources
@@ -41,7 +41,7 @@ die()  { echo; echo "ERROR: $1"; exit 1; }
 
 print_help() {
   cat <<EOF
-AirBuddy XIAO Synker — uploads the full XIAO ESP32-S3 build
+turtleOS XIAO Synker — uploads the full XIAO ESP32-S3 build
 
 Usage:
   ./scripts/xiao_synker.sh [options]
@@ -225,7 +225,7 @@ MPREMOTE_CMD=("$MPREMOTE" connect "$PORT")
 # ------------------------------------------------------------
 
 echo
-echo "==> AirBuddy XIAO Synker"
+echo "==> turtleOS XIAO Synker"
 echo
 echo "Uploads the full XIAO ESP32-S3 build:"
 echo "  Included: GPS, compass, servo/turtle, all screens, all drivers."
@@ -346,7 +346,7 @@ for name in os.listdir('/'):
 print('Board cleared.')
 " || warn "Some files could not be removed — continuing anyway."
 
-  msg "Uploading XIAO AirBuddy firmware"
+  msg "Uploading turtleOS firmware"
   "${MPREMOTE_CMD[@]}" fs cp -r "$STAGE_DIR/." : \
     || die "Upload failed. Try reconnecting the board and running again."
   echo "Upload complete."
@@ -365,7 +365,7 @@ fi
 # ------------------------------------------------------------
 
 if [[ "$MODE" == "sync" ]]; then
-  msg "Uploading XIAO AirBuddy firmware"
+  msg "Uploading turtleOS firmware"
   "${MPREMOTE_CMD[@]}" fs cp -r "$STAGE_DIR/." : \
     || die "Upload failed. Try reconnecting the board and running again."
   echo "Upload complete."
@@ -434,7 +434,7 @@ show_flash_usage
 # ------------------------------------------------------------
 
 echo
-echo "  Done!  AirBuddy XIAO build is installed."
+echo "  Done!  turtleOS is installed."
 echo
 msg "Opening REPL"
 echo "  Press Ctrl-D inside the REPL to reboot and see the full boot log."
