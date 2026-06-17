@@ -247,70 +247,111 @@ if [[ "$NEEDS_FLASH" == "true" ]]; then
 
     echo "Firmware: $(basename "$BIN_FILE")"
     echo
-    echo "To put the XIAO ESP32-S3 into bootloader mode:"
-    echo
-    echo "  1. Unplug the USB cable if it is connected."
-    echo "  2. Locate the small BOOT button on the back of the board (labelled 'B')."
-    echo "  3. Press and hold the BOOT button."
-    echo "  4. While holding BOOT, plug the USB cable back in."
-    echo "  5. Release the BOOT button — the board is now in bootloader mode."
-    echo
-    echo "The board will appear as a new USB device but will NOT show a REPL prompt."
-    echo "That is expected — it means it is ready to be flashed."
-    echo
 
-    read -r -p "Press Enter once the board is in bootloader mode..."
-    echo
-
-    # Detect available serial ports
-    if [[ "$(uname)" == "Darwin" ]]; then
-        FLASH_PORTS=$(ls /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART* 2>/dev/null || true)
-    else
-        FLASH_PORTS=$(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)
-    fi
-
-    FLASH_PORT=""
-    PORT_COUNT=$(printf '%s' "$FLASH_PORTS" | grep -c . 2>/dev/null || echo 0)
-
-    if [[ "$PORT_COUNT" -eq 1 ]]; then
-        FLASH_PORT="$FLASH_PORTS"
-        echo "Found board at: $FLASH_PORT"
-    elif [[ "$PORT_COUNT" -gt 1 ]]; then
-        echo "Multiple USB ports detected:"
-        i=1
-        while IFS= read -r p; do
-            echo "  $i) $p"
-            ((i++))
-        done <<< "$FLASH_PORTS"
+    # Print bootloader instructions (called again on each retry)
+    _bootloader_instructions() {
+        echo "To put the XIAO ESP32-S3 into bootloader mode:"
         echo
-        read -r -p "Enter the number of your XIAO port: " PORT_NUM
-        FLASH_PORT=$(printf '%s\n' "$FLASH_PORTS" | sed -n "${PORT_NUM}p")
-    else
-        echo "No USB serial port detected automatically."
-        echo "Common locations:"
-        echo "  macOS:  /dev/cu.usbmodem1234  or  /dev/cu.SLAB_USBtoUART"
-        echo "  Linux:  /dev/ttyACM0  or  /dev/ttyUSB0"
-        read -r -p "Enter the port path for your board: " FLASH_PORT
-    fi
+        echo "  1. Unplug the USB cable if it is connected."
+        echo "  2. Locate the small BOOT button on the back of the board (labelled 'B')."
+        echo "  3. Press and hold the BOOT button."
+        echo "  4. While holding BOOT, plug the USB cable back in."
+        echo "  5. Release the BOOT button — the board is now in bootloader mode."
+        echo
+        echo "The board will appear as a new USB device but will NOT show a REPL prompt."
+        echo "That is expected — it means it is ready to be flashed."
+        echo
+    }
 
-    [[ -n "$FLASH_PORT" ]] || die "No port selected — cannot flash."
+    # Detect available serial ports and set FLASH_PORT
+    # Uses wc -l (always exits 0) to avoid the grep-c double-zero bug.
+    _detect_flash_port() {
+        local ports count
+        if [[ "$(uname)" == "Darwin" ]]; then
+            ports=$(ls /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART* 2>/dev/null || true)
+        else
+            ports=$(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)
+        fi
 
-    echo
-    echo "Step 1/2  Erasing flash (≈10 s)..."
-    "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" erase_flash \
-        || die "Erase failed. Make sure the board is in bootloader mode and try again."
+        count=0
+        [[ -n "$ports" ]] && count=$(printf '%s\n' "$ports" | wc -l | tr -d '[:space:]')
 
-    echo
-    echo "Step 2/2  Writing MicroPython firmware (≈30 s)..."
-    "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" --baud 921600 \
-        write_flash -z 0 "$BIN_FILE" \
-        || die "Flash failed. Try putting the board back into bootloader mode and running the installer again."
+        if [[ "$count" -eq 1 ]]; then
+            FLASH_PORT="$ports"
+            echo "Found board at: $FLASH_PORT"
+        elif [[ "$count" -gt 1 ]]; then
+            echo "Multiple USB ports detected:"
+            local i=1
+            while IFS= read -r p; do
+                echo "  $i) $p"
+                i=$((i + 1))
+            done <<< "$ports"
+            echo
+            read -r -p "Enter the number of your XIAO port: " PORT_NUM
+            FLASH_PORT=$(printf '%s\n' "$ports" | sed -n "${PORT_NUM}p")
+        else
+            echo "No USB serial port detected automatically."
+            echo "Common locations:"
+            echo "  macOS:  /dev/cu.usbmodem1234  or  /dev/cu.SLAB_USBtoUART"
+            echo "  Linux:  /dev/ttyACM0  or  /dev/ttyUSB0"
+            read -r -p "Enter the port path for your board: " FLASH_PORT
+        fi
+    }
+
+    FLASH_DONE=false
+    _bootloader_instructions
+
+    while [[ "$FLASH_DONE" == "false" ]]; do
+        read -r -p "Press Enter once the board is in bootloader mode..."
+        echo
+
+        FLASH_PORT=""
+        _detect_flash_port
+
+        if [[ -z "$FLASH_PORT" ]]; then
+            echo "No port selected — skipping this attempt."
+        else
+            echo
+            echo "Step 1/2  Erasing flash (≈10 s)..."
+            if "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" erase-flash; then
+                echo
+                echo "Step 2/2  Writing MicroPython firmware (≈30 s)..."
+                if "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" --baud 921600 \
+                        write-flash -z 0 "$BIN_FILE"; then
+                    FLASH_DONE=true
+                else
+                    warn "Write step failed."
+                fi
+            else
+                warn "Erase step failed."
+            fi
+        fi
+
+        if [[ "$FLASH_DONE" == "false" ]]; then
+            echo
+            echo "Common causes of failure:"
+            echo "  - The board was not fully in bootloader mode when the command ran."
+            echo "  - The port became unavailable (boards sometimes re-enumerate on connect)."
+            echo "  - Wrong port selected — unplug and reconnect to confirm the path."
+            echo
+            read -r -p "Try again? y/n: " RETRY_FLASH
+            case "$(echo "$RETRY_FLASH" | tr '[:upper:]' '[:lower:]')" in
+                y|yes)
+                    echo
+                    _bootloader_instructions
+                    ;;
+                *)
+                    die "Flash aborted. Run the installer again when you're ready."
+                    ;;
+            esac
+        fi
+    done
 
     echo
     echo "  ✓  MicroPython flashed successfully!"
     echo
     echo "Now unplug the USB cable and plug it back in."
-    echo "The board will boot into MicroPython — you should see the REPL if you open a serial monitor."
+    echo "The board will boot into MicroPython."
     echo
 
     read -r -p "Press Enter once you have reconnected the board..."
@@ -318,11 +359,17 @@ if [[ "$NEEDS_FLASH" == "true" ]]; then
 fi
 
 # ------------------------------------------------------------
-# Ready to set sail?
+# Ready to install turtleOS?
 # ------------------------------------------------------------
 
+TURTLEOS_VERSION="$(grep 'self\.version_num\s*=\s*"' "$DEVICE_DIR/src/app/booter.py" 2>/dev/null \
+    | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+[[ -n "$TURTLEOS_VERSION" ]] || TURTLEOS_VERSION="unknown"
+
+echo "Your Xiao ESP32-S3 is now set up to run MicroPython!"
+echo
 while true; do
-    read -r -p "Ready to set sail? y/n: " READY
+    read -r -p "Are you ready to install the latest version of turtleOS on your board (version $TURTLEOS_VERSION)? y/n: " READY
     case "$(echo "$READY" | tr '[:upper:]' '[:lower:]')" in
         y|yes) echo; break ;;
         n|no)  echo; echo "No problem — come back when you're ready. Fair winds!"; exit 0 ;;
@@ -423,9 +470,75 @@ echo "Most OLED modules need no offset. If your display is slightly misaligned"
 echo "horizontally (SH1106 variant), try an offset of 2."
 OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
 
-# turtle_mode is always true for this installer
+echo
+echo "--- Navigation mission ---"
+echo "Where is your turtle sailing to?  Choose a Hope Turtle mission or enter"
+echo "custom coordinates.  You can change this any time via config.json."
+echo
+echo "  1) Al Mawasi, Gaza"
+echo "  2) South Hwanghae, North Korea"
+echo "  3) Santa Cruz del Norte, Cuba"
+echo "  4) Enter custom coordinates"
+echo "  5) Skip — use default (Al Mawasi, Gaza)"
+echo
+
+DEST_NAME="Al Mawasi, Gaza"
+DEST_LAT="31.35"
+DEST_LON="34.27"
+
+while true; do
+    read -r -p "Choose your mission [1-5]: " DEST_CHOICE
+    case "$DEST_CHOICE" in
+        1)
+            DEST_NAME="Al Mawasi, Gaza"
+            DEST_LAT="31.35"
+            DEST_LON="34.27"
+            break ;;
+        2)
+            DEST_NAME="South Hwanghae, North Korea"
+            DEST_LAT="38.00"
+            DEST_LON="125.50"
+            break ;;
+        3)
+            DEST_NAME="Santa Cruz del Norte, Cuba"
+            DEST_LAT="23.16"
+            DEST_LON="-81.92"
+            break ;;
+        4)
+            echo
+            DEST_NAME="$(prompt_required "Destination name (e.g. Port of Call, Country)")"
+            DEST_LAT="$(prompt_required "Latitude  (decimal degrees, e.g. 31.35)")"
+            DEST_LON="$(prompt_required "Longitude (decimal degrees, e.g. 34.27)")"
+            break ;;
+        5|"")
+            break ;;
+        *)
+            echo "  (Please enter a number from 1 to 5.)" ;;
+    esac
+done
+
+echo "  Destination: $DEST_NAME  ($DEST_LAT, $DEST_LON)"
+
+echo
+echo "--- Navigation tuning ---"
+echo "These control autopilot behaviour.  Press Enter to accept each default."
+echo "All values can be adjusted later by editing config.json on the device."
+echo
+
+ARRIVAL_RADIUS_M="$(prompt_default "Arrival radius — distance that counts as 'arrived' (metres)" "300")"
+GPS_LOSS_SAFE_S="$(prompt_default "GPS loss timeout — feather sail after this many seconds without a fix" "120")"
+LOW_BATT_PCT="$(prompt_default "Low-battery threshold — feather sail below this charge level (0-90 %)" "20")"
+SAIL_MIN_DEG="$(prompt_default "Sail servo minimum angle — lower physical stop (degrees)" "10")"
+SAIL_MAX_DEG="$(prompt_default "Sail servo maximum angle — upper physical stop (degrees)" "170")"
+LUFF_SWEEP_DPS="$(prompt_default "Luff sweep speed (degrees/second, 2-30)" "8")"
+LUFF_RESWEEP_S="$(prompt_default "Luff re-sweep interval in SAIL-NAV mode (seconds)" "600")"
+LUFF_THRESHOLD_MULT="$(prompt_default "Luff detection sensitivity multiplier (1.5-20.0)" "5.0")"
+NAV_CYCLE_MS="$(prompt_default "Autopilot cycle interval (milliseconds, 100-2000)" "300")"
+
+# turtle_mode is always true for this installer; XIAO has no LED so morse_bless stays off
 TURTLE_MODE="true"
 JOKE_MODE="false"
+MORSE_BLESS="false"
 
 # ------------------------------------------------------------
 # Generate config.json
@@ -440,8 +553,13 @@ fi
 
 cat > "$TMP_CONFIG" <<EOF
 {
+  "board_type": "xiao_esp32s3",
   "turtle_mode": $TURTLE_MODE,
+  "joke_mode": $JOKE_MODE,
+  "morse_bless": $MORSE_BLESS,
   "gps_enabled": $GPS_ENABLED,
+  "servo_present": $SERVO_PRESENT,
+  "oled_col_offset": $OLED_COL_OFFSET,
   "wifi_enabled": $WIFI_ENABLED,
   "wifi_ssid": "$(escape_json_string "$WIFI_SSID")",
   "wifi_password": "$(escape_json_string "$WIFI_PASSWORD")",
@@ -451,10 +569,19 @@ cat > "$TMP_CONFIG" <<EOF
   "device_id": "$(escape_json_string "$DEVICE_ID")",
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
   "timezone_offset_min": $TZ_JSON,
-  "oled_col_offset": $OLED_COL_OFFSET,
-  "servo_present": $SERVO_PRESENT,
-  "joke_mode": $JOKE_MODE,
-  "compass_offset_deg": $COMPASS_OFFSET_DEG
+  "compass_offset_deg": $COMPASS_OFFSET_DEG,
+  "dest_name": "$(escape_json_string "$DEST_NAME")",
+  "dest_coord": [$DEST_LAT, $DEST_LON],
+  "waypoints": [],
+  "arrival_radius_m": $ARRIVAL_RADIUS_M,
+  "gps_loss_safe_s": $GPS_LOSS_SAFE_S,
+  "low_batt_pct": $LOW_BATT_PCT,
+  "sail_min_deg": $SAIL_MIN_DEG,
+  "sail_max_deg": $SAIL_MAX_DEG,
+  "luff_sweep_dps": $LUFF_SWEEP_DPS,
+  "luff_resweep_s": $LUFF_RESWEEP_S,
+  "luff_threshold_mult": $LUFF_THRESHOLD_MULT,
+  "nav_cycle_ms": $NAV_CYCLE_MS
 }
 EOF
 

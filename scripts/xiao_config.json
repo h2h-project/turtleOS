@@ -3,9 +3,9 @@
     "board_type": "xiao_esp32s3",
     "wifi_enabled": true,
     "wifi_ssid": "Wu-Tang LAN",
-    "wifi_password": "W3L0v3b008135!",
+    "wifi_password": "Wu-Tang LAN",
     "gps_enabled": true,
-    "api_base": "http://air2.earthen.io",
+    "api_base": "http://hopeturtle.org",
     "device_id": "AB_09",
     "device_key": "2Y3WeIeKIyKzG6SKc__XphZt",
 
