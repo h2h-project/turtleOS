@@ -5,8 +5,8 @@ set -e
 # turtleOS Installer
 # ------------------------------------------------------------
 # First-time setup for the hope turtle XIAO ESP32-S3.
-# Clones the turtleOS repo, walks you through configuration,
-# and uploads the firmware to your connected board.
+# Walks you through MicroPython flashing (if needed),
+# configures your turtle, and uploads turtleOS firmware.
 #
 # Usage (one-liner):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/turtle_install.sh)
@@ -17,66 +17,122 @@ set -e
 
 cat <<'BANNER'
 
-      ~   ~  ~    ~  ~  ~    ~  ~   ~   ~  ~
-    ~  .-~~~-.  .-~~~-.  .-~~~-.  .-~~~-.  ~
-   ~  (       )(       )(       )(       )  ~
-    ~  '-~~~-'  '-~~~-'  '-~~~-'  '-~~~-'  ~
-      ~   ~  ~    ~  ~  ~    ~  ~   ~   ~  ~
+  _______    ___
+/         \ |  0|
+|         |/ __\|
+|___________/
+ |__| |__|
 
-   _                       _____           _   _
-  | |__   ___  _ __   ___ |_   _|_  _ _ _| |_| | ___
-  | '_ \ / _ \| '_ \ / -_)  | || || | '__| __| |/ -_)
-  | | | | (_) | |_) |  __/  | ||_,_|_|  \__|_|\___|
-  |_| |_|\___/| .__/ \___|  |_|
-              |_|               I N S T A L L E R
+ _____  _   _ ____  _____ _      _____   ___    ____
+|_   _|| | | |  _ \|_   _|| |   | ____| / _ \  / ___|
+  | | | | | | |_) |  | | | |   |  _|  | | | | \__ \
+  | | | |_| |  _ <   | | | |___| |___ | |_| |  ___) |
+  |_|  \___/|_| \_\  |_| |_____|_____| \___/  |____/
 
-                  ~  set sail for hope  ~
+          D E V I C E   I N S T A L L E R
+
+          ~ A Human to Human project ~
 
 BANNER
 
-echo "Welcome! You're about to install turtleOS on your XIAO ESP32-S3."
-echo
-echo "This script will:"
-echo "  1. check that Git and mpremote are installed"
-echo "  2. download the turtleOS code to ~/Documents/HopeTurtle"
-echo "  3. ask a few questions to configure your turtle"
-echo "  4. upload the firmware to your connected XIAO ESP32-S3"
-echo "  5. set the onboard clock and open the live boot log"
-echo
-echo "Before you start, make sure you have:"
-echo "  - A XIAO ESP32-S3 with MicroPython already flashed (see first_time_setup.md)"
-echo "  - Your WiFi network name and password"
-echo "  - Your hope turtle device ID and key from hopeturtles.org"
+echo "Welcome!  You're about to install turtleOS onto your Xiao ESP32-S3"
+echo "microcontroller.  Make sure that this is in fact your circuit."
+echo "The project now only uses this board."
 echo
 
+# ------------------------------------------------------------
+# MicroPython flash check
+# ------------------------------------------------------------
+
+NEEDS_FLASH=false
+
 while true; do
-    read -r -p "Ready to set sail? y/n: " READY
-    case "${READY,,}" in
-        y|yes) echo; break ;;
-        n|no)  echo; echo "No problem — come back when you're ready. Fair winds!"; exit 0 ;;
+    read -r -p "First things first, have you flashed your board yet with the MicroPython firmware? y/n: " FLASHED
+    case "$(echo "$FLASHED" | tr '[:upper:]' '[:lower:]')" in
+        y|yes) NEEDS_FLASH=false; break ;;
+        n|no)  NEEDS_FLASH=true;  break ;;
         *)     echo "Please answer y or n." ;;
     esac
 done
 
+echo
+
 # ------------------------------------------------------------
-# Dependency checks
+# Workspace location (needed early for the tools venv)
+# ------------------------------------------------------------
+
+WORKDIR="$HOME/Documents/HopeTurtle"
+VENV_DIR="$WORKDIR/.tools-venv"
+mkdir -p "$WORKDIR"
+
+# ------------------------------------------------------------
+# Dependency checks + auto-install into a local venv
 # ------------------------------------------------------------
 
 if ! command -v git >/dev/null 2>&1; then
-    echo "Git doesn't seem to be installed on this machine."
-    echo "Install it first:"
+    echo "Git is not installed. Install it first:"
     echo "  Ubuntu / Debian:  sudo apt install git"
     echo "  Mac (Homebrew):   brew install git"
     exit 1
 fi
 
-if ! command -v mpremote >/dev/null 2>&1; then
-    echo "mpremote is not installed. It's needed to upload firmware to the XIAO."
-    echo "Install it with:"
-    echo "  pip install mpremote"
-    echo
-    echo "Then plug in your XIAO and run this script again."
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "Python 3 is required to run the installer tools."
+    echo "Install it from https://python.org or via your package manager, then try again."
     exit 1
+fi
+
+# Helper: create the venv and bootstrap pip, with visible progress
+_ensure_venv() {
+    if [[ ! -d "$VENV_DIR" ]]; then
+        echo "  [1/2] Creating Python environment at $VENV_DIR ..."
+        python3 -m venv "$VENV_DIR"
+        echo "  [2/2] Upgrading pip inside the environment..."
+        "$VENV_DIR/bin/pip" install --upgrade pip
+        echo "  Environment ready."
+        echo
+    fi
+}
+
+# Helper: install a package into the venv with visible pip output
+_venv_install() {
+    local pkg="$1"
+    echo "  Installing $pkg (this may take a minute on a slow connection)..."
+    "$VENV_DIR/bin/pip" install "$pkg"
+}
+
+# Locate or auto-install mpremote
+if command -v mpremote >/dev/null 2>&1; then
+    MPREMOTE_BIN="mpremote"
+else
+    echo "mpremote not found — setting up a local Python environment."
+    echo "(Tools stay in $VENV_DIR and do not affect your system Python.)"
+    echo
+    _ensure_venv
+    _venv_install mpremote
+    MPREMOTE_BIN="$VENV_DIR/bin/mpremote"
+    echo "  ✓  mpremote ready"
+    echo
+fi
+
+# Locate or auto-install esptool (only needed when the board isn't yet flashed)
+ESPTOOL_BIN=""
+if [[ "$NEEDS_FLASH" == "true" ]]; then
+    if command -v esptool.py >/dev/null 2>&1; then
+        ESPTOOL_BIN="esptool.py"
+    elif command -v esptool >/dev/null 2>&1; then
+        ESPTOOL_BIN="esptool"
+    elif [[ -x "$VENV_DIR/bin/esptool" ]]; then
+        ESPTOOL_BIN="$VENV_DIR/bin/esptool"
+    else
+        echo "esptool not found — installing into the local Python environment."
+        echo
+        _ensure_venv
+        _venv_install esptool
+        ESPTOOL_BIN="$VENV_DIR/bin/esptool"
+        echo "  ✓  esptool ready"
+        echo
+    fi
 fi
 
 # ------------------------------------------------------------
@@ -120,7 +176,7 @@ prompt_yes_no() {
     while true; do
         read -r -p "$prompt [$shown_default]: " reply
         reply="${reply:-$default}"
-        case "${reply,,}" in
+        case "$(echo "$reply" | tr '[:upper:]' '[:lower:]')" in
             y|yes) echo "true";  return ;;
             n|no)  echo "false"; return ;;
             *)     echo "  (Please answer y or n.)" ;;
@@ -139,40 +195,140 @@ escape_json_string() {
 
 # ------------------------------------------------------------
 # Clone / update the turtleOS repository
+# (needed before flashing — the firmware .bin lives in resources/)
 # ------------------------------------------------------------
-
-WORKDIR="$HOME/Documents/HopeTurtle"
 
 msg "Setting up your turtleOS workspace"
 echo "  $WORKDIR"
 
-mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
 REPO_URL="https://github.com/h2h-project/turtleOS.git"
 
 if [ ! -d "turtleOS" ]; then
-    echo "Pulling down the turtleOS repository..."
+    echo "Cloning the turtleOS repository..."
     git clone "$REPO_URL"
-else
-    echo "turtleOS repo already present — skipping download."
 fi
 
 cd turtleOS
 
+echo "Syncing to the latest version from GitHub..."
+git fetch origin
+git reset --hard origin/main \
+    || die "Could not sync repository. Check your internet connection and try again."
+echo "  ✓  Repository up to date"
+
 ROOT_DIR="$(pwd)"
 DEVICE_DIR="$ROOT_DIR/device"
 SCRIPTS_DIR="$ROOT_DIR/scripts"
+RESOURCES_DIR="$ROOT_DIR/resources"
 TMP_DIR="$ROOT_DIR/.tmp_xiao_sync"
 TMP_CONFIG="$TMP_DIR/config.json"
 STAGE_DIR="$TMP_DIR/stage"
 PORT="auto"
 
 [[ -d "$DEVICE_DIR" ]] || die "device/ folder not found at $DEVICE_DIR — the repo may be incomplete."
+[[ -d "$RESOURCES_DIR" ]] || die "resources/ folder not found at $RESOURCES_DIR — the repo may be incomplete."
 
 mkdir -p "$TMP_DIR"
 
-MPREMOTE_CMD=(mpremote connect "$PORT")
+MPREMOTE_CMD=("$MPREMOTE_BIN" connect "$PORT")
+
+# ------------------------------------------------------------
+# Flash MicroPython firmware (if the user hasn't done it yet)
+# ------------------------------------------------------------
+
+if [[ "$NEEDS_FLASH" == "true" ]]; then
+    msg "Flashing MicroPython onto your XIAO ESP32-S3"
+
+    BIN_FILE=$(ls "$RESOURCES_DIR"/ESP32_GENERIC_S3-SPIRAM_OCT-*.bin 2>/dev/null | head -1)
+    [[ -n "$BIN_FILE" ]] \
+        || die "MicroPython firmware (.bin) not found in $RESOURCES_DIR — the repo may be incomplete."
+
+    echo "Firmware: $(basename "$BIN_FILE")"
+    echo
+    echo "To put the XIAO ESP32-S3 into bootloader mode:"
+    echo
+    echo "  1. Unplug the USB cable if it is connected."
+    echo "  2. Locate the small BOOT button on the back of the board (labelled 'B')."
+    echo "  3. Press and hold the BOOT button."
+    echo "  4. While holding BOOT, plug the USB cable back in."
+    echo "  5. Release the BOOT button — the board is now in bootloader mode."
+    echo
+    echo "The board will appear as a new USB device but will NOT show a REPL prompt."
+    echo "That is expected — it means it is ready to be flashed."
+    echo
+
+    read -r -p "Press Enter once the board is in bootloader mode..."
+    echo
+
+    # Detect available serial ports
+    if [[ "$(uname)" == "Darwin" ]]; then
+        FLASH_PORTS=$(ls /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART* 2>/dev/null || true)
+    else
+        FLASH_PORTS=$(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)
+    fi
+
+    FLASH_PORT=""
+    PORT_COUNT=$(printf '%s' "$FLASH_PORTS" | grep -c . 2>/dev/null || echo 0)
+
+    if [[ "$PORT_COUNT" -eq 1 ]]; then
+        FLASH_PORT="$FLASH_PORTS"
+        echo "Found board at: $FLASH_PORT"
+    elif [[ "$PORT_COUNT" -gt 1 ]]; then
+        echo "Multiple USB ports detected:"
+        i=1
+        while IFS= read -r p; do
+            echo "  $i) $p"
+            ((i++))
+        done <<< "$FLASH_PORTS"
+        echo
+        read -r -p "Enter the number of your XIAO port: " PORT_NUM
+        FLASH_PORT=$(printf '%s\n' "$FLASH_PORTS" | sed -n "${PORT_NUM}p")
+    else
+        echo "No USB serial port detected automatically."
+        echo "Common locations:"
+        echo "  macOS:  /dev/cu.usbmodem1234  or  /dev/cu.SLAB_USBtoUART"
+        echo "  Linux:  /dev/ttyACM0  or  /dev/ttyUSB0"
+        read -r -p "Enter the port path for your board: " FLASH_PORT
+    fi
+
+    [[ -n "$FLASH_PORT" ]] || die "No port selected — cannot flash."
+
+    echo
+    echo "Step 1/2  Erasing flash (≈10 s)..."
+    "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" erase_flash \
+        || die "Erase failed. Make sure the board is in bootloader mode and try again."
+
+    echo
+    echo "Step 2/2  Writing MicroPython firmware (≈30 s)..."
+    "$ESPTOOL_BIN" --chip esp32s3 --port "$FLASH_PORT" --baud 921600 \
+        write_flash -z 0 "$BIN_FILE" \
+        || die "Flash failed. Try putting the board back into bootloader mode and running the installer again."
+
+    echo
+    echo "  ✓  MicroPython flashed successfully!"
+    echo
+    echo "Now unplug the USB cable and plug it back in."
+    echo "The board will boot into MicroPython — you should see the REPL if you open a serial monitor."
+    echo
+
+    read -r -p "Press Enter once you have reconnected the board..."
+    echo
+fi
+
+# ------------------------------------------------------------
+# Ready to set sail?
+# ------------------------------------------------------------
+
+while true; do
+    read -r -p "Ready to set sail? y/n: " READY
+    case "$(echo "$READY" | tr '[:upper:]' '[:lower:]')" in
+        y|yes) echo; break ;;
+        n|no)  echo; echo "No problem — come back when you're ready. Fair winds!"; exit 0 ;;
+        *)     echo "Please answer y or n." ;;
+    esac
+done
 
 # ------------------------------------------------------------
 # Connect to board and verify it is a XIAO ESP32-S3
@@ -192,7 +348,7 @@ PLATFORM="$("${MPREMOTE_CMD[@]}" exec "import sys; print(sys.platform)" 2>/dev/n
 MACHINE="$("${MPREMOTE_CMD[@]}" exec "import uos; print(uos.uname().machine)" 2>/dev/null | tail -n1 | tr -d '\r')"
 echo "Board: $MACHINE — OK"
 
-MACHINE_LC="${MACHINE,,}"
+MACHINE_LC="$(echo "$MACHINE" | tr '[:upper:]' '[:lower:]')"
 if [[ "$MACHINE_LC" != *"xiao"* && "$MACHINE_LC" != *"esp32s3"* ]]; then
     warn "Machine string doesn't mention XIAO or ESP32-S3 ($MACHINE). Proceeding — verify you have the right board."
 fi
@@ -474,11 +630,11 @@ echo
 
 cat <<'WAVES'
 
-      ~   ~  ~    ~  ~  ~    ~  ~   ~   ~  ~
-    ~  .-~~~-.  .-~~~-.  .-~~~-.  .-~~~-.  ~
-   ~  (       )(       )(       )(       )  ~
-    ~  '-~~~-'  '-~~~-'  '-~~~-'  '-~~~-'  ~
-      ~   ~  ~    ~  ~  ~    ~  ~   ~   ~  ~
+  _______    ___
+/         \ |  0|
+|         |/ __\|
+|___________/
+ |__| |__|
 
 WAVES
 
@@ -486,7 +642,7 @@ echo "Your hope turtle is ready.  Wire up your hardware and it's time to sail!"
 echo
 echo "Watch the first boot live (press Ctrl+D inside the REPL to reboot, Ctrl+] to exit):"
 echo
-mpremote connect "$PORT" repl
+"$MPREMOTE_BIN" connect "$PORT" repl
 echo
 echo "For future firmware updates, run:"
 echo "  ./scripts/xiao_synker.sh"
