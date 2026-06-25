@@ -12,9 +12,9 @@
     "oled_col_offset": 2,
     "board_type": "xiao_esp32s3",
     "compass_offset_deg": -80,
-    "turtle_mode": true,
+    "turtle_mode": false,
     "joke_mode": true,
     "morse_bless": true,
-    "servo_present": true
+    "servo_present": false
 
 }

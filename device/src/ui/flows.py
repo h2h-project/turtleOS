@@ -938,9 +938,9 @@ def time_flow(btn, oled, cfg, wifi, ds3231, get_screen, flush_ms=250, poll_ms=25
             except Exception:
                 _log_screen("time")
             # hold forever until click
-            ts.show_live(btn=btn, max_seconds=0, tick_fn=tick_fn)
+            _a = ts.show_live(btn=btn, max_seconds=0, tick_fn=tick_fn)
             _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-            return
+            return _a
         except Exception as e:
             print("[TIME] show_live error:", repr(e))
 
@@ -954,71 +954,32 @@ def time_flow(btn, oled, cfg, wifi, ds3231, get_screen, flush_ms=250, poll_ms=25
 # SLEEP / LOW POWER (LONG PRESS)
 # ============================================================
 def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None):
-    # Sleep is triggered by a 3 s hold-while-pressed, so we do NOT wait for
-    # button release here. btn.reset() inside show_live captures the held state
-    # cleanly: the eventual release is ignored, and the next fresh press is a click.
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
 
-    # Time screen shown first — sailpoint already lives in the single-click
-    # carousel, and double-click now opens the nav state screen, so long
-    # press is the Time screen's home. Single click advances to battery.
-    time_scr = get_screen("time")
-    try:
-        if time_scr and hasattr(time_scr, "_get_utc_tuple"):
-            _utc = time_scr._get_utc_tuple()
-            _tz = (getattr(time_scr, "cfg", None) or {}).get("timezone_offset_min", None)
-            if _utc:
-                _log_screen("time", "UTC={:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}  tz={}min".format(
-                    _utc[0], _utc[1], _utc[2], _utc[3], _utc[4], _utc[5], _tz))
-            else:
-                _log_screen("time")
-        else:
-            _log_screen("time")
-    except Exception:
-        _log_screen("time")
-    if time_scr and hasattr(time_scr, "show_live"):
-        try:
-            a = time_scr.show_live(btn=btn, max_seconds=0, tick_fn=tick_fn)
-        except Exception:
-            a = None
-    else:
-        draw_text(oled, "Time", y=24)
-        a = wait_for_single(btn, tick_fn=tick_fn)
-
-    if a != "single":
-        reset_and_flush(btn, flush_ms, poll_ms)
-        return
-
-    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-    # Battery screen; single click advances to sleep screen.
+    # Battery screen first — skip directly to sleep if INA219 is not attached.
     bat_scr = get_screen("battery")
-    try:
-        if bat_scr and hasattr(bat_scr, "_read"):
-            _bat = bat_scr._read()
-            if _bat.get("present"):
+    _ina_present = False
+    if bat_scr is not None:
+        try:
+            _bat_data = bat_scr._read()
+            _ina_present = bool(_bat_data.get("present", False))
+            if _ina_present:
                 _log_screen("battery", "voltage={:.2f}V  current={:.0f}mA".format(
-                    float(_bat.get("bus_v") or 0), float(_bat.get("current_ma") or 0)))
+                    float(_bat_data.get("bus_v") or 0), float(_bat_data.get("current_ma") or 0)))
             else:
-                _log_screen("battery", err="INA219 not connected")
-        else:
+                _log_screen("battery", err="INA219 not connected — going to sleep")
+        except Exception:
             _log_screen("battery")
-    except Exception:
-        _log_screen("battery")
-    if bat_scr and hasattr(bat_scr, "show_live"):
+
+    if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
         try:
             a = bat_scr.show_live(btn)
         except Exception:
             a = None
-    else:
-        draw_text(oled, "Battery", y=24)
-        a = wait_for_single(btn, tick_fn=tick_fn)
-
-    if a != "single":
-        reset_and_flush(btn, flush_ms, poll_ms)
-        return
-
-    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+        if a != "single":
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     _log_screen("sleep")
     scr = get_screen("sleep")

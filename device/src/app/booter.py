@@ -39,8 +39,8 @@ class Booter:
 
         # Version label content
         self.brand = "airOS"
-        self.version_num = "2.3.2"
-        self.version = "airOS version 2.3.2"  # used for serial logging
+        self.version_num = "2.3.4"
+        self.version = "airOS version 2.3.4"  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None

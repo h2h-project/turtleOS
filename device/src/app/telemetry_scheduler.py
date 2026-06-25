@@ -76,6 +76,18 @@ class TelemetryScheduler:
         self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None}
         self._send_now = False
 
+        # Background process — set via set_background_process() after start-up.
+        # When present, tick() hands payloads off non-blocking instead of sending inline.
+        self._background_process = None
+
+    def set_background_process(self, background_process):
+        """
+        Attach a TelemetryBackgroundProcess instance. After this call, tick()
+        hands payloads off to the background thread instead of sending inline,
+        so the caller is never blocked by WiFi or HTTP operations.
+        """
+        self._background_process = background_process
+
     def request_now(self):
         """Ask the scheduler to send at the next tick (called by Online screen)."""
         self._send_now = True
@@ -631,6 +643,37 @@ class TelemetryScheduler:
         if do_print:
             self._dbg_print("telemetry: DUE interval_s=", interval_s)
 
+        # --- Background process path (non-blocking) ---
+        # When a TelemetryBackgroundProcess is attached, skip ALL main-thread
+        # WiFi operations (is_connected / reconnect block on the WiFi driver mutex
+        # while WPA2 auth is running on the bg thread). Build the payload and hand
+        # it off immediately; the bg thread owns WiFi reconnect, HTTP POST, and
+        # queue flush without ever blocking the main thread or the button poll.
+        if self._background_process is not None:
+            # Build payload from local sensors (WiFi-independent, non-blocking)
+            payload = self._build_full_payload(cfg, rtc_dict, do_print=do_print)
+            if payload is None:
+                return
+
+            # Refresh api_state from bg result so Online screen stays current.
+            try:
+                bp_result = self._background_process.result()
+                if bp_result.get("last_ms") is not None:
+                    self.api_state["sending"] = bool(bp_result.get("sending", False))
+                    if bp_result.get("ok") is not None:
+                        self.api_state["ok"] = bool(bp_result["ok"])
+                        self.api_state["msg"] = str(bp_result.get("msg", ""))
+                        self.api_state["last_ms"] = bp_result["last_ms"]
+                        self.write_last_sent(payload["recorded_at"], ok=bool(bp_result["ok"]))
+            except Exception:
+                pass
+
+            if do_print:
+                self._dbg_print("telemetry: handing off to background_process")
+            self._background_process.put_payload(payload, cfg)
+            return None
+
+        # --- Inline send path (fallback: no background process attached) ---
         # WiFi: attempt reconnect, but do NOT return early on failure.
         # Readings are always built and queued to flash; HTTP only fires when connected.
         wifi_ok = True
@@ -643,7 +686,7 @@ class TelemetryScheduler:
                         if do_print:
                             self._dbg_print("telemetry: wifi down, reconnecting")
                         try:
-                            self.wifi.reconnect(ssid, pw)
+                            self.wifi.reconnect(ssid, pw, timeout_s=6)
                         except Exception as _re:
                             if do_print:
                                 self._dbg_print("telemetry: reconnect err", repr(_re))
@@ -675,6 +718,7 @@ class TelemetryScheduler:
                 pass
             return False
 
+        # --- Inline send path (fallback when no background process) ---
         # Online: re-assert PM mode before TX — ESP32 can silently revert to
         # PM_POWERSAVE after idle periods, causing OSError(116) on first connect.
         if self.wifi is not None:
@@ -738,7 +782,7 @@ class TelemetryScheduler:
                             "- reconnecting wifi"
                         )
                     try:
-                        self.wifi.reconnect(ssid, pw)
+                        self.wifi.reconnect(ssid, pw, timeout_s=6)
                     except Exception as _e:
                         if do_print:
                             self._dbg_print("telemetry: reconnect err", repr(_e))

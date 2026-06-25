@@ -398,8 +398,8 @@ def gps_boot_check(cfg):
     try:
         _gc()
         try:
-            from src.sensors.ublox6gps import Ublox6GPS
-            gps = Ublox6GPS(uart_id=GPS_UART_ID, baud=GPS_BAUD, tx_pin=GPS_TX_PIN, rx_pin=GPS_RX_PIN)
+            from src.sensors.xiao_gnss import GnssModule
+            gps = GnssModule(uart_id=GPS_UART_ID, baud=GPS_BAUD, tx_pin=GPS_TX_PIN, rx_pin=GPS_RX_PIN)
         except Exception as e:
             print("GPS:init skipped:", repr(e))
             gps = None

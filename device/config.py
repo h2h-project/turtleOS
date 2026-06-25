@@ -24,6 +24,9 @@ DEFAULTS = {
 
     # --- Hardware ---
     "gps_enabled": True,
+    # "l76k" = Seeed GNSS Add-on for XIAO (Quectel L76K, PMTK commands) — default
+    # "neo6m" = u-blox NEO-6M (UBX binary) — LEGACY-NEO6M: remove when retired
+    "gps_module": "l76k",
     "oled_col_offset": 0,  # 0 = large/SSD1306, 2 = small 1.3" SH1106
 
     # --- WiFi ---

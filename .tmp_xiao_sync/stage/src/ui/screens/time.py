@@ -97,7 +97,18 @@ class TimeScreen:
         if not self.cfg.get("wifi_enabled", False):
             return
 
-        # Require actual WiFi connection (prevents blocking offline)
+        # If background_process owns WiFi (cache is non-None), skip HTTP to avoid
+        # competing with bg thread I/O on the main thread (would block on WiFi mutex
+        # or tie up the socket while bg thread is also sending).
+        try:
+            from src.ui.connection_header import get_wifi_ok
+            wifi_cached = get_wifi_ok()
+            if wifi_cached is not None:
+                return   # bg process active — don't do HTTP from main thread
+        except Exception:
+            wifi_cached = None
+
+        # No bg process — fall back to live WiFi check (original behaviour)
         if self.wifi:
             try:
                 if not self.wifi.is_connected():
@@ -121,7 +132,7 @@ class TimeScreen:
         resp = None
         try:
             gc.collect()
-            resp = urequests.get(url, headers=headers, timeout=4)
+            resp = urequests.get(url, headers=headers, timeout=2)
 
             if resp.status_code != 200:
                 return

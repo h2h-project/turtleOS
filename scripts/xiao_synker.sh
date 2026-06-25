@@ -17,9 +17,7 @@ set -euo pipefail
 #   ./scripts/xiao_synker.sh --fresh
 #   ./scripts/xiao_synker.sh --port /dev/cu.usbmodem141301
 #
-# Modes (interactive prompt unless --fresh is given):
-#   Hard reset  — wipe all files from the board, then upload a clean set
-#   Sync        — upload changed files and remove any excluded leftovers
+# --fresh: non-interactive hard reset (wipe and re-upload)
 # ============================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,41 +52,28 @@ Options:
 EOF
 }
 
-prompt_yes_no() {
-  local prompt="$1" default="$2" reply shown_default
-  [[ "$default" == "y" ]] && shown_default="Y/n" || shown_default="y/N"
-  while true; do
-    read -r -p "$prompt [$shown_default]: " reply
-    reply="${reply:-$default}"
-    case "$(echo "$reply" | tr '[:upper:]' '[:lower:]')" in
-      y|yes) echo "true";  return ;;
-      n|no)  echo "false"; return ;;
-      *) echo "  (Please answer y or n.)" ;;
-    esac
-  done
-}
-
 run_rtc_setup() {
   echo
   echo "Set the RTC (DS3231) clock?  The RTC always stores UTC."
-  echo "  1) Use current system time (UTC)"
-  echo "  2) Enter a custom UTC time"
-  echo "  3) Leave as-is"
+  echo "  1) Leave as-is  [default]"
+  echo "  2) Use current system time (UTC)"
+  echo "  3) Enter a custom UTC time"
   echo
   local RTC_CHOICE RTC_YEAR RTC_MONTH RTC_DAY RTC_WEEKDAY RTC_HOUR RTC_MIN RTC_SEC rtc_reply
   while true; do
     read -r -p "Enter 1, 2, or 3: " rtc_reply
+    rtc_reply="${rtc_reply:-1}"
     case "$rtc_reply" in
       1|2|3) RTC_CHOICE="$rtc_reply"; break ;;
       *) echo "  (Please enter 1, 2, or 3.)" ;;
     esac
   done
 
-  if [[ "$RTC_CHOICE" == "1" ]]; then
+  if [[ "$RTC_CHOICE" == "2" ]]; then
     read -r RTC_YEAR RTC_MONTH RTC_DAY RTC_WEEKDAY RTC_HOUR RTC_MIN RTC_SEC \
       < <(date -u "+%Y %m %d %u %H %M %S")
 
-  elif [[ "$RTC_CHOICE" == "2" ]]; then
+  elif [[ "$RTC_CHOICE" == "3" ]]; then
     echo
     echo "Enter UTC date and time:"
     read -r -p "  Year        [e.g. 2026]: " RTC_YEAR
@@ -103,7 +88,7 @@ run_rtc_setup() {
     [[ -z "$RTC_WEEKDAY" ]] && RTC_WEEKDAY=1
   fi
 
-  if [[ "$RTC_CHOICE" == "1" || "$RTC_CHOICE" == "2" ]]; then
+  if [[ "$RTC_CHOICE" == "2" || "$RTC_CHOICE" == "3" ]]; then
     RTC_YEAR=$((10#${RTC_YEAR}));     RTC_MONTH=$((10#${RTC_MONTH}))
     RTC_DAY=$((10#${RTC_DAY}));       RTC_WEEKDAY=$((10#${RTC_WEEKDAY}))
     RTC_HOUR=$((10#${RTC_HOUR}));     RTC_MIN=$((10#${RTC_MIN}))
@@ -147,7 +132,6 @@ used_kb  = total_kb - free_kb
 TELEM = ('/telemetry_queue.json', '/telemetry_last_sent.json')
 
 def _sz(p):
-    # Round raw bytes up to the next block boundary — matches filesystem accounting
     try:
         raw = uos.stat(p)[6]
         return ((raw + BLK - 1) // BLK) * BLK
@@ -190,6 +174,46 @@ if tl_b > 0:
 else:
     print('  telemetry logs    : 0 KB  (no pending readings)')
 " || true
+}
+
+do_upload_sync() {
+  msg "Uploading turtleOS firmware"
+  "${MPREMOTE_CMD[@]}" fs cp -r "$STAGE_DIR/." : \
+    || die "Upload failed. Try reconnecting the board and running again."
+  echo "Upload complete."
+
+  msg "Removing excluded files (if present from a prior Pico install)"
+  "${MPREMOTE_CMD[@]}" exec "
+import os
+
+EXCLUDED = [
+    '/src/hal/board_pico.py',
+    '/src/ui/flows_pico.py',
+    '/src/ui/glyphs_pico.py',
+    '/src/app/main_pico.py',
+    '/.gitignore',
+]
+
+removed = 0
+for path in EXCLUDED:
+    try:
+        os.remove(path)
+        print('removed:', path)
+        removed += 1
+    except OSError:
+        pass
+
+print('Cleanup done. Removed', removed, 'excluded file(s).')
+" || warn "Cleanup step had errors — continuing."
+}
+
+open_repl() {
+  msg "Opening REPL"
+  echo "  Press Ctrl-D inside the REPL to reboot and see the full boot log."
+  echo "  Press Ctrl-] to exit back to the shell."
+  echo
+  "${MPREMOTE_CMD[@]}" repl
+  echo
 }
 
 # ------------------------------------------------------------
@@ -256,37 +280,49 @@ if [[ "$MACHINE_LOWER" != *"xiao"* && "$MACHINE_LOWER" != *"esp32s3"* ]]; then
   warn "Proceeding anyway — verify you have the correct board connected."
 fi
 
-msg "Flash usage (before sync)"
-show_flash_usage
-
 # ------------------------------------------------------------
-# Choose mode
+# Main menu
 # ------------------------------------------------------------
 
-MODE=""
+ACTION=""
 if [[ "$FRESH" -eq 1 ]]; then
-  MODE="reset"
+  ACTION="full"
 else
   echo
-  echo "How would you like to sync?"
-  echo "  1) Hard reset — wipe all files from the board, then upload a clean set"
-  echo "  2) Sync       — upload files and remove any excluded leftovers (keeps unrelated files)"
+  echo "What would you like to do?  (Hit return for option 1)"
+  echo "  1. Reboot the turtle and see the full boot log.  [default]"
+  echo "  2. Do a quick turtle sync"
+  echo "  3. Do a more in depth sync with full options"
   echo
   while true; do
-    read -r -p "Enter 1 or 2: " reply
+    read -r -p "Enter 1, 2, or 3: " reply
+    reply="${reply:-1}"
     case "$reply" in
-      1) MODE="reset"; break ;;
-      2) MODE="sync";  break ;;
-      *) echo "  (Please enter 1 or 2.)" ;;
+      1) ACTION="reboot"; break ;;
+      2) ACTION="quick";  break ;;
+      3) ACTION="full";   break ;;
+      *) echo "  (Please enter 1, 2, or 3.)" ;;
     esac
   done
 fi
 
-echo "Mode: $MODE"
+# ============================================================
+# Option 1 — Reboot and watch the boot log
+# ============================================================
 
-# ------------------------------------------------------------
-# Stage a XIAO-only copy of device/
-# ------------------------------------------------------------
+if [[ "$ACTION" == "reboot" ]]; then
+  echo
+  echo "  Rebooting turtle — watch for the boot log below."
+  echo "  Press Ctrl-] to exit back to the shell."
+  echo
+  "${MPREMOTE_CMD[@]}" reset repl
+  echo
+  exit 0
+fi
+
+# ============================================================
+# Staging (shared by quick and full)
+# ============================================================
 
 msg "Staging XIAO ESP32-S3 firmware"
 
@@ -309,13 +345,57 @@ rsync -a \
   \
   "$DEVICE_DIR/" "$STAGE_DIR/"
 
-# Overwrite config.json with the XIAO base config
 cp "$SCRIPTS_DIR/xiao_config.json" "$STAGE_DIR/config.json"
 echo "Config: scripts/xiao_config.json → config.json"
 
-# ------------------------------------------------------------
-# Hard reset: wipe board then upload
-# ------------------------------------------------------------
+# ============================================================
+# Option 2 — Quick sync
+# ============================================================
+
+if [[ "$ACTION" == "quick" ]]; then
+  do_upload_sync
+
+  msg "Flash usage (after sync)"
+  show_flash_usage
+  echo
+  echo "  Done!  turtleOS is installed."
+
+  open_repl
+  exit 0
+fi
+
+# ============================================================
+# Option 3 / --fresh — Full sync with options
+# ============================================================
+
+msg "Flash usage (before sync)"
+show_flash_usage
+
+# ── Choose wipe vs sync ──────────────────────────────────────────────────────
+
+MODE=""
+if [[ "$FRESH" -eq 1 ]]; then
+  MODE="reset"
+else
+  echo
+  echo "How would you like to sync?"
+  echo "  1) Sync       — upload files and remove any excluded leftovers (keeps unrelated files)  [default]"
+  echo "  2) Hard reset — wipe all files from the board, then upload a clean set"
+  echo
+  while true; do
+    read -r -p "Enter 1 or 2: " reply
+    reply="${reply:-1}"
+    case "$reply" in
+      1) MODE="sync";  break ;;
+      2) MODE="reset"; break ;;
+      *) echo "  (Please enter 1 or 2.)" ;;
+    esac
+  done
+fi
+
+echo "Mode: $MODE"
+
+# ── Hard reset: wipe then upload ────────────────────────────────────────────
 
 if [[ "$MODE" == "reset" ]]; then
   msg "Hard reset: wiping all files from the board"
@@ -352,57 +432,34 @@ print('Board cleared.')
   echo "Upload complete."
 fi
 
-# ------------------------------------------------------------
-# RTC clock setup (hard reset only, skipped when --fresh)
-# ------------------------------------------------------------
+# ── RTC setup (reset mode, non-fresh only) ───────────────────────────────────
 
 if [[ "$MODE" == "reset" && "$FRESH" -eq 0 ]]; then
   run_rtc_setup
 fi
 
-# ------------------------------------------------------------
-# Sync: upload then remove excluded leftovers
-# ------------------------------------------------------------
+# ── Sync: upload, remove excluded, optional cleanup ─────────────────────────
 
 if [[ "$MODE" == "sync" ]]; then
-  msg "Uploading turtleOS firmware"
-  "${MPREMOTE_CMD[@]}" fs cp -r "$STAGE_DIR/." : \
-    || die "Upload failed. Try reconnecting the board and running again."
-  echo "Upload complete."
+  do_upload_sync
 
-  msg "Removing excluded files (if present from a prior Pico install)"
-
-  "${MPREMOTE_CMD[@]}" exec "
-import os
-
-EXCLUDED = [
-    # Pico HAL
-    '/src/hal/board_pico.py',
-    # Pico override sources — never installed on XIAO
-    '/src/ui/flows_pico.py',
-    '/src/ui/glyphs_pico.py',
-    '/src/app/main_pico.py',
-    '/.gitignore',
-]
-
-removed = 0
-for path in EXCLUDED:
-    try:
-        os.remove(path)
-        print('removed:', path)
-        removed += 1
-    except OSError:
-        pass  # not present — fine
-
-print('Cleanup done. Removed', removed, 'excluded file(s).')
-" || warn "Cleanup step had errors — continuing."
-
-  # ----------------------------------------------------------
-  # Optional: clear pending telemetry queue
-  # ----------------------------------------------------------
-
+  # Ask about clearing telemetry (No is default)
   echo
-  CLEAR_QUEUE=$(prompt_yes_no "Clear the pending telemetry queue (telemetry_queue.json)?" "n")
+  echo "Clear the pending telemetry queue?"
+  echo "  1) No — leave telemetry queue as-is  [default]"
+  echo "  2) Yes — clear telemetry_queue.json"
+  echo
+  CLEAR_QUEUE="false"
+  while true; do
+    read -r -p "Enter 1 or 2: " reply
+    reply="${reply:-1}"
+    case "$reply" in
+      1) CLEAR_QUEUE="false"; break ;;
+      2) CLEAR_QUEUE="true";  break ;;
+      *) echo "  (Please enter 1 or 2.)" ;;
+    esac
+  done
+
   if [[ "$CLEAR_QUEUE" == "true" ]]; then
     "${MPREMOTE_CMD[@]}" exec "
 import os
@@ -415,30 +472,14 @@ except:
 " || warn "Could not clear telemetry queue."
   fi
 
-  # ----------------------------------------------------------
-  # Optional: set the RTC clock
-  # ----------------------------------------------------------
-
   run_rtc_setup
 fi
 
-# ------------------------------------------------------------
-# Free space report
-# ------------------------------------------------------------
+# ── Final flash report and REPL ─────────────────────────────────────────────
 
 msg "Flash usage (after sync)"
 show_flash_usage
-
-# ------------------------------------------------------------
-# REPL — reboot and watch the boot log live
-# ------------------------------------------------------------
-
 echo
 echo "  Done!  turtleOS is installed."
-echo
-msg "Opening REPL"
-echo "  Press Ctrl-D inside the REPL to reboot and see the full boot log."
-echo "  Press Ctrl-] to exit back to the shell."
-echo
-"${MPREMOTE_CMD[@]}" repl
-echo
+
+open_repl

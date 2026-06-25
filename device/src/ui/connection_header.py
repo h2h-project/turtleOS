@@ -48,6 +48,18 @@ _gps_state = 0  # 0 == GPS_NONE
 # Defaults to True so Pico W (always-on driver) works without explicit setup.
 _wifi_hw_enabled = True
 
+# _wifi_ok_cache: None = use live probe; bool = use cached value set by set_wifi_ok().
+# When the background_process thread owns WiFi reconnect, it calls set_wifi_ok()
+# after each attempt so the main thread never has to call wlan.isconnected()
+# (which can block 1-4 s when the WiFi driver mutex is held by WPA2 auth).
+_wifi_ok_cache = None
+
+# ISR-safe bytearray flags written by background_process timer callbacks.
+# bytearray element writes are atomic on ESP32 MicroPython — safe from Timer ISR.
+_api_sending_raw = bytearray(1)   # [0]=1 during any active send; main thread reads for OLED sync
+_api_morse_circle = bytearray(1)  # [0]=1 when morse LED is ON, 0 when OFF; drives API circle
+_api_morse_mode = bytearray(1)    # [0]=1 while a morse sequence is running
+
 
 def set_api_ok(ok):
     """
@@ -57,6 +69,22 @@ def set_api_ok(ok):
     """
     global _api_ok
     _api_ok = bool(ok)
+
+
+def set_wifi_ok(ok):
+    """
+    Prime the WiFi status cache so _probe_wifi() never calls wlan.isconnected().
+    Call this from the background_process after each WiFi reconnect attempt.
+    While the cache is set, all draw() calls use it directly — no live probe.
+    Pass ok=None to clear the cache and revert to live probing.
+    """
+    global _wifi_ok_cache
+    _wifi_ok_cache = bool(ok) if ok is not None else None
+
+
+def get_wifi_ok():
+    """Return the cached WiFi status, or None if live probing is still in use."""
+    return _wifi_ok_cache
 
 
 def set_gps_state(state):
@@ -88,9 +116,14 @@ def set_wifi_enabled(ok):
 def _probe_wifi():
     """
     Live WiFi check via MicroPython network module.
+    Short-circuits to the module cache when set_wifi_ok() has been called
+    (e.g., when background_process owns WiFi — avoids blocking on the WiFi
+    driver mutex during WPA2 authentication).
     Short-circuits to False when the driver was never started (ESP32 safety).
     On Pico W the driver is always alive so the live probe always runs.
     """
+    if _wifi_ok_cache is not None:
+        return _wifi_ok_cache
     if not _wifi_hw_enabled:
         return False
     try:
@@ -161,14 +194,26 @@ def draw(
     # API
     x -= API_W
     fb.fill_rect(x, y, API_W, API_H, 0)
-    draw_api(
-        fb, x, y,
-        on=bool(api_actual),
-        heartbeat=bool(api_actual),
-        sending=bool(api_sending),
-        color=1,
-        now_ms=now_ms,
-    )
+    _is_sending = bool(api_sending) or bool(_api_sending_raw[0])
+    if _api_morse_mode[0]:
+        # Morse mode: circle solid/outline driven directly by timer (bypasses time-based animation)
+        draw_api(
+            fb, x, y,
+            on=bool(_api_morse_circle[0]),
+            heartbeat=False,
+            sending=False,
+            color=1,
+            now_ms=now_ms,
+        )
+    else:
+        draw_api(
+            fb, x, y,
+            on=bool(api_actual),
+            heartbeat=bool(api_actual) and _is_sending,  # solid when idle; only animate during sends
+            sending=_is_sending,
+            color=1,
+            now_ms=now_ms,
+        )
     x -= g
 
     # GPS (leftmost in cluster)

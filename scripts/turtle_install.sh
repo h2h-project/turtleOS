@@ -157,7 +157,7 @@ die() {
 
 prompt_default() {
     local prompt="$1" default="$2" reply
-    read -r -p "$prompt [$default]: " reply
+    read -r -p "$prompt [default: $default]: " reply
     if [[ -z "${reply}" ]]; then echo "$default"; else echo "$reply"; fi
 }
 
@@ -423,6 +423,7 @@ if [[ "$WIFI_ENABLED" == "true" ]]; then
     WIFI_PASSWORD="$(prompt_required "WiFi password")"
     TELEMETRY_ENABLED="$(prompt_yes_no "Enable telemetry uploads to your hopeturtles.org dashboard?" "y")"
     if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+        echo "  tip: hit return to use the default value"
         TELEMETRY_POST_EVERY_S="$(prompt_default "How often to upload readings (seconds)" "120")"
     fi
 fi
@@ -441,7 +442,7 @@ DEVICE_KEY="$(prompt_required "Device key")"
 echo
 echo "--- Time zone ---"
 echo "How many hours ahead of (or behind) UTC is your local time?"
-echo "  Examples:  +8 = Hong Kong/Manila,  +7 = Jakarta,  +5.5 = India,  0 = UTC/London"
+echo "  Examples:  +8 = Hong Kong/Manila,  +7 = Jakarta,  +5.5 = India,  +3 = Istanbul,  0 = UTC/London"
 echo "  Behind UTC: -5 = New York,  -6 = Chicago,  -8 = Los Angeles"
 TIMEZONE_HOURS="$(prompt_default "Hours offset from UTC (leave blank to skip)" "")"
 
@@ -525,7 +526,7 @@ echo "These control autopilot behaviour.  Press Enter to accept each default."
 echo "All values can be adjusted later by editing config.json on the device."
 echo
 
-ARRIVAL_RADIUS_M="$(prompt_default "Arrival radius — distance that counts as 'arrived' (metres)" "300")"
+ARRIVAL_RADIUS_M="$(prompt_default "Arrival radius — distance that counts as 'arrived' (metres)" "5000")"
 GPS_LOSS_SAFE_S="$(prompt_default "GPS loss timeout — feather sail after this many seconds without a fix" "120")"
 LOW_BATT_PCT="$(prompt_default "Low-battery threshold — feather sail below this charge level (0-90 %)" "20")"
 SAIL_MIN_DEG="$(prompt_default "Sail servo minimum angle — lower physical stop (degrees)" "10")"

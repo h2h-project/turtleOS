@@ -202,6 +202,7 @@ class TurtleWaitingScreen:
     def _poll(self, btn, tick_fn, tick_state, deadline, on_idle=None, idle_state=None):
         # idle_state: [next_ms, live_status_dict, interval_ms]
         _overlay_next = time.ticks_add(time.ticks_ms(), 1000)
+        _last_morse = 0
         while time.ticks_diff(deadline, time.ticks_ms()) > 0:
             now = time.ticks_ms()
             if tick_fn is not None and time.ticks_diff(now, tick_state[0]) >= 0:
@@ -210,15 +211,20 @@ class TurtleWaitingScreen:
                 except Exception:
                     pass
                 tick_state[0] = time.ticks_add(now, 500)
-            # Redraw at 1 Hz so the sweep countdown ticks second-by-second
-            # even while the rest frame holds for 2 s.
-            if time.ticks_diff(now, _overlay_next) >= 0:
+            # Redraw at 1 Hz, or immediately whenever the morse circle state changes
+            # (allows 50 ms morse symbols to be visible on the OLED).
+            try:
+                _cur_morse = _ch._api_morse_circle[0] if _ch else 0
+            except Exception:
+                _cur_morse = 0
+            if time.ticks_diff(now, _overlay_next) >= 0 or _cur_morse != _last_morse:
                 try:
                     st = idle_state[1] if idle_state else None
                     self._draw(self._cur, st)
                 except Exception:
                     pass
                 _overlay_next = time.ticks_add(now, 1000)
+                _last_morse = _cur_morse
             if on_idle is not None and idle_state is not None:
                 if time.ticks_diff(now, idle_state[0]) >= 0:
                     try:

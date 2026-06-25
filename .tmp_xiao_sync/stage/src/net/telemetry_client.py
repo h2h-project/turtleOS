@@ -26,7 +26,7 @@ except Exception:
     requests = None
 
 QUEUE_FILE = "telemetry_queue.json"
-QUEUE_MAX = 777
+QUEUE_MAX = 5000
 
 
 def _gc_collect():
@@ -222,7 +222,7 @@ class TelemetryClient:
     # ----------------------------
     # HTTP Send (LOW MEM)
     # ----------------------------
-    def _post_batch(self, payloads, timeout_s=15):
+    def _post_batch(self, payloads, timeout_s=8):
         """POST a list of payloads to /api/v1/telemetry/batch.
         Returns: (ok: bool, accepted: int, msg: str)"""
         if not requests:
@@ -429,7 +429,7 @@ class TelemetryClient:
         last_msg = ""
 
         for i in range(retries):
-            ok, msg, server_now, ignored = self._post(payload)
+            ok, msg, server_now, ignored = self._post(payload, timeout_s=3)
             last_msg = msg
             self._last_error = msg
 

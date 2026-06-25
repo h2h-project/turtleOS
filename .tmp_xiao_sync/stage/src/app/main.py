@@ -27,7 +27,7 @@ DEBUG_SCREENS = False
 # ------------------------------------------------------------
 # API icon behavior tuning
 # ------------------------------------------------------------
-API_SENDING_HOLD_MS = 1200            # 1.2 seconds (visible)
+API_SENDING_HOLD_MS = 3000            # 3 s — long enough to be visible even for fast sends
 
 
 def _resolve_btn_pin_default():
@@ -84,8 +84,8 @@ def run(
 
     def init_gps(uart_id=1, baud=9600, tx_pin=8, rx_pin=9):
         try:
-            from src.sensors.ublox6gps import Ublox6GPS
-            return Ublox6GPS(uart_id=uart_id, baud=baud, tx_pin=tx_pin, rx_pin=rx_pin)
+            from src.sensors.xiao_gnss import GnssModule
+            return GnssModule(uart_id=uart_id, baud=baud, tx_pin=tx_pin, rx_pin=rx_pin)
         except Exception as e:
             print("GPS:init skipped:", repr(e))
             return None
@@ -171,7 +171,10 @@ def run(
             gps = None
         if gps is not None:
             try:
-                gps.configure_mode(_gps_cfg.get("turtle_mode", False))
+                gps.configure_mode(
+                    _gps_cfg.get("turtle_mode", False),
+                    module=_gps_cfg.get("gps_module", "l76k"),
+                )
             except Exception as e:
                 print("[GPS] configure:", repr(e))
     else:
@@ -293,10 +296,12 @@ def run(
     api_sending_until_ms = 0
 
     # ------------------------------------------------------------
-    # TELEMETRY
+    # TELEMETRY + BACKGROUND PROCESS
     # ------------------------------------------------------------
     telemetry = None
     telemetry_started = False
+    _background_process = None
+    _background_process_started = False
 
     def _get_rtc_fresh():
         # Force a fresh DS3231 read into rtc right before telemetry sends.
@@ -310,9 +315,37 @@ def run(
                 pass
         return rtc
 
+    def _start_background_process():
+        nonlocal _background_process, _background_process_started
+        if _background_process_started:
+            return
+        _background_process_started = True
+        try:
+            _gc()
+            from src.net.background_process import TelemetryBackgroundProcess
+            _background_process = TelemetryBackgroundProcess(wifi_manager=wifi)
+            _background_process.start()
+            if telemetry is not None and telemetry.scheduler is not None:
+                telemetry.scheduler.set_background_process(_background_process)
+            # Prime the connection_header WiFi cache so _probe_wifi() never calls
+            # wlan.isconnected() while the background thread might hold the WiFi mutex.
+            try:
+                from src.ui.connection_header import set_wifi_ok as _set_wifi_ok
+                _set_wifi_ok(bool(status.get("wifi_ok", False)))
+            except Exception:
+                pass
+            _gc()
+        except Exception as e:
+            print("[BACKGROUND] Failed to start:", repr(e))
+
     def start_telemetry_if_ready(cfg):
         nonlocal telemetry, telemetry_started
         if telemetry_started:
+            # Re-attach background_process if telemetry was ready before it started.
+            if _background_process is not None and telemetry is not None:
+                sched = telemetry.scheduler
+                if sched is not None and sched._background_process is None:
+                    sched.set_background_process(_background_process)
             return
         try:
             from src.app.telemetry_state import TelemetryState
@@ -325,11 +358,35 @@ def run(
             )
             telemetry_started = True
             print("[TELEMETRY] Started.")
+            _start_background_process()
         except Exception as e:
             print("[TELEMETRY] Failed to start:", repr(e))
 
     def _refresh_api_flags(now_ms):
         nonlocal api_sending_until_ms, status
+
+        # Read live status directly from background_process.result().
+        # Two triggers extend api_sending_until_ms:
+        #   1. sending=True  — bg thread is actively in _send() right now
+        #   2. last_ms recent — send completed within the hold window
+        #      (catches fast sends that finish before the next _idle() poll)
+        if _background_process is not None:
+            try:
+                bp_result = _background_process.result()
+                if bp_result.get("sending"):
+                    api_sending_until_ms = _ticks_add(now_ms, int(API_SENDING_HOLD_MS))
+                else:
+                    last_ms = bp_result.get("last_ms")
+                    if last_ms is not None:
+                        age_ms = _ticks_diff(now_ms, last_ms)
+                        if 0 <= age_ms < int(API_SENDING_HOLD_MS):
+                            api_sending_until_ms = _ticks_add(last_ms, int(API_SENDING_HOLD_MS))
+                if bp_result.get("ok") is not None:
+                    status["api_ok"] = bool(bp_result["ok"])
+                if bp_result.get("wifi_ok") is not None:
+                    status["wifi_ok"] = bool(bp_result["wifi_ok"])
+            except Exception:
+                pass
 
         try:
             status["api_sending"] = (_ticks_diff(now_ms, api_sending_until_ms) < 0)
@@ -601,7 +658,11 @@ def run(
 
     def _bg_tick():
         try:
-            status["wifi_ok"] = bool(wifi.is_connected())
+            # Skip wlan.isconnected() when background_process is active — it blocks
+            # on the WiFi driver mutex while WPA2 auth is running on the bg thread.
+            # wifi_ok is kept current via _refresh_api_flags() → bp_result["wifi_ok"].
+            if _background_process is None:
+                status["wifi_ok"] = bool(wifi.is_connected())
             start_telemetry_if_ready(_cfg_cell[0])
             _gc()
             tick_telemetry(_cfg_cell[0])
@@ -620,10 +681,13 @@ def run(
     # each main-loop iteration (which would cost heap per call).
     # ========================================================
     def _idle(now_ms):
-        try:
-            status["wifi_ok"] = bool(wifi.is_connected())
-        except Exception:
-            status["wifi_ok"] = False
+        # Skip wlan.isconnected() when background_process is active — same mutex
+        # contention risk as in _bg_tick(). wifi_ok propagates via bp_result.
+        if _background_process is None:
+            try:
+                status["wifi_ok"] = bool(wifi.is_connected())
+            except Exception:
+                status["wifi_ok"] = False
 
         if _refresh_rtc_temp is not None:
             try:
@@ -662,10 +726,12 @@ def run(
         _cfg_cell[0] = cfg          # keep background tick in sync
 
         # --- WiFi live refresh ---
-        try:
-            status["wifi_ok"] = bool(wifi.is_connected())
-        except Exception:
-            status["wifi_ok"] = False
+        # Skip wlan.isconnected() when background_process is active (mutex risk).
+        if _background_process is None:
+            try:
+                status["wifi_ok"] = bool(wifi.is_connected())
+            except Exception:
+                status["wifi_ok"] = False
 
         # --- GPS detection ---
         try:
@@ -709,7 +775,7 @@ def run(
                 btn=btn,
                 tick_fn=_bg_tick,
                 on_idle=_idle,
-                idle_every_ms=4000,
+                idle_every_ms=500,
                 status=status,
             )
         else:
@@ -722,7 +788,7 @@ def run(
                 gps_on=status["gps_on"],
                 api_ok=status["api_ok"],
                 on_idle=_idle,
-                idle_every_ms=4000,
+                idle_every_ms=500,
             )
 
         if action:
@@ -732,7 +798,7 @@ def run(
                     "triple": "connectivity carousel",
                     "sleep": "sleep flow",
                     "quad": "selfdestruct" if cfg.get("joke_mode", False) else "turtle waiting",
-                    "double": "state screen" if cfg.get("turtle_mode", False) else "time screen",
+                    "double": "time screen",
                 }
                 _dest = _click_dests.get(action, "")
                 if _dest:
@@ -763,10 +829,9 @@ def run(
 
         if action == "double":
             screens.clear(); _gc()
-            if cfg.get("turtle_mode", False):
-                # turtleOS: machine-state screen (three circles; luff sweep
-                # on a second double-click). Replaces the Time screen in
-                # turtle mode — airOS keeps the original behaviour below.
+            _time_action = time_flow(btn, oled, cfg, wifi, None, get_screen, status=status, tick_fn=_bg_tick)
+            if cfg.get("turtle_mode", False) and _time_action == "single":
+                _gc()
                 scr = get_screen("state")
                 if scr is not None:
                     try:
@@ -785,8 +850,6 @@ def run(
                     except Exception:
                         print("[SCREEN] state")
                     scr.show_live(btn=btn, tick_fn=_bg_tick)
-                continue
-            time_flow(btn, oled, cfg, wifi, None, get_screen, status=status, tick_fn=_bg_tick)
             continue
 
         if action == "quad":

@@ -258,7 +258,19 @@ class WaitingScreen:
                     pass
                 _gc_next_ms = self._ticks_add(now, _gc_every_ms)
 
-            api_sending = self._is_api_sending(now)
+            # Include immediate background-process send flag (avoids 500ms _idle() lag)
+            try:
+                _ch_raw = connection_header._api_sending_raw[0]
+            except Exception:
+                _ch_raw = 0
+            api_sending = self._is_api_sending(now) or bool(_ch_raw)
+
+            # Morse circle state: triggers redraws every 50ms during morse
+            try:
+                _ch_morse = connection_header._api_morse_circle[0]
+            except Exception:
+                _ch_morse = 0
+
             api_connected = bool(self._wifi_ok) and bool(self._api_ok)
             hb_phase = self._heartbeat_phase(now, api_connected, api_sending)
 
@@ -288,6 +300,7 @@ class WaitingScreen:
                     self._gps_on != self._last_gps_on or
                     self._api_ok != self._last_api_ok or
                     api_sending != self._last_api_sending or
+                    _ch_morse != getattr(self, '_last_ch_morse', 0) or
                     (not self._anim_frozen and hb_phase != self._last_heartbeat_phase)):
                 redraw = True
 
@@ -303,6 +316,7 @@ class WaitingScreen:
                     api_sending=api_sending,
                 )
                 self._remember_last(api_sending, hb_phase)
+                self._last_ch_morse = _ch_morse
 
             # ----------------------------------------------------
             # 3) Poll button
@@ -341,10 +355,7 @@ class WaitingScreen:
                 return 2
             return 3
         else:
-            t = now_ms % 8200
-            if t < 7000:
-                return 0
-            return 1 + ((t - 7000) // 200)
+            return 0   # solid when idle — idle heartbeat animation removed
 
     def _remember_last(self, api_sending, heartbeat_phase=None):
         self._last_wifi_ok = self._wifi_ok
