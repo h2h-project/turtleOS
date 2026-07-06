@@ -111,6 +111,31 @@ class DeviceScreen:
 
         return ""
 
+    def _pick_mission_short_name(self, api_info):
+        # missions_tb.short_name — OLED-friendly mission label.
+        # Prefer the flat key our normalizer emits; tolerate nested/full_name.
+        if not isinstance(api_info, dict):
+            return ""
+
+        v = api_info.get("mission_short_name")
+        if isinstance(v, str) and v:
+            return v
+
+        v = self._nested_get(api_info, "assignment", "mission", "short_name")
+        if isinstance(v, str) and v:
+            return v
+
+        v = self._nested_get(api_info, "mission", "short_name")
+        if isinstance(v, str) and v:
+            return v
+
+        # Last resort: the long name if short_name was never set.
+        v = api_info.get("mission_full_name")
+        if isinstance(v, str) and v:
+            return v
+
+        return ""
+
     # -------------------------------------------------
     # INTERNAL RENDER
     # -------------------------------------------------
@@ -130,6 +155,7 @@ class DeviceScreen:
         device = str(self._pick_device_name(api_info) or "AirBuddy")
         home = str(self._pick_home_name(api_info) or "")
         room = str(self._pick_room_name(api_info) or "")
+        mission = str(self._pick_mission_short_name(api_info) or "")
 
         try:
             cfg = load_config() or {}
@@ -167,10 +193,14 @@ class DeviceScreen:
             except Exception:
                 pass
 
-        # Device ID at y=50
+        # Bottom line at y=50: mission short_name when on a mission (turtleOS),
+        # otherwise the Device ID (airOS / unassigned).
         if self.f_med:
             try:
-                self.f_med.write(("Device ID: " + (device_id or "---"))[:20], 0, 50)
+                if mission:
+                    self.f_med.write(("Mission: " + mission)[:20], 0, 50)
+                else:
+                    self.f_med.write(("Device ID: " + (device_id or "---"))[:20], 0, 50)
             except Exception:
                 pass
 

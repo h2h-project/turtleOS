@@ -8,7 +8,6 @@
     "api_base": "http://hopeturtles.org",
     "device_id": "17",
     "device_key": "bf5d334d2d7600dd8e30f39202edd5f91ab5bafc75873417b3cc21af4909d0ef",
-
     "telemetry_enabled": true,
     "telemetry_post_every_s": 120,
     "timezone_offset_min": 60,

@@ -165,13 +165,17 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | `platform_tag()` | `"pico"` | `"esp32"` | `"esp32s3"` | **`"xiao_esp32s3"`** |
 | HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | **`board_xiao_esp32_s3.py`** |
 | Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
-| Button LED | GP18 | GPIO18 | GPIO48 | None |
+| Button LED | GP18 | GPIO18 | GPIO48 | GPIO2 (D1) — moved off D0, see GNSS note |
 | I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
 | Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
 | USB power detect | GP24 (VBUS) | board-specific | Returns `False` | Returns `False` |
 | Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | **None — 8 MB PSRAM heap** (see Memory headroom) |
+
+**Stacked L76K GNSS module (Seeed SKU 109100021):** The XIAO GNSS module stacks onto the board and is wired exactly as the HAL expects — GPS_RXD on D6/GPIO43 and GPS_TXD on D7/GPIO44, default baud 9600. It also **reserves two extra pins**: `D0/GPIO1 → GPS_WAKEUP` and `D10/GPIO9 → GPS_RESET`. Because the module claims D0, the external button LED was relocated from D0/GPIO1 to **D1/GPIO2** (`BTN_LED_PIN = 2`). Do not reuse D0 or D10 for anything else while the module is stacked. All other header pins (D2, D3, D4/SDA, D5/SCL, D8/servo, D9) pass straight through and are unaffected — the I2C bus is untouched.
+
+> **Note:** GPIO43/44 are also the ESP32-S3 UART0 console pins (`U0TXD`/`U0RXD`). A device continuously driving GPIO44 can, on some firmware builds, leak bytes into the REPL — see [Critical gotcha #16](#16-gps-uart-shares-gpio4344-with-the-esp32-s3-uart0-console-pins).
 
 **I2C devices on the shared bus** (addresses the same across all ESP32-S3 variants):
 
@@ -529,6 +533,9 @@ Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-cl
 
 ### 15. `turtle_mode` is read fresh each main-loop iteration
 The idle screen object (`turtle_waiting_scr`) is instantiated once at startup. Changing `turtle_mode` in config at runtime has no effect until the next power-cycle. Do not add hot-reload for this; the instantiation cost is too high mid-loop.
+
+### 16. GPS UART shares GPIO43/44 with the ESP32-S3 UART0 console pins
+The GPS UART is on `TX=43, RX=44` (D6/D7), which are **also the ESP32-S3's default UART0 console pins** (`U0TXD`/`U0RXD`). If a build leaves UART0 active as a secondary console with input enabled, a device that continuously drives GPIO44 (e.g. a GNSS module's TXD streaming NMEA at power-up) can inject bytes into the REPL's stdin — showing as garbage at the prompt, and a stray `0x03` reads as Ctrl-C (`KeyboardInterrupt`). This is a latent pin/console overlap to keep in mind when a "crash" correlates with the harness being wired up; note it has **not** been confirmed as the cause of any specific field issue, and `os.dupterm(None, 1)` does not address it (the console is at the IDF level, not a Python dupterm slot). If it is ever confirmed, the clean fix is to reflash MicroPython with the UART0 console disabled (console on USB-Serial-JTAG only), which frees GPIO43/44 entirely.
 
 ---
 

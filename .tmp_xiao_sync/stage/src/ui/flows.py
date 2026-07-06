@@ -211,6 +211,22 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
         if cn is not None:
             out["community_name"] = cn
 
+        # Mission (missions_tb): short_name is the OLED-friendly label, full_name
+        # the long form. Tolerant of assignment.mission / top-level mission / flat.
+        mis = asg.get("mission") if isinstance(asg.get("mission"), dict) else (
+            data.get("mission") if isinstance(data.get("mission"), dict) else {}
+        )
+        msn = mis.get("short_name") if isinstance(mis, dict) else None
+        if msn is None:
+            msn = data.get("mission_short_name")
+        if msn is not None:
+            out["mission_short_name"] = msn
+        mfn = mis.get("full_name") if isinstance(mis, dict) else None
+        if mfn is None:
+            mfn = data.get("mission_full_name") or data.get("mission_name")
+        if mfn is not None:
+            out["mission_full_name"] = mfn
+
         return out
 
     try:

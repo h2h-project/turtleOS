@@ -100,9 +100,10 @@ class TurtleWaitingScreen:
 
     _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
-    def __init__(self, oled, nav_get=None):
+    def __init__(self, oled, nav_get=None, mission_get=None):
         self.oled = oled
         self._nav_get = nav_get        # callable -> NavController or None
+        self._mission_get = mission_get  # callable -> mission name str or None
         w, h = oled.width, oled.height
         f1_fb,  f1_buf,  f1_x,  f1_y  = _prerender(_TURTLE_1,    w, h)
         f2_fb,  f2_buf,  f2_x,  f2_y  = _prerender(_TURTLE_2,    w, h)
@@ -121,6 +122,39 @@ class TurtleWaitingScreen:
         except Exception:
             return None
 
+    def _mission(self):
+        if self._mission_get is None:
+            return None
+        try:
+            name = self._mission_get()
+        except Exception:
+            return None
+        if not name:
+            return None
+        return str(name).strip() or None
+
+    def _fit(self, text, max_w):
+        """Truncate text (from the end) until it fits within max_w pixels."""
+        o = self.oled
+        if max_w <= 0:
+            return ""
+        try:
+            tw, _ = o._text_size(o.f_small, text)
+        except Exception:
+            tw = len(text) * 5
+        if tw <= max_w:
+            return text
+        s = text
+        while len(s) > 1:
+            s = s[:-1]
+            try:
+                tw, _ = o._text_size(o.f_small, s)
+            except Exception:
+                tw = len(s) * 5
+            if tw <= max_w:
+                break
+        return s
+
     def _overlay(self, dst):
         """Nav status in the screen corners: machine state top-left,
         heading bottom-left, next-sweep countdown bottom-right."""
@@ -138,7 +172,8 @@ class TurtleWaitingScreen:
 
         nav = self._nav()
 
-        # Bottom-left: compass heading like NE-45° (------ without compass)
+        # Bottom-left: compass heading like NE-45° (------ without compass).
+        # Track its rendered width so the bottom-right text can steer clear.
         heading = None
         if nav is not None:
             try:
@@ -147,18 +182,29 @@ class TurtleWaitingScreen:
                 heading = None
         if heading is None:
             o.f_small.write("------", 0, ty)
+            try:
+                left_w, _ = o._text_size(o.f_small, "------")
+            except Exception:
+                left_w = 24
         else:
             letter = self._LETTERS[int((float(heading) + 22.5) / 45.0) % 8]
             txt = "{}-{}".format(letter, int(heading))
             o.f_small.write(txt, 0, ty)
             try:
-                from src.ui.glyphs import draw_degree
                 tw, _ = o._text_size(o.f_small, txt)
+            except Exception:
+                tw = len(txt) * 5
+            left_w = tw + 6           # + degree glyph
+            try:
+                from src.ui.glyphs import draw_degree
                 draw_degree(dst, tw + 2, ty, r=2)
             except Exception:
                 pass
 
-        # Bottom-right: countdown to the next luff sweep (SAIL-NAV only)
+        # Bottom-right: the luff-sweep countdown takes precedence during
+        # SAIL-NAV; otherwise show the mission name so an idle turtle still
+        # displays where it's headed.
+        br_txt = None
         if nav is not None:
             try:
                 secs = nav.seconds_to_next_sweep()
@@ -166,14 +212,19 @@ class TurtleWaitingScreen:
                 secs = None
             if secs is not None:
                 if nav.sweeping():
-                    txt = "SWEEP"
+                    br_txt = "SWEEP"
                 else:
-                    txt = "{}:{:02d}".format(secs // 60, secs % 60)
-                try:
-                    tw, _ = o._text_size(o.f_small, txt)
-                except Exception:
-                    tw = len(txt) * 5
-                o.f_small.write(txt, w - tw - 1, ty)
+                    br_txt = "{}:{:02d}".format(secs // 60, secs % 60)
+        if br_txt is None:
+            name = self._mission()
+            if name is not None:
+                br_txt = self._fit(name, w - left_w - 4)
+        if br_txt:
+            try:
+                tw, _ = o._text_size(o.f_small, br_txt)
+            except Exception:
+                tw = len(br_txt) * 5
+            o.f_small.write(br_txt, w - tw - 1, ty)
 
     def _draw(self, frame, status=None):
         self._cur = frame

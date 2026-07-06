@@ -3,6 +3,12 @@ import time
 import gc
 from src.ui.thermobar import ThermoBar
 
+# Single source of truth for the firmware version.  Referenced by the Booter
+# instance for the OLED label, and importable by the headless boot path in
+# main.py so the version is logged even when no OLED is present.
+VERSION_NUM = "2.3.5"
+VERSION = "turtleOS version " + VERSION_NUM
+
 
 class Booter:
     """
@@ -38,9 +44,9 @@ class Booter:
         self.f_version = self.f_brand  # height reference for layout
 
         # Version label content
-        self.brand = "airOS"
-        self.version_num = "2.3.4"
-        self.version = "airOS version 2.3.4"  # used for serial logging
+        self.brand = "turtleOS"
+        self.version_num = VERSION_NUM
+        self.version = VERSION  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None

@@ -38,9 +38,9 @@ class Booter:
         self.f_version = self.f_brand  # height reference for layout
 
         # Version label content
-        self.brand = "airOS"
-        self.version_num = "2.3.4"
-        self.version = "airOS version 2.3.4"  # used for serial logging
+        self.brand = "turtleOS"
+        self.version_num = "2.3.5"
+        self.version = "turtleOS version 2.3.5"  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None

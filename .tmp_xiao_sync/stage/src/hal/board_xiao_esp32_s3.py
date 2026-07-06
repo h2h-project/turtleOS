@@ -6,13 +6,22 @@
 #   - component side visible
 #
 # AirBuddy wiring summary:
-#   - D0 / GPIO1  -> Button LED signal (active HIGH, wire LED + resistor to GND)
+#   - D1 / GPIO2  -> Button LED signal (active HIGH, wire LED + resistor to GND)
 #   - D3 / GPIO4  -> Button signal
 #   - D4 / GPIO5  -> I2C SDA
 #   - D5 / GPIO6  -> I2C SCL
 #   - D6 / GPIO43 -> GPS RX  (XS3 TX -> GPS RX)
 #   - D7 / GPIO44 -> GPS TX  (GPS TX -> XS3 RX)
 #   - D8 / GPIO7  -> Servo PWM signal, e.g. MG996R rudder actuator
+#
+# Stacked L76K GNSS module (Seeed SKU 109100021) — pins it claims:
+#   - D6 / GPIO43 -> GPS_RXD  (matches our GPS UART TX, no change needed)
+#   - D7 / GPIO44 -> GPS_TXD  (matches our GPS UART RX, no change needed)
+#   - D0 / GPIO1  -> GPS_WAKEUP  (RESERVED by the module — do NOT reuse)
+#   - D10 / GPIO9 -> GPS_RESET   (RESERVED by the module — do NOT reuse)
+#   - 5V / 3V3 / GND -> power
+#   D1, D2, D3, D4, D5, D8, D9 are pass-through and free to use.
+#   The button LED was moved off D0 -> D1 because the module now owns D0.
 #
 # Sensor power:
 #   - 3V3 -> OLED VCC, RTC VCC, SCD41 VCC, AHT10/AHT21 VCC, INA219 VCC
@@ -51,11 +60,15 @@ def btn_pin():
 # ------------------------------------------------------------
 # Optional button LED
 # ------------------------------------------------------------
-# D0 / GPIO1 -> external button LED signal (active HIGH, wire LED + resistor to GND)
+# D1 / GPIO2 -> external button LED signal (active HIGH, wire LED + resistor to GND)
+#
+# NOTE: This was previously D0 / GPIO1, but the stacked L76K GNSS module
+# (Seeed SKU 109100021) ties D0 to its GPS_WAKEUP line, so the external
+# button LED was relocated to D1 / GPIO2 to avoid driving the GPS wake pin.
 #
 # The onboard user LED (GPIO21, active LOW) is driven simultaneously by
 # button.py as a secondary LED — both light up when the button is pressed.
-BTN_LED_PIN = 1
+BTN_LED_PIN = 2
 
 
 def btn_led_pin():

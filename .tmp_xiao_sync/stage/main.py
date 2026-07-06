@@ -343,6 +343,22 @@ def api_device_lookup(cfg):
             or ""
         )
 
+        # Mission (missions_tb): short_name is the OLED-friendly label used on
+        # the waiting/device screens; full_name is the long form. Tolerant of
+        # assignment.mission / top-level mission / flat payloads.
+        mis = asg.get("mission") or data.get("mission") or {}
+        info["mission_short_name"] = str(
+            (mis.get("short_name") if isinstance(mis, dict) else None)
+            or data.get("mission_short_name")
+            or ""
+        )
+        info["mission_full_name"] = str(
+            (mis.get("full_name") if isinstance(mis, dict) else None)
+            or data.get("mission_full_name")
+            or data.get("mission_name")
+            or ""
+        )
+
         info["time_zone"] = str(
             data.get("time_zone")
             or user.get("time_zone")
@@ -861,9 +877,9 @@ air = None
 try:
     from src.app.booter import Booter
     booter = Booter(oled) if oled else None
-    if booter and _early_cfg and _early_cfg.get("turtle_mode"):
-        booter.brand = "turtleOS"
-        booter.version = "turtleOS version " + booter.version_num
+    if booter and _early_cfg and not _early_cfg.get("turtle_mode"):
+        booter.brand = "airOS"
+        booter.version = "airOS version " + booter.version_num
 except Exception:
     booter = None
 

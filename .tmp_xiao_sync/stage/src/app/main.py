@@ -216,15 +216,35 @@ def run(
 
     waiting = WaitingScreen()
 
+    def _mission_name():
+        # Label for the waiting screen's lower-right corner.
+        # Prefer the mission short_name from the device API (missions_tb),
+        # falling back to the locally-configured destination name.
+        try:
+            if isinstance(api_boot, dict):
+                sn = api_boot.get("mission_short_name")
+                if sn:
+                    return sn
+        except Exception:
+            pass
+        try:
+            return (_cfg_cell[0] or _gps_cfg).get("dest_name")
+        except Exception:
+            return None
+
     turtle_waiting_scr = None
     if _gps_cfg.get("turtle_mode", False) and oled is not None:
         try:
             _gc()
             from src.ui.screens.turtle_waiting import TurtleWaitingScreen
-            # nav_get resolves lazily: _nav_cell is assigned further down in
-            # run(), well before the first show_live call in the main loop.
+            # nav_get / mission_get resolve lazily: _nav_cell and _cfg_cell
+            # are assigned further down in run(), well before the first
+            # show_live call in the main loop.
             turtle_waiting_scr = TurtleWaitingScreen(
-                oled, nav_get=lambda: _nav_cell[0])
+                oled,
+                nav_get=lambda: _nav_cell[0],
+                mission_get=_mission_name,
+            )
             _gc()
         except Exception as e:
             print("[APP] turtle_waiting init failed:", repr(e))
@@ -581,7 +601,10 @@ def run(
             elif name == "turtle_waiting":
                 from src.ui.screens.turtle_waiting import TurtleWaitingScreen
                 screens[name] = TurtleWaitingScreen(
-                    oled, nav_get=lambda: _nav_cell[0])
+                    oled,
+                    nav_get=lambda: _nav_cell[0],
+                    mission_get=_mission_name,
+                )
 
             elif name == "state":
                 from src.ui.screens.state import StateScreen
