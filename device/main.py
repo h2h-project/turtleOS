@@ -374,8 +374,14 @@ def api_device_lookup(cfg):
 
         info["ok"] = True
         _dname = info.get("device_name") or "device"
+        _mis = info.get("mission_short_name") or ""
         print("API lookup: {} is connected!".format(_dname))
-        return True, "device confirmed", info
+        print("[BOOT] Turtle: {}".format(_dname))
+        if _mis:
+            print("[BOOT] Mission: {}".format(_mis))
+        # OLED step detail shows the turtle name (+ mission short_name if present).
+        _detail = "{} / {}".format(_dname, _mis) if _mis else _dname
+        return True, _detail, info
 
     except MemoryError:
         print("API lookup: ENOMEM")
@@ -485,6 +491,11 @@ def go_waiting(oled, wifi_boot=None, api_boot=None, gps_boot=None):
 # BOOT SEQUENCE
 # ============================================================
 print("[BOOT] Turtle is waking up...")
+try:
+    from src.app.booter import VERSION as _boot_version
+    print("[BOOT] " + _boot_version)
+except Exception:
+    pass
 try:
     import gc as _gc_mod
     _free = _gc_mod.mem_free()
@@ -1345,8 +1356,9 @@ def step_led():
         _boot_led_on = True
         _boot_led_pin.value(active_val)  # start lit, then blink from here
         # 0.5 s periodic blink in the background (independent of boot-step timing).
-        # Timer(-1) = virtual/software timer, matching net/background_process.py.
-        _boot_led_timer = _Timer(-1)
+        # ESP32-S3 only supports hardware timer ids 0-3 (Timer(-1) raises
+        # ValueError); id 0 is free during boot and deinit'd before boot ends.
+        _boot_led_timer = _Timer(0)
         _boot_led_timer.init(period=500, mode=_Timer.PERIODIC, callback=_boot_led_blink)
         print("[BOOT] LED: OK GPIO{} (active={}), blinking @0.5s".format(led_pin, active_val))
         return True, "LED OK (GPIO{})".format(led_pin)
@@ -1390,13 +1402,6 @@ if booter:
     except Exception as e:
         print("BOOTER error:", repr(e))
 else:
-    # Headless (no OLED): boot_pipeline's version banner never runs, so log it
-    # here to keep the version visible early in the serial boot log.
-    try:
-        from src.app.booter import VERSION as _boot_version
-        _log("[BOOT] " + _boot_version)
-    except Exception:
-        pass
     for label, fn in steps:
         _log("[BOOT] " + label)
         try:

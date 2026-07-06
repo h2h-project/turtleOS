@@ -7,7 +7,7 @@
     "gps_enabled": true,
     "api_base": "http://hopeturtles.org",
     "device_id": "17",
-    "device_key": "bf5d334d2d7600dd8e30f39202edd5f91ab5bafc75873417b3cc21af4909d0ef",
+    "device_key": "e94131b6200fe52f5f655633d1c4c185c3473367855ee7e5de9d693e471a8d8b",
     "telemetry_enabled": true,
     "telemetry_post_every_s": 120,
     "timezone_offset_min": 60,
@@ -16,7 +16,7 @@
     "turtle_mode": true,
     "joke_mode": true,
     "morse_bless": true,
-    "servo_present": false,
+    "servo_present": true,
 
     "waypoints": [],
     "nav_cycle_ms": 300,
