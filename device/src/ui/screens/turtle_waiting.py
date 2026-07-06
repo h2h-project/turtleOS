@@ -100,6 +100,10 @@ class TurtleWaitingScreen:
 
     _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
+    # Space to reserve left of the mission text for the target glyph
+    # (7px glyph + 2px gap).
+    _TARGET_GAP = 9
+
     def __init__(self, oled, nav_get=None, mission_get=None):
         self.oled = oled
         self._nav_get = nav_get        # callable -> NavController or None
@@ -202,9 +206,10 @@ class TurtleWaitingScreen:
                 pass
 
         # Bottom-right: the luff-sweep countdown takes precedence during
-        # SAIL-NAV; otherwise show the mission name so an idle turtle still
-        # displays where it's headed.
+        # SAIL-NAV; otherwise show the mission name (prefixed with a target
+        # glyph) so an idle turtle still displays where it's headed.
         br_txt = None
+        br_is_mission = False
         if nav is not None:
             try:
                 secs = nav.seconds_to_next_sweep()
@@ -218,13 +223,27 @@ class TurtleWaitingScreen:
         if br_txt is None:
             name = self._mission()
             if name is not None:
-                br_txt = self._fit(name, w - left_w - 4)
+                # Uppercase so the mission reads at the same visual size as the
+                # other all-caps bottom text (heading / SWEEP).
+                # Reserve room on the left for the target glyph + a 2px gap.
+                br_txt = self._fit(name.upper(), w - left_w - 4 - self._TARGET_GAP)
+                br_is_mission = bool(br_txt)
         if br_txt:
             try:
                 tw, _ = o._text_size(o.f_small, br_txt)
             except Exception:
                 tw = len(br_txt) * 5
-            o.f_small.write(br_txt, w - tw - 1, ty)
+            tx = w - tw - 1
+            if br_is_mission:
+                try:
+                    from src.ui.glyphs import draw_circle
+                    # Reuse the summary-screen "circle + center dot" glyph as a
+                    # target marker: 7px (r=3) disc-in-ring, centred on the 7px
+                    # f_small row, sitting just left of the text with a 2px gap.
+                    draw_circle(dst, tx - 5, ty + 3, r=3, filled=True, color=1)
+                except Exception:
+                    pass
+            o.f_small.write(br_txt, tx, ty)
 
     def _draw(self, frame, status=None):
         self._cur = frame

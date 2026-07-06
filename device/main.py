@@ -374,13 +374,16 @@ def api_device_lookup(cfg):
 
         info["ok"] = True
         _dname = info.get("device_name") or "device"
-        _mis = info.get("mission_short_name") or ""
+        _mis = info.get("mission_short_name") or info.get("mission_full_name") or ""
         print("API lookup: {} is connected!".format(_dname))
         print("[BOOT] Turtle: {}".format(_dname))
         if _mis:
             print("[BOOT] Mission: {}".format(_mis))
-        # OLED step detail shows the turtle name (+ mission short_name if present).
-        _detail = "{} / {}".format(_dname, _mis) if _mis else _dname
+            _detail = "{} / {}".format(_dname, _mis)
+        else:
+            # Device confirmed but no mission came back — surface it clearly.
+            print("[BOOT] Mission: FAILED to retrieve (none in API response)")
+            _detail = "{} / no mission".format(_dname)
         return True, _detail, info
 
     except MemoryError:
@@ -1111,16 +1114,11 @@ def step_rtc():
             total_min = h * 60 + mi + tz_min
             lh = (total_min // 60) % 24
             lmi = total_min % 60
-            tz_sign = "+" if tz_min >= 0 else "-"
-            tz_hh = abs(tz_min) // 60
-            tz_mm = abs(tz_min) % 60
-            tz_label = "UTC{}{}".format(tz_sign, tz_hh) if tz_mm == 0 \
-                       else "UTC{}{}:{:02d}".format(tz_sign, tz_hh, tz_mm)
-            return True, "OK {:02d}:{:02d} local ({}){}{}".format(lh, lmi, tz_label, _bat, _ntp_src)
+            return True, "Ok! Its {:02d}:{:02d}".format(lh, lmi)
         except Exception:
             pass
 
-    return True, "OK {:02d}:{:02d} UTC{}{}".format(h, mi, _bat, _ntp_src)
+    return True, "Ok! Its {:02d}:{:02d}".format(h, mi)
 
 
 def step_warmup():
