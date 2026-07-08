@@ -238,7 +238,7 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 Single-click enters `sensor_carousel()` configured for navigation screens:
 1. **Compass** screen — live heading from QMC5883L with cardinal directions.
 2. **Sailpoint** screen — sail-angle overlay on heading.
-3. **Servo** screen — sail servo status; double-click triggers a 60°→120°→60° test sweep.
+3. **Servo** screen — sail servo status; double-click triggers a gentle, low-power 90°→80°→100°→90° test sweep (small ±10° range + slow ramp to avoid a battery rail sag that makes the servo stutter).
 4. **Battery** screen — INA219 voltage, current, and charge estimate.
 
 ### airOS sensor carousel (turtle_mode=false)

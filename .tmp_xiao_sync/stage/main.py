@@ -374,8 +374,17 @@ def api_device_lookup(cfg):
 
         info["ok"] = True
         _dname = info.get("device_name") or "device"
+        _mis = info.get("mission_short_name") or info.get("mission_full_name") or ""
         print("API lookup: {} is connected!".format(_dname))
-        return True, "device confirmed", info
+        print("[BOOT] Turtle: {}".format(_dname))
+        if _mis:
+            print("[BOOT] Mission: {}".format(_mis))
+            _detail = "{} / {}".format(_dname, _mis)
+        else:
+            # Device confirmed but no mission came back — surface it clearly.
+            print("[BOOT] Mission: FAILED to retrieve (none in API response)")
+            _detail = "{} / no mission".format(_dname)
+        return True, _detail, info
 
     except MemoryError:
         print("API lookup: ENOMEM")
@@ -484,6 +493,12 @@ def go_waiting(oled, wifi_boot=None, api_boot=None, gps_boot=None):
 # ============================================================
 # BOOT SEQUENCE
 # ============================================================
+print("[BOOT] Turtle is waking up...")
+try:
+    from src.app.booter import VERSION as _boot_version
+    print("[BOOT] " + _boot_version)
+except Exception:
+    pass
 try:
     import gc as _gc_mod
     _free = _gc_mod.mem_free()
@@ -1099,16 +1114,11 @@ def step_rtc():
             total_min = h * 60 + mi + tz_min
             lh = (total_min // 60) % 24
             lmi = total_min % 60
-            tz_sign = "+" if tz_min >= 0 else "-"
-            tz_hh = abs(tz_min) // 60
-            tz_mm = abs(tz_min) % 60
-            tz_label = "UTC{}{}".format(tz_sign, tz_hh) if tz_mm == 0 \
-                       else "UTC{}{}:{:02d}".format(tz_sign, tz_hh, tz_mm)
-            return True, "OK {:02d}:{:02d} local ({}){}{}".format(lh, lmi, tz_label, _bat, _ntp_src)
+            return True, "Ok! Its {:02d}:{:02d}".format(lh, lmi)
         except Exception:
             pass
 
-    return True, "OK {:02d}:{:02d} UTC{}{}".format(h, mi, _bat, _ntp_src)
+    return True, "Ok! Its {:02d}:{:02d}".format(h, mi)
 
 
 def step_warmup():
@@ -1295,16 +1305,31 @@ def step_servo():
 _boot_led_gpio = None   # pin number (int) — used for cleanup
 _boot_led_active = 1    # logic level that means "on"
 _boot_led_pin = None    # Pin object kept alive to hold the GPIO HIGH/LOW state
+_boot_led_timer = None  # background timer that blinks the LED during boot
+_boot_led_on = False    # current blink phase (True = LED lit)
+
+
+def _boot_led_blink(_t=None):
+    """Timer callback: toggle the onboard LED to show the device is alive."""
+    global _boot_led_on
+    try:
+        if _boot_led_pin is None:
+            return
+        _boot_led_on = not _boot_led_on
+        _boot_led_pin.value(_boot_led_active if _boot_led_on else (1 - _boot_led_active))
+    except Exception:
+        pass
 
 
 def step_led():
     """
-    Light the onboard user LED for the remainder of boot.
-    Stores only the pin number + active level (ints) so the GC cannot interfere.
-    The hardware register holds the LED state; the Python Pin object is discarded.
-    Turned off by the cleanup block that follows boot_pipeline().
+    Start blinking the onboard user LED for the remainder of boot to show the
+    device is alive and booting.  A background machine.Timer toggles the LED
+    every 0.5 s so the blink is steady regardless of how long individual boot
+    steps take (WiFi connect can block for several seconds).
+    Stopped and turned off by the cleanup block that follows boot_pipeline().
     """
-    global _boot_led_gpio, _boot_led_active, _boot_led_pin
+    global _boot_led_gpio, _boot_led_active, _boot_led_pin, _boot_led_timer, _boot_led_on
     led_pin = None
     active_val = 1
     try:
@@ -1319,30 +1344,39 @@ def step_led():
         return True, "No onboard LED"
 
     try:
-        from machine import Pin as _Pin
+        from machine import Pin as _Pin, Timer as _Timer
         _boot_led_gpio = led_pin
         _boot_led_active = active_val
         # Hold the Pin object in a module global so GC cannot finalize it.
         # On some MicroPython/ESP32-S3 builds, Pin finalization resets the GPIO
         # to input mode, which turns the LED off immediately.
         _boot_led_pin = _Pin(led_pin, _Pin.OUT)
-        _boot_led_pin.value(active_val)
-        print("[BOOT] LED: OK GPIO{} (active={})".format(led_pin, active_val))
+        _boot_led_on = True
+        _boot_led_pin.value(active_val)  # start lit, then blink from here
+        # 0.5 s periodic blink in the background (independent of boot-step timing).
+        # ESP32-S3 only supports hardware timer ids 0-3 (Timer(-1) raises
+        # ValueError); id 0 is free during boot and deinit'd before boot ends.
+        _boot_led_timer = _Timer(0)
+        _boot_led_timer.init(period=500, mode=_Timer.PERIODIC, callback=_boot_led_blink)
+        print("[BOOT] LED: OK GPIO{} (active={}), blinking @0.5s".format(led_pin, active_val))
         return True, "LED OK (GPIO{})".format(led_pin)
     except Exception as e:
         print("[BOOT] LED: failed:", repr(e))
         return True, "LED FAIL"
 
 
-# Reordered: WiFi earlier (ESP32 heap stability) + API right after WiFi;
-# LED lights after API and stays on through the remaining boot steps.
+# Ordering notes:
+#   - LED first: start the "alive" blink up front so it runs through the whole
+#     boot, including the long WiFi connect wait.  step_led only touches the
+#     onboard GPIO/Timer (no config or I2C dependency), so it is safe to run first.
+#   - WiFi early (ESP32 heap stability), API right after WiFi.
 _turtle_boot = bool((_early_cfg or {}).get("turtle_mode", False))
 
 steps = [
+    ("LED check...", step_led),
     ("Loading config...", step_load_config),
     ("WiFi connect", step_wifi),
     ("Device API check...", step_api),
-    ("LED check...", step_led),
     ("RTC clock...", step_rtc),
     ("Warming sensors...", step_warmup),
     ("GPS check...", step_gps),
@@ -1376,7 +1410,13 @@ else:
         _sleep_hold()  # <-- hold each step even without OLED
 
 
-# Turn off the boot LED now that all steps are done.
+# Stop the blink timer and turn off the boot LED now that all steps are done.
+if _boot_led_timer is not None:
+    try:
+        _boot_led_timer.deinit()
+    except Exception:
+        pass
+    _boot_led_timer = None
 if _boot_led_pin is not None:
     try:
         _boot_led_pin.value(1 - _boot_led_active)

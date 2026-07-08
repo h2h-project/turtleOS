@@ -217,20 +217,19 @@ def run(
     waiting = WaitingScreen()
 
     def _mission_name():
-        # Label for the waiting screen's lower-right corner.
-        # Prefer the mission short_name from the device API (missions_tb),
-        # falling back to the locally-configured destination name.
+        # Label for the waiting screen's lower-right corner: the mission
+        # short_name from the device API (missions_tb), falling back to the
+        # full_name if short_name is null.  No local dest_name fallback — if
+        # the API returned no mission, show nothing (the boot log reports the
+        # retrieval failure).
         try:
             if isinstance(api_boot, dict):
-                sn = api_boot.get("mission_short_name")
+                sn = api_boot.get("mission_short_name") or api_boot.get("mission_full_name")
                 if sn:
                     return sn
         except Exception:
             pass
-        try:
-            return (_cfg_cell[0] or _gps_cfg).get("dest_name")
-        except Exception:
-            return None
+        return None
 
     turtle_waiting_scr = None
     if _gps_cfg.get("turtle_mode", False) and oled is not None:

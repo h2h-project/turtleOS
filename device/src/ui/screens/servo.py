@@ -124,43 +124,47 @@ class ServoScreen:
 
     def _run_test(self):
         """
-        Sweep 60°→120° (CW, 2 s) then 120°→60° (CCW, 2 s).
-        Servo PWM stays active only for the sweep duration; deinit at the end
-        to release holding current.  Gear icon rotates in sync with servo direction.
+        Gentle, low-power test: ease to centre (90°) first, then a small
+        80° → 100° → 90° excursion.  The tight ±10° range and slow (~14°/s)
+        ramp keep peak torque — and therefore current draw — low, so a
+        battery rail can't sag enough to make the servo stutter.  The very
+        first move is to centre (not a hard extreme) so it isn't a full-speed
+        snap from an unknown resting position (the main inrush culprit).
+        PWM is deinit'd at the end to release holding current.
         """
-        frame_ms   = 25          # display refresh interval
-        phase_ms   = 2000        # 2 s per direction
-        frames     = phase_ms // frame_ms  # 80 frames per phase
+        frame_ms  = 25           # display refresh / step interval
+        center    = 90
+        lo, hi    = 80, 100      # gentle ±10° excursion around centre
+        settle_ms = 400          # let the servo reach a target before next move
 
-        cw_start, cw_end   = 60, 120      # clockwise phase
-        ccw_start, ccw_end = 120, 60      # counter-clockwise phase
+        g = [0.0]                # gear-icon rotation accumulator (cell)
 
-        # Radians added to gear each frame; 0.13 rad ≈ 7.4° → ~1 visual cycle / 2 s
-        cw_step  =  0.13
-        ccw_step = -0.13
+        def _ramp(a, b, ms, spin):
+            # Linear a→b over `ms`, ~1°/step so angular velocity (and the
+            # acceleration current that sags the rail) stays low.
+            steps = max(1, int(ms // frame_ms))
+            for i in range(steps + 1):
+                srv.angle(a + (b - a) * i / steps)
+                self._draw("Testing...", g[0])
+                g[0] += spin
+                time.sleep_ms(frame_ms)
 
-        gear_rad = 0.0
         srv = None
-
         try:
             from src.drivers.servo import Servo
             srv = Servo(self._pin)
 
-            # Phase 1 — clockwise
-            for i in range(frames + 1):
-                deg = cw_start + (cw_end - cw_start) * i / frames
-                srv.angle(deg)
-                self._draw("Testing...", gear_rad)
-                gear_rad += cw_step
-                time.sleep_ms(frame_ms)
+            # Ease to centre and settle before any excursion.
+            srv.angle(center)
+            self._draw("Testing...", g[0])
+            time.sleep_ms(settle_ms)
 
-            # Phase 2 — counter-clockwise
-            for i in range(frames + 1):
-                deg = ccw_start + (ccw_end - ccw_start) * i / frames
-                srv.angle(deg)
-                self._draw("Testing...", gear_rad)
-                gear_rad += ccw_step
-                time.sleep_ms(frame_ms)
+            _ramp(center, lo, 700,  -0.05)   # 90 → 80  (gentle)
+            time.sleep_ms(settle_ms)
+            _ramp(lo, hi, 1400, 0.05)        # 80 → 100 (gentle sweep)
+            time.sleep_ms(settle_ms)
+            _ramp(hi, center, 700, -0.05)    # 100 → 90 (return to centre)
+            time.sleep_ms(settle_ms)
 
         except Exception:
             pass

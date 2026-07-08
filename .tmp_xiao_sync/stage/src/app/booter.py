@@ -3,6 +3,12 @@ import time
 import gc
 from src.ui.thermobar import ThermoBar
 
+# Single source of truth for the firmware version.  Referenced by the Booter
+# instance for the OLED label, and importable by the headless boot path in
+# main.py so the version is logged even when no OLED is present.
+VERSION_NUM = "2.3.6"
+VERSION = "turtleOS version " + VERSION_NUM
+
 
 class Booter:
     """
@@ -39,8 +45,8 @@ class Booter:
 
         # Version label content
         self.brand = "turtleOS"
-        self.version_num = "2.3.5"
-        self.version = "turtleOS version 2.3.5"  # used for serial logging
+        self.version_num = VERSION_NUM
+        self.version = VERSION  # used for serial logging
 
         self.bar = ThermoBar(oled)
         self._layout = None
@@ -283,6 +289,9 @@ class Booter:
             step_pause_ms=None,
             # Extra hold (ms) when a step detail looks like an error
             error_hold_ms=700,
+            # Minimum dwell (ms) for every step's result footer so it is
+            # readable on the OLED (the ramp animation alone is only ~1 frame).
+            result_hold_ms=500,
     ):
         if logger is None:
             logger = print
@@ -290,8 +299,9 @@ class Booter:
         self._layout = self._calc_layout()
 
         # Intro
+        # (Version is logged early in main.py, right after the wake-up banner;
+        #  the on-screen version label is still drawn by _draw_version_line.)
         self._draw_frame(p=0.0, footer=None)
-        logger("[BOOT] " + self.version)
         time.sleep_ms(int(intro_ms) if intro_ms is not None else 0)
 
         try:
@@ -377,9 +387,14 @@ class Booter:
             else:
                 logger("[BOOT] " + label + " -> " + status)
 
-            # Hold error results long enough to read
-            if error_hold_ms and int(error_hold_ms) > 0 and self._detail_is_error(detail):
-                time.sleep_ms(int(error_hold_ms))
+            # Hold each result footer long enough to read.  Errors get the
+            # longer error_hold_ms; every other step gets result_hold_ms so no
+            # log item flashes by faster than ~0.5 s.
+            if self._detail_is_error(detail):
+                if error_hold_ms and int(error_hold_ms) > 0:
+                    time.sleep_ms(int(error_hold_ms))
+            elif result_hold_ms and int(result_hold_ms) > 0:
+                time.sleep_ms(int(result_hold_ms))
 
             p_prev = p_next
 

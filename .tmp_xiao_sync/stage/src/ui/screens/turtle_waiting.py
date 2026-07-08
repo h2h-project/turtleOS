@@ -7,6 +7,7 @@ except Exception:
     _ch = None
 
 _HEADER_H = 10  # pixels reserved at top for connectivity icon strip
+_FOOTER_H = 8   # pixels reserved at bottom for the heading/mission text row (f_small)
 
 _TURTLE_1 = (
     "  _______    ___",
@@ -86,7 +87,9 @@ def _prerender(lines, display_w, display_h):
     del int_buf, int_fb
     gc.collect()
 
-    avail_h = display_h - _HEADER_H
+    # Centre the turtle in the band between the bottom of the connection
+    # header and the top of the bottom text row (heading / mission footer).
+    avail_h = display_h - _HEADER_H - _FOOTER_H
     x_off = (display_w - dst_w) // 2
     y_off = _HEADER_H + (avail_h - dst_h) // 2
     return dst_fb, dst_buf, x_off, y_off
@@ -99,6 +102,10 @@ class TurtleWaitingScreen:
     SWIM_CYCLES = 6
 
     _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+    # Space to reserve right of the mission text for the target glyph
+    # (5px gap + 7px glyph).
+    _TARGET_GAP = 12
 
     def __init__(self, oled, nav_get=None, mission_get=None):
         self.oled = oled
@@ -202,9 +209,10 @@ class TurtleWaitingScreen:
                 pass
 
         # Bottom-right: the luff-sweep countdown takes precedence during
-        # SAIL-NAV; otherwise show the mission name so an idle turtle still
-        # displays where it's headed.
+        # SAIL-NAV; otherwise show the mission name (prefixed with a target
+        # glyph) so an idle turtle still displays where it's headed.
         br_txt = None
+        br_is_mission = False
         if nav is not None:
             try:
                 secs = nav.seconds_to_next_sweep()
@@ -218,13 +226,30 @@ class TurtleWaitingScreen:
         if br_txt is None:
             name = self._mission()
             if name is not None:
-                br_txt = self._fit(name, w - left_w - 4)
+                # Uppercase so the mission reads at the same visual size as the
+                # other all-caps bottom text (heading / SWEEP).
+                # Reserve room on the right for the target glyph + a 5px gap.
+                br_txt = self._fit(name.upper(), w - left_w - 4 - self._TARGET_GAP)
+                br_is_mission = bool(br_txt)
         if br_txt:
             try:
                 tw, _ = o._text_size(o.f_small, br_txt)
             except Exception:
                 tw = len(br_txt) * 5
-            o.f_small.write(br_txt, w - tw - 1, ty)
+            if br_is_mission:
+                # Target glyph flush in the bottom-right corner (7px, r=3
+                # disc-in-ring, centred on the f_small row); mission text sits
+                # to its left, separated by 5px.
+                glyph_cx = w - 4                    # rightmost glyph pixel at w-1
+                tx = (glyph_cx - 3) - 5 - tw        # glyph_left - 5px gap - text
+                try:
+                    from src.ui.glyphs import draw_circle
+                    draw_circle(dst, glyph_cx, ty + 3, r=3, filled=True, color=1)
+                except Exception:
+                    pass
+            else:
+                tx = w - tw - 1                     # sweep countdown: right-aligned
+            o.f_small.write(br_txt, tx, ty)
 
     def _draw(self, frame, status=None):
         self._cur = frame
