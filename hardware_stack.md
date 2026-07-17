@@ -2,7 +2,7 @@
 
 The hope turtle is built from **globally accessible, inexpensive components**. Every part in this list was chosen because it can be sourced through online marketplaces or local electronics suppliers in most countries — no specialist distributors, no proprietary supply chains. The total component cost for a complete hope turtle control system is intentionally kept low so that community builders, schools, and humanitarian organisations anywhere in the world can join the project.
 
-The links in the Example column point to web listings as a convenient reference. In most cases identical or equivalent parts are available through local marketplaces (AliExpress, Shopee, Mercado Libre, local electronics shops) for even less. Wherever possible, standard I²C and UART modules are used so that builders can substitute equivalent boards without rewriting firmware.
+The links in the Example column point to Amazon UK listings as a convenient reference. In most cases identical or equivalent parts are available through local marketplaces (AliExpress, Shopee, Mercado Libre, local electronics shops) for even less. Wherever possible, standard I²C and UART modules are used so that builders can substitute equivalent boards without rewriting firmware.
 
 ---
 
@@ -19,9 +19,9 @@ The links in the Example column point to web listings as a convenient reference.
 | DS3231 RTC                                | UTC timekeeping — survives power-off without network sync | CORE          | <a href="https://www.amazon.co.uk/Wishiot-AT24C32-Raspberry-Mega2560-Leonardo/dp/B0BTM8HHX2" target="_blank">🔗</a> |
 | Xiao Grove Shield                         | Main circuit board and sensor port | CORE          | <a href="[https://www.amazon.co.uk/Seeeduino-Expansion-Peripherals-Expandable-Interfaces/dp/B08NDZ3WCP](https://thepihut.com/products/grove-shield-for-seeeduino-xiao)" target="_blank">🔗</a> |
 | AHT21 + ENS160 circuit                    | One circuit that does temp, humidity and TVOC | active        | <a href="https://www.amazon.co.uk/ARCELI-Quality-Temperature-Humidity-Purification/dp/B0CRTVMM7N" target="_blank">🔗</a> |
-| ICM-20948                                 | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | CORE - In dev | <a href="https://www.amazon.co.uk/9DOF-IMU-BREAKOUT-ICM-20948-Q/dp/B07VNV3WKL" target="_blank">🔗</a> |
-| Pololu S13V25F6 voltage regulator         | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | CORE - In dev | <a href="https://www.pololu.com/product/4981" target="_blank">🔗</a> |
-| Adafruit bq25185 solar charger            | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | CORE - In dev | <a href="https://www.amazon.co.uk/Adafruit-bq25185-Charging-Module-6106/dp/B0DXK6YZX8" target="_blank">🔗</a> |
+| MPU6050 IMU                                | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | Testing | <a href="https://www.amazon.co.uk/9DOF-IMU-BREAKOUT-ICM-20948-Q/dp/B07VNV3WKL" target="_blank">🔗</a> |
+| Pololu S13V25F6 voltage regulator         | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | Testing | <a href="https://www.pololu.com/product/4981" target="_blank">🔗</a> |
+| Adafruit bq25185 solar charger            | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | Testing | <a href="https://www.amazon.co.uk/Adafruit-bq25185-Charging-Module-6106/dp/B0DXK6YZX8" target="_blank">🔗</a> |
 | 21700 Li-ion cell (4200mAh 3.7V 30A)      | Primary energy storage — high-capacity, high-discharge cell for extended voyages | CORE          | <a href="https://www.amazon.co.uk/Vapcell-4200mAh-21700-Rechargeable-Battery/dp/B0DFCZHQ6L" target="_blank">🔗</a> |
 | Xiao Wio-SX1262 Kit for Meshtastic & LoRa | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future        | <a href="https://www.amazon.co.uk/XIAO-ESP32S3-Wio-SX1262-Development-Meshtastic/dp/B0DZCQ1FG3" target="_blank">🔗</a> |
 
