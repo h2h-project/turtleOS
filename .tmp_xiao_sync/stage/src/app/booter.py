@@ -6,7 +6,7 @@ from src.ui.thermobar import ThermoBar
 # Single source of truth for the firmware version.  Referenced by the Booter
 # instance for the OLED label, and importable by the headless boot path in
 # main.py so the version is logged even when no OLED is present.
-VERSION_NUM = "2.3.6"
+VERSION_NUM = "2.3.8"
 VERSION = "turtleOS version " + VERSION_NUM
 
 
