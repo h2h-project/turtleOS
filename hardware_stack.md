@@ -2,7 +2,7 @@
 
 The hope turtle is built from **globally accessible, inexpensive components**. Every part in this list was chosen because it can be sourced through online marketplaces or local electronics suppliers in most countries — no specialist distributors, no proprietary supply chains. The total component cost for a complete hope turtle control system is intentionally kept low so that community builders, schools, and humanitarian organisations anywhere in the world can join the project.
 
-The links in the Example column point to Amazon UK listings as a convenient reference. In most cases identical or equivalent parts are available through local marketplaces (AliExpress, Shopee, Mercado Libre, local electronics shops) for even less. Wherever possible, standard I²C and UART modules are used so that builders can substitute equivalent boards without rewriting firmware.
+The links in the Example column point to web listings as a convenient reference. In most cases identical or equivalent parts are available through local marketplaces (AliExpress, Shopee, Mercado Libre, local electronics shops) for even less. Wherever possible, standard I²C and UART modules are used so that builders can substitute equivalent boards without rewriting firmware.
 
 ---
 
