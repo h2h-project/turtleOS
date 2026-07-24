@@ -80,7 +80,11 @@ class OnlineScreen:
             except Exception:
                 pass
 
-        o.f_arvo20.write("Online", 0, self._top_pad)
+        # Title reflects live connectivity: "Offline" when WiFi is down so the
+        # user can still open this screen (it is now first in the carousel) and
+        # read the pending telemetry queue without a connection.
+        title = "Online" if self._wifi_ok else "Offline"
+        o.f_arvo20.write(title, 0, self._top_pad)
 
         try:
             _, title_h = o._text_size(o.f_arvo20, "Ag")
@@ -110,6 +114,15 @@ class OnlineScreen:
         else:
             did = (self.device_id or "---")[:14]
             o.f_med.write("ID: " + did, 0, status_y + line_h)
+
+        # Third line: count of pending (unsent) telemetry messages. Visible
+        # even when offline so the user knows how much is queued to send.
+        try:
+            from src.app.telemetry_state import TelemetryState as _TS
+            _pending = _TS.get_queue_size()
+        except Exception:
+            _pending = 0
+        o.f_med.write("unsent: %d" % _pending, 0, status_y + 2 * line_h)
 
         self.toggle.draw(fb, on=self._enabled)
         fb.show()

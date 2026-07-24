@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
+# ------------------------------------------------------------
+# When run as `curl -sSL ... | bash`, stdin is the pipe carrying the
+# script itself — not the keyboard.  Every interactive `read` then gets
+# EOF immediately and any "please answer" retry loop spins forever.
+# Reconnect stdin to the controlling terminal so prompts work.
+# ------------------------------------------------------------
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+    exec < /dev/tty
+fi
+
 # ============================================================
 # turtleOS Installer
 # ------------------------------------------------------------
@@ -362,7 +372,7 @@ fi
 # Ready to install turtleOS?
 # ------------------------------------------------------------
 
-TURTLEOS_VERSION="$(grep 'self\.version_num\s*=\s*"' "$DEVICE_DIR/src/app/booter.py" 2>/dev/null \
+TURTLEOS_VERSION="$(grep -E 'VERSION_NUM[[:space:]]*=[[:space:]]*"' "$DEVICE_DIR/src/app/booter.py" 2>/dev/null \
     | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
 [[ -n "$TURTLEOS_VERSION" ]] || TURTLEOS_VERSION="unknown"
 
@@ -471,54 +481,12 @@ echo "Most OLED modules need no offset. If your display is slightly misaligned"
 echo "horizontally (SH1106 variant), try an offset of 2."
 OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
 
-echo
-echo "--- Navigation mission ---"
-echo "Where is your turtle sailing to?  Choose a Hope Turtle mission or enter"
-echo "custom coordinates.  You can change this any time via config.json."
-echo
-echo "  1) Al Mawasi, Gaza"
-echo "  2) South Hwanghae, North Korea"
-echo "  3) Santa Cruz del Norte, Cuba"
-echo "  4) Enter custom coordinates"
-echo "  5) Skip — use default (Al Mawasi, Gaza)"
-echo
-
-DEST_NAME="Al Mawasi, Gaza"
-DEST_LAT="31.35"
-DEST_LON="34.27"
-
-while true; do
-    read -r -p "Choose your mission [1-5]: " DEST_CHOICE
-    case "$DEST_CHOICE" in
-        1)
-            DEST_NAME="Al Mawasi, Gaza"
-            DEST_LAT="31.35"
-            DEST_LON="34.27"
-            break ;;
-        2)
-            DEST_NAME="South Hwanghae, North Korea"
-            DEST_LAT="38.00"
-            DEST_LON="125.50"
-            break ;;
-        3)
-            DEST_NAME="Santa Cruz del Norte, Cuba"
-            DEST_LAT="23.16"
-            DEST_LON="-81.92"
-            break ;;
-        4)
-            echo
-            DEST_NAME="$(prompt_required "Destination name (e.g. Port of Call, Country)")"
-            DEST_LAT="$(prompt_required "Latitude  (decimal degrees, e.g. 31.35)")"
-            DEST_LON="$(prompt_required "Longitude (decimal degrees, e.g. 34.27)")"
-            break ;;
-        5|"")
-            break ;;
-        *)
-            echo "  (Please enter a number from 1 to 5.)" ;;
-    esac
-done
-
-echo "  Destination: $DEST_NAME  ($DEST_LAT, $DEST_LON)"
+# Navigation mission (destination + waypoints) is assigned per turtle on
+# hopeturtles.org and synced to the device, so it is not prompted here.
+# Emit a neutral placeholder destination; the server value takes precedence.
+DEST_NAME="Unassigned"
+DEST_LAT="0.0"
+DEST_LON="0.0"
 
 echo
 echo "--- Navigation tuning ---"

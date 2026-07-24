@@ -15,6 +15,12 @@
 #     assignment.room.room_name
 #     assignment.user.time_zone
 #   while still tolerating older flat payloads
+#
+# Mode-aware layout (Jul 2026):
+#   turtle_mode=True  -> Name / Mission (full_name) / ID
+#                        The turtle API has no homes/rooms, so they are neither
+#                        parsed (see flows._normalize) nor drawn.
+#   turtle_mode=False -> Home / Room / Mission-or-Device-ID  (unchanged)
 
 import time
 import gc
@@ -111,6 +117,25 @@ class DeviceScreen:
 
         return ""
 
+    def _pick_mission_full_name(self, api_info):
+        # missions_tb.full_name — the long mission label shown in turtle mode.
+        if not isinstance(api_info, dict):
+            return ""
+
+        v = api_info.get("mission_full_name")
+        if isinstance(v, str) and v:
+            return v
+
+        v = self._nested_get(api_info, "assignment", "mission", "full_name")
+        if isinstance(v, str) and v:
+            return v
+
+        v = self._nested_get(api_info, "mission", "full_name")
+        if isinstance(v, str) and v:
+            return v
+
+        return ""
+
     def _pick_mission_short_name(self, api_info):
         # missions_tb.short_name — OLED-friendly mission label.
         # Prefer the flat key our normalizer emits; tolerate nested/full_name.
@@ -152,16 +177,25 @@ class DeviceScreen:
         if not isinstance(api_info, dict):
             api_info = {}
 
-        device = str(self._pick_device_name(api_info) or "AirBuddy")
-        home = str(self._pick_home_name(api_info) or "")
-        room = str(self._pick_room_name(api_info) or "")
-        mission = str(self._pick_mission_short_name(api_info) or "")
-
         try:
             cfg = load_config() or {}
             device_id = str(cfg.get("device_id", "") or "")
+            turtle_mode = bool(cfg.get("turtle_mode", False))
         except Exception:
             device_id = ""
+            turtle_mode = False
+
+        device = str(self._pick_device_name(api_info) or "AirBuddy")
+
+        # turtleOS has no homes/rooms on its API — don't parse or draw them.
+        if turtle_mode:
+            home = ""
+            room = ""
+            mission = str(self._pick_mission_full_name(api_info) or "")
+        else:
+            home = str(self._pick_home_name(api_info) or "")
+            room = str(self._pick_room_name(api_info) or "")
+            mission = str(self._pick_mission_short_name(api_info) or "")
 
         ow = int(getattr(self.oled, "width", 128))
 
@@ -179,30 +213,46 @@ class DeviceScreen:
             except Exception:
                 pass
 
-        # Home at y=24
-        if self.f_med:
-            try:
-                self.f_med.write(("Home: " + (home or "---"))[:20], 0, 24)
-            except Exception:
-                pass
+        if turtle_mode:
+            # turtleOS: device name, mission full_name, and local device ID.
+            if self.f_med:
+                try:
+                    self.f_med.write(("Name: " + (device or "---"))[:20], 0, 24)
+                except Exception:
+                    pass
+                try:
+                    self.f_med.write(("Mission: " + (mission or "---"))[:20], 0, 37)
+                except Exception:
+                    pass
+                try:
+                    self.f_med.write(("ID: " + (device_id or "---"))[:20], 0, 50)
+                except Exception:
+                    pass
+        else:
+            # Home at y=24
+            if self.f_med:
+                try:
+                    self.f_med.write(("Home: " + (home or "---"))[:20], 0, 24)
+                except Exception:
+                    pass
 
-        # Room at y=37
-        if self.f_med:
-            try:
-                self.f_med.write(("Room: " + (room or "---"))[:20], 0, 37)
-            except Exception:
-                pass
+            # Room at y=37
+            if self.f_med:
+                try:
+                    self.f_med.write(("Room: " + (room or "---"))[:20], 0, 37)
+                except Exception:
+                    pass
 
-        # Bottom line at y=50: mission short_name when on a mission (turtleOS),
-        # otherwise the Device ID (airOS / unassigned).
-        if self.f_med:
-            try:
-                if mission:
-                    self.f_med.write(("Mission: " + mission)[:20], 0, 50)
-                else:
-                    self.f_med.write(("Device ID: " + (device_id or "---"))[:20], 0, 50)
-            except Exception:
-                pass
+            # Bottom line at y=50: mission short_name when on a mission,
+            # otherwise the Device ID (airOS / unassigned).
+            if self.f_med:
+                try:
+                    if mission:
+                        self.f_med.write(("Mission: " + mission)[:20], 0, 50)
+                    else:
+                        self.f_med.write(("Device ID: " + (device_id or "---"))[:20], 0, 50)
+                except Exception:
+                    pass
 
         try:
             fb.show()

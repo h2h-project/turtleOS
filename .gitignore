@@ -23,3 +23,5 @@ config.json
 .claude/
 .tem_xiao_sync/
 backups/
+
+scripts/xiao_config.json
