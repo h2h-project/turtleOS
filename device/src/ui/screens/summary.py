@@ -1,20 +1,26 @@
 # src/ui/screens/summary.py — Summary screen (Pico / MicroPython safe)
 
 import time
-from src.ui.glyphs import draw_circle, draw_degree, draw_c, draw_sub2, draw_face, draw_battery, BATT_W
+from src.ui.glyphs import (
+    draw_circle, draw_degree, draw_c, draw_sub2, draw_face,
+    draw_battery, BATT_W, BATT_H,
+)
 
 try:
     from src.ui import connection_header as _ch
 except Exception:
     _ch = None
 
+# How often the bottom-left reading rotates to the next available sensor value.
+ROTATE_MS = 3000
+
 
 class SummaryScreen:
-    # Header row (connection icons + heartbeat glyph/room name) and footer
-    # row (battery icon) reserve fixed bands; readings + face share what's
-    # left in between.
+    # Header row (connection icons + heartbeat glyph/room name) reserves a
+    # fixed band at the top; the face glyph is otherwise centred on the
+    # full screen, clamped just clear of this band and the footer band
+    # (computed from font metrics in __init__).
     _HEADER_H = 10
-    _FOOTER_H = 9
 
     # Heartbeat glyph + room-name label, top-left.
     _GLYPH_R = 3
@@ -31,7 +37,14 @@ class SummaryScreen:
         self._room_get = room_get        # callable -> room name str or None
 
         self.indent_x = 4
-        self.top_y = self._HEADER_H + 2
+
+        try:
+            _, med_h = self.oled._text_size(self.f, "Ag")
+        except Exception:
+            med_h = 11
+        # Bottom-left reading text height + top/bottom margins; also the
+        # clearance band the face glyph must stay above.
+        self._FOOTER_H = med_h + 4
 
     # -------------------------------------------------
     # Classification (score + mood)
@@ -173,6 +186,55 @@ class SummaryScreen:
         self.f.write(txt, x, y)
 
     # -------------------------------------------------
+    # Bottom-left rotating reading — same priority/availability protocol
+    # as before (Temperature -> CO2 -> TVOC -> Humidity -> Time, first 3
+    # available), but only one is shown at a time, cycling every ROTATE_MS.
+    # -------------------------------------------------
+    def _reading_candidates(self, r):
+        # CO2: prefer SCD4x true CO2, fall back to ENS160 eCO2
+        scd41_co2 = getattr(r, "scd41_co2_ppm", None) if r else None
+        co2 = scd41_co2 if scd41_co2 else (getattr(r, "eco2_ppm", None) if r else None)
+
+        # TVOC: ENS160 only
+        tvoc = getattr(r, "tvoc_ppb", None) if r else None
+
+        # Temp: prefer SCD4x, fall back to primary temp_c, then RTC temp
+        scd41_temp = getattr(r, "scd41_temp_c", None) if r else None
+        temp_main = scd41_temp if scd41_temp is not None else (getattr(r, "temp_c", None) if r else None)
+        temp_rtc = self.rtc_info.get("temp_c") if self.rtc_info else None
+        temp_val = temp_main if temp_main is not None else temp_rtc
+
+        # Humidity: prefer SCD4x, fall back to primary humidity
+        scd41_rh = getattr(r, "scd41_humidity", None) if r else None
+        rh = scd41_rh if scd41_rh is not None else (getattr(r, "humidity", None) if r else None)
+
+        ordered = (
+            (temp_val is not None, lambda x, y: self._draw_temp_line(temp_val, x, y)),
+            (co2 is not None and co2 > 0, lambda x, y: self._draw_co2_line(co2, x, y)),
+            (tvoc is not None, lambda x, y: self._draw_tvoc_line(tvoc, x, y)),
+            (rh is not None, lambda x, y: self._draw_humidity_line(rh, x, y)),
+            (True, lambda x, y: self._draw_time_line(x, y)),
+        )
+
+        out = []
+        for available, draw_fn in ordered:
+            if available:
+                out.append(draw_fn)
+            if len(out) >= 3:
+                break
+        return out
+
+    def _draw_bottom_reading(self, r, rotate_index):
+        candidates = self._reading_candidates(r)
+        if not candidates:
+            return
+        draw_fn = candidates[int(rotate_index) % len(candidates)]
+
+        _, h = self.oled._text_size(self.f, "Ag")
+        y = self.oled.height - h - 2
+        draw_fn(self.indent_x, y)
+
+    # -------------------------------------------------
     # Header: connection icons (top-right), heartbeat glyph + room name
     # (top-left). Footer: battery icon (bottom-right).
     # -------------------------------------------------
@@ -250,82 +312,47 @@ class SummaryScreen:
                 f_small.write(txt, tx, 1)
 
     def _draw_footer(self, fb):
-        # Bottom-right: battery icon, X inside when no INA219 detected.
+        # Bottom-right: battery icon, vertically aligned with the bottom-left
+        # reading text row. A horizontal centre line when no INA219 is detected.
         batt_x = self.oled.width - BATT_W
-        batt_y = self.oled.height - 7
+        _, h = self.oled._text_size(self.f, "Ag")
+        text_y = self.oled.height - h - 2
+        batt_y = text_y + (h - BATT_H) // 2
         try:
             draw_battery(fb, batt_x, batt_y, no_battery=(not self._battery_present()))
         except Exception:
             pass
 
     # -------------------------------------------------
-    # Layout
-    # -------------------------------------------------
-    def _draw_readings(self, r, x, y):
-        _, h = self.oled._text_size(self.f, "Ag")
-        line_h = h + 2
-
-        # CO2: prefer SCD4x true CO2, fall back to ENS160 eCO2
-        scd41_co2 = getattr(r, "scd41_co2_ppm", None) if r else None
-        co2 = scd41_co2 if scd41_co2 else (getattr(r, "eco2_ppm", None) if r else None)
-
-        # TVOC: ENS160 only
-        tvoc = getattr(r, "tvoc_ppb", None) if r else None
-
-        # Temp: prefer SCD4x, fall back to primary temp_c, then RTC temp
-        scd41_temp = getattr(r, "scd41_temp_c", None) if r else None
-        temp_main = scd41_temp if scd41_temp is not None else (getattr(r, "temp_c", None) if r else None)
-        temp_rtc = self.rtc_info.get("temp_c") if self.rtc_info else None
-        temp_val = temp_main if temp_main is not None else temp_rtc
-
-        # Humidity: prefer SCD4x, fall back to primary humidity
-        scd41_rh = getattr(r, "scd41_humidity", None) if r else None
-        rh = scd41_rh if scd41_rh is not None else (getattr(r, "humidity", None) if r else None)
-
-        # Priority order: Temperature, CO2, TVOC, Humidity, Time — show the
-        # first 3 that are actually available (skip anything missing).
-        candidates = (
-            (temp_val is not None, lambda xx, yy: self._draw_temp_line(temp_val, xx, yy)),
-            (co2 is not None and co2 > 0, lambda xx, yy: self._draw_co2_line(co2, xx, yy)),
-            (tvoc is not None, lambda xx, yy: self._draw_tvoc_line(tvoc, xx, yy)),
-            (rh is not None, lambda xx, yy: self._draw_humidity_line(rh, xx, yy)),
-            (True, lambda xx, yy: self._draw_time_line(xx, yy)),
-        )
-
-        shown = 0
-        for available, draw_fn in candidates:
-            if not available:
-                continue
-            draw_fn(x, y)
-            y += line_h
-            shown += 1
-            if shown >= 3:
-                break
-
-    # -------------------------------------------------
     # Render
     # -------------------------------------------------
-    def render(self, reading, beat_filled=False):
+    def render(self, reading, beat_filled=False, rotate_index=0):
         fb = self.oled.oled
         fb.fill(0)
 
         self._draw_header(fb, beat_filled)
 
-        self._draw_readings(reading, x=self.indent_x, y=self.top_y)
-
         score = self._score_from_reading(reading) if reading else 2
         mood = self._mood_from_score(score)
+
+        # Face glyph: true screen centre (both axes), clamped just clear of
+        # the header row above and the reading/battery row below.
+        width = self.oled.width
+        height = self.oled.height
+        cy = height // 2
+        max_r = max(10, min(cy - self._HEADER_H, height - self._FOOTER_H - cy))
+        y0 = cy - max_r
+        area_h = max_r * 2
+
         draw_face(
-            fb,
-            self.oled.width,
-            self.oled.height,
-            mood,
-            right_edge=True,
-            fill_height_ratio=0.85,
-            y0=self._HEADER_H,
-            area_height=self.oled.height - self._HEADER_H - self._FOOTER_H,
+            fb, width, height, mood,
+            right_edge=False,
+            fill_height_ratio=1.0,
+            y0=y0,
+            area_height=area_h,
         )
 
+        self._draw_bottom_reading(reading, rotate_index)
         self._draw_footer(fb)
 
         fb.show()
@@ -343,6 +370,9 @@ class SummaryScreen:
         _tick_next = time.ticks_ms()
         _tick_every = 500
 
+        rotate_index = 0
+        _rotate_next = time.ticks_add(time.ticks_ms(), ROTATE_MS)
+
         while True:
             now = time.ticks_ms()
             if tick_fn is not None and time.ticks_diff(now, _tick_next) >= 0:
@@ -351,6 +381,10 @@ class SummaryScreen:
                 except Exception:
                     pass
                 _tick_next = time.ticks_add(now, _tick_every)
+
+            if time.ticks_diff(now, _rotate_next) >= 0:
+                rotate_index += 1
+                _rotate_next = time.ticks_add(now, ROTATE_MS)
 
             beat = not beat
 
@@ -361,7 +395,7 @@ class SummaryScreen:
             except Exception:
                 r = None
 
-            self.render(r if r is not None else last_good, beat_filled=beat)
+            self.render(r if r is not None else last_good, beat_filled=beat, rotate_index=rotate_index)
 
             wait_start = time.ticks_ms()
             while time.ticks_diff(time.ticks_ms(), wait_start) < int(refresh_ms):

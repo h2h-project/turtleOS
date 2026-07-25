@@ -390,7 +390,8 @@ def draw_gps9(fb, x, y, on=True, color=1, state=None):
 
 
 # ----------------------------
-# Battery indicator (12x6)  <-- 6px height matches WiFi/GPS/API, width = 2x height
+# Battery indicator (12x7)  <-- odd height so a no-battery line sits dead
+# centre; close enough to WiFi/GPS/API's 6px row to sit alongside them.
 #
 # Used by the turtleOS and airOS waiting screens (bottom-right corner);
 # deliberately NOT part of the connection_header icon cluster.
@@ -400,36 +401,39 @@ def draw_gps9(fb, x, y, on=True, color=1, state=None):
 # ----------------------------
 
 BATT_W = 12
-BATT_H = 6
+BATT_H = 7
 
-_BATT_EMPTY_6 = [
+_BATT_EMPTY_7 = [
     "111111111110",
     "100000000010",
+    "100000000011",
     "100000000011",
     "100000000011",
     "100000000010",
     "111111111110",
 ]
 
-# Same outline, with an X filling the body — shown when no INA219 battery
-# monitor is detected on the I2C bus (nothing to report a charge level for).
-_BATT_NONE_6 = [
+# Same outline, with a horizontal line straight through the centre row —
+# shown when no INA219 battery monitor is detected on the I2C bus (nothing
+# to report a charge level for). BATT_H is odd so this row is dead centre.
+_BATT_NONE_7 = [
     "111111111110",
-    "101000001010",
-    "100010100011",
-    "100010100011",
-    "101000001010",
+    "100000000010",
+    "100000000011",
+    "111111111111",
+    "100000000011",
+    "100000000010",
     "111111111110",
 ]
 
 
 def draw_battery(fb, x, y, color=1, no_battery=False):
     """
-    Draw a battery outline at (x, y). Size: 12x6.
-    When no_battery is True, draws an X inside the outline instead of an
-    empty body (no INA219 detected on the I2C bus).
+    Draw a battery outline at (x, y). Size: 12x7.
+    When no_battery is True, draws a horizontal line through the centre
+    instead of an empty body (no INA219 detected on the I2C bus).
     """
-    rows = _BATT_NONE_6 if no_battery else _BATT_EMPTY_6
+    rows = _BATT_NONE_7 if no_battery else _BATT_EMPTY_7
     draw_bitmap_rows(fb, x, y, rows, c=color)
 
 
