@@ -68,6 +68,39 @@ class VersionScreen:
             pass
 
     # ------------------------------------------------------------
+    # Copyright (bottom-right) + attribution (bottom-left) footer.
+    # ------------------------------------------------------------
+    def _draw_footer(self, dst, ow, oh):
+        o = self.oled
+        writer = getattr(o, "f_small", None)
+        if writer is None:
+            return
+
+        left = "by Earthen.io"
+        right = "(c)2025-26"
+
+        try:
+            _, lh = o._text_size(writer, left)
+        except Exception:
+            lh = 7
+        y = oh - lh - 1
+
+        try:
+            writer.write(left, 0, y)
+        except Exception:
+            pass
+
+        try:
+            rw, _ = o._text_size(writer, right)
+            x = max(0, ow - int(rw))
+        except Exception:
+            x = 0
+        try:
+            writer.write(right, x, y)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
     # airOS: logo + tagline, centred on the full screen.
     # ------------------------------------------------------------
     def _draw_logo(self, status=None):
@@ -104,14 +137,16 @@ class VersionScreen:
 
         if use_logo:
             logo_x = max(0, (ow - lw) // 2)
+            logo_y = y0 + 10
             ok = False
             try:
-                ok = wh._blit_logo_fixed(o, logo_x, y0, lw, lh, data)
+                ok = wh._blit_logo_fixed(o, logo_x, logo_y, lw, lh, data)
             except Exception:
                 ok = False
-            line_y = (y0 + lh + gap) if ok else y0
+            line_y = (logo_y + lh + gap) if ok else y0
         else:
             line_y = y0
+        line_y -= 3
 
         if writer is not None:
             try:
@@ -123,6 +158,8 @@ class VersionScreen:
                 writer.write(line, x, int(line_y))
             except Exception:
                 pass
+
+        self._draw_footer(fb, ow, oh)
 
         self._draw_header(fb, status)
         fb.show()
