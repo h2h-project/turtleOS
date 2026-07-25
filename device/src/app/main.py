@@ -214,7 +214,23 @@ def run(
         debounce_ms=45,
     )
 
-    waiting = WaitingScreen()
+    def _room_name():
+        # Label for the airOS waiting screen's lower-left corner: the
+        # device's assigned room_name from the device API (turtle_mode=False
+        # only returns homes/rooms/communities — see flows._fetch_device_info).
+        try:
+            if isinstance(api_boot, dict):
+                rn = api_boot.get("room_name")
+                if rn:
+                    return rn
+        except Exception:
+            pass
+        return None
+
+    waiting = WaitingScreen(
+        room_get=_room_name,
+        battery_present_get=lambda: _ina_dev is not None,
+    )
 
     def _mission_name():
         # Label for the waiting screen's lower-right corner: the mission

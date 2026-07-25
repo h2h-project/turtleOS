@@ -15,6 +15,12 @@
 # - Quad click works reliably OFFLINE (prevents the "third click becomes next click" bug)
 #   by settling/releasing + short flushing at the start of the carousel and before the first wait.
 # - Offline status notices are non-blocking (brief dwell OR user click), then carousel continues.
+#
+# PATCH (Jul 2026 - Connectivity carousel reorder):
+# - New order: Online -> Logging -> GPS -> WiFi -> Device.
+# - Online screen leads and is always shown (even offline): it renders
+#   "Offline" and the pending unsent-telemetry count when WiFi is down.
+# - Removed the wifi_ok gates that previously hid Online/Device offline.
 
 import time
 from src.ui.clicks import (
@@ -126,16 +132,42 @@ def _draw_center_lines(oled, lines, y0=18, line_h=12):
     _gc()
 
 
+# ------------------------------------------------------------
+# Device API endpoints (mode-aware)
+# ------------------------------------------------------------
+# The two operating modes talk to different back-ends:
+#   airOS    -> air.earthen.io   (homes/rooms/communities)
+#   turtleOS -> hopeturtles.org  (missions; no homes/rooms)
+# Paths are split here so the turtle endpoint can be repointed without
+# touching the fetch logic.
+# TODO(turtle): swap _DEVICE_PATH_TURTLE to the dedicated turtle endpoint
+#               once it exists on hopeturtles.org.
+_DEVICE_PATH_AIR = "/api/v1/device?compact=1"
+_DEVICE_PATH_TURTLE = "/api/v1/device?compact=1"
+
+
+def _device_path(turtle_mode):
+    """Return the device-info API path for the active mode."""
+    return _DEVICE_PATH_TURTLE if turtle_mode else _DEVICE_PATH_AIR
+
+
 def _fetch_device_info(cfg, tick_cb=None, wifi=None):
     """
     Low-mem GET to fetch device info for DeviceScreen.
-    Normalizes your server JSON into flat keys:
-      device_name, home_name, room_name, community_name
+
+    Normalizes the server JSON into flat keys. The field set depends on mode:
+      turtle_mode=True  -> device_name, mission_full_name
+                           (hopeturtles.org has no homes/rooms/communities)
+      turtle_mode=False -> device_name, home_name, room_name, community_name,
+                           mission_short_name, mission_full_name
+
     Returns dict (possibly empty).
     tick_cb: optional no-arg callable invoked before each URL attempt (for animations).
     """
     if not isinstance(cfg, dict):
         return {}
+
+    turtle_mode = bool(cfg.get("turtle_mode", False))
 
     api_base = (cfg.get("api_base") or "").strip().rstrip("/")
     device_id = (cfg.get("device_id") or "").strip()
@@ -159,7 +191,7 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
 
     # Single URL — fallbacks fragment the heap without adding recovery value
     urls = (
-        api_base + "/api/v1/device?compact=1",
+        api_base + _device_path(turtle_mode),
     )
 
     # Re-assert WiFi PM_PERFORMANCE — same guard the telemetry scheduler uses.
@@ -179,10 +211,6 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
         dev = data.get("device") if isinstance(data.get("device"), dict) else {}
         asg = data.get("assignment") if isinstance(data.get("assignment"), dict) else {}
 
-        home = asg.get("home") if isinstance(asg.get("home"), dict) else {}
-        room = asg.get("room") if isinstance(asg.get("room"), dict) else {}
-        com = asg.get("community") if isinstance(asg.get("community"), dict) else {}
-
         out = {}
 
         dn = dev.get("device_name") if isinstance(dev, dict) else None
@@ -190,6 +218,33 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
             dn = data.get("device_name")
         if dn is not None:
             out["device_name"] = dn
+
+        # Mission (missions_tb): full_name is the long form, short_name the
+        # OLED-friendly label. Tolerant of assignment.mission / top-level / flat.
+        mis = asg.get("mission") if isinstance(asg.get("mission"), dict) else (
+            data.get("mission") if isinstance(data.get("mission"), dict) else {}
+        )
+        mfn = mis.get("full_name") if isinstance(mis, dict) else None
+        if mfn is None:
+            mfn = data.get("mission_full_name") or data.get("mission_name")
+        if mfn is not None:
+            out["mission_full_name"] = mfn
+
+        # turtleOS: device_name + mission_full_name only. The turtle API has no
+        # homes/rooms/communities, so parsing them just burns heap on nothing.
+        # (device_id is read from local config by the screen, not the API.)
+        if turtle_mode:
+            return out
+
+        msn = mis.get("short_name") if isinstance(mis, dict) else None
+        if msn is None:
+            msn = data.get("mission_short_name")
+        if msn is not None:
+            out["mission_short_name"] = msn
+
+        home = asg.get("home") if isinstance(asg.get("home"), dict) else {}
+        room = asg.get("room") if isinstance(asg.get("room"), dict) else {}
+        com = asg.get("community") if isinstance(asg.get("community"), dict) else {}
 
         hn = home.get("home_name") if isinstance(home, dict) else None
         if hn is None:
@@ -210,22 +265,6 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
             cn = data.get("com_name")
         if cn is not None:
             out["community_name"] = cn
-
-        # Mission (missions_tb): short_name is the OLED-friendly label, full_name
-        # the long form. Tolerant of assignment.mission / top-level mission / flat.
-        mis = asg.get("mission") if isinstance(asg.get("mission"), dict) else (
-            data.get("mission") if isinstance(data.get("mission"), dict) else {}
-        )
-        msn = mis.get("short_name") if isinstance(mis, dict) else None
-        if msn is None:
-            msn = data.get("mission_short_name")
-        if msn is not None:
-            out["mission_short_name"] = msn
-        mfn = mis.get("full_name") if isinstance(mis, dict) else None
-        if mfn is None:
-            mfn = data.get("mission_full_name") or data.get("mission_name")
-        if mfn is not None:
-            out["mission_full_name"] = mfn
 
         return out
 
@@ -281,8 +320,12 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
 
             out = _normalize(data)
             if out:
-                print("[DEVICE] OK name=", out.get("device_name"),
-                      "home=", out.get("home_name"))
+                if turtle_mode:
+                    print("[DEVICE] OK name=", out.get("device_name"),
+                          "mission=", out.get("mission_full_name"))
+                else:
+                    print("[DEVICE] OK name=", out.get("device_name"),
+                          "home=", out.get("home_name"))
             return out if out else (data if isinstance(data, dict) else {})
 
         except Exception as _e:
@@ -364,18 +407,21 @@ def connectivity_carousel(
 
     Waiting
        ↓ (triple)
-    WiFi Screen (ALWAYS)
-       ↓ if WiFi OK
-    Online Screen (ONLY if WiFi OK)
+    Online Screen (ALWAYS — shows "Offline" + pending queue when WiFi down)
        ↓ single click always advances
-    Telemetry Screen
-       ↓ if Logging enabled/ON
-    Device Screen (ONLY if Logging enabled)
+    Logging Screen
+       ↓ single click always advances
+    GPS Screen
+       ↓ single click always advances
+    WiFi Screen
+       ↓ single click always advances
+    Device Screen
        ↓ (any non-single exits)
     Waiting
 
     Rules:
-    - NO offline notices (removed).
+    - Online screen is viewable offline so the user can see the pending
+      (unsent) telemetry count without a connection.
     - Quad/debug handled at every step.
     """
 
@@ -400,48 +446,17 @@ def connectivity_carousel(
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
         return a
 
-    # ------------------------------------------------------------
-    # 1) WIFI SCREEN — always shown; disabled state handled by the screen itself
-    # ------------------------------------------------------------
-    try:
-        _w_ssid = (cfg or {}).get("wifi_ssid", "") or ""
-        _w_ok   = bool((status or {}).get("wifi_ok", False))
-        _log_screen("wifi", "ssid={}  connected={}".format(_w_ssid or "?", _w_ok))
-    except Exception:
-        _log_screen("wifi")
-    wifi_scr = get_screen("wifi")
-    if wifi_scr and hasattr(wifi_scr, "show_live"):
-        try:
-            a = wifi_scr.show_live(btn, tick_fn=tick_fn)
-        except Exception:
-            a = wait_for_single(btn, tick_fn=tick_fn)
-    else:
-        draw_text(oled, "WIFI", y=24)
-        a = wait_for_single(btn, tick_fn=tick_fn)
-
-    sp = _handle_special(a)
-    if sp == "handled":
-        return
-    if sp in ("quad", "debug"):
-        return sp
-
-    # Anything but single => exit back to waiting
-    if a != "single":
-        return _exit(a)
-
-    # After WiFi screen, require WiFi to be actually connected / on
+    # WiFi connectivity is read up-front; the Online screen shows regardless
+    # (rendering "Offline" + pending queue when down), and later screens no
+    # longer gate on it so the whole carousel is viewable offline.
     try:
         wifi_ok = bool(status.get("wifi_ok"))
     except Exception:
         wifi_ok = False
 
-    if not wifi_ok:
-        return _exit(None)
-
-    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
     # ------------------------------------------------------------
-    # 2) ONLINE/API SCREEN (only if WiFi OK)
+    # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.
+    #    Viewable offline: shows "Offline" title + pending (unsent) count.
     # ------------------------------------------------------------
     try:
         _api_ok = bool((status or {}).get("api_ok", False))
@@ -450,7 +465,7 @@ def connectivity_carousel(
             _q = _TS.get_queue_size()
         except Exception:
             _q = "?"
-        _log_screen("online", "api_ok={}  queue={}".format(_api_ok, _q))
+        _log_screen("online", "wifi_ok={}  api_ok={}  queue={}".format(wifi_ok, _api_ok, _q))
     except Exception:
         _log_screen("online")
     online_scr = get_screen("online")
@@ -481,62 +496,7 @@ def connectivity_carousel(
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
-    # 3) DEVICE SCREEN — use boot-time cached info (no in-carousel HTTP).
-    #    The heap at this point (~19 KB) is too fragmented for a reliable
-    #    TCP connection.  Boot already fetched this info successfully.
-    # ------------------------------------------------------------
-    try:
-        _dn = (device_info or {}).get("device_name", "?") if isinstance(device_info, dict) else "?"
-        _hn = (device_info or {}).get("home_name", "?") if isinstance(device_info, dict) else "?"
-        _log_screen("device", "name={}  home={}".format(_dn, _hn))
-    except Exception:
-        _log_screen("device")
-    device_scr = get_screen("device")
-    if device_scr and hasattr(device_scr, "show_live"):
-        try:
-            # Use boot-time device info if available; skip HTTP entirely.
-            _use_cached = (
-                isinstance(device_info, dict)
-                and device_info.get("ok")
-                and device_info.get("device_name")
-            )
-            if _use_cached:
-                api_info = device_info
-                print("[DEVICE] using boot cache:", device_info.get("device_name"))
-                try:
-                    from src.ui import connection_header as _ch_dev
-                    _ch_dev.set_api_ok(True)
-                except Exception:
-                    pass
-            else:
-                # Fall back to a single fresh fetch (WiFi PM already asserted above)
-                _gc(); _gc()
-                api_info = _fetch_device_info(cfg, tick_cb=None, wifi=wifi)
-                try:
-                    from src.ui import connection_header as _ch_dev
-                    _ch_dev.set_api_ok(bool(api_info))
-                except Exception:
-                    pass
-            a = device_scr.show_live(btn=btn, api_info=api_info, tick_fn=tick_fn)
-        except Exception:
-            a = wait_for_single(btn, tick_fn=tick_fn)
-    else:
-        draw_text(oled, "DEVICE", y=24)
-        a = wait_for_single(btn, tick_fn=tick_fn)
-
-    sp = _handle_special(a)
-    if sp == "handled":
-        return
-    if sp in ("quad", "debug"):
-        return sp
-
-    if a != "single":
-        return _exit(a)
-
-    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-    # ------------------------------------------------------------
-    # 4) LOGGING SCREEN
+    # 2) LOGGING SCREEN
     # ------------------------------------------------------------
     try:
         _tel_en = bool((cfg or {}).get("telemetry_enabled", False))
@@ -570,8 +530,7 @@ def connectivity_carousel(
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
-    # 5) GPS SCREEN — last in the carousel; reads UART only, no TCP,
-    #    so it can tolerate a tighter / more-fragmented heap.
+    # 3) GPS SCREEN — reads UART only, no TCP.
     # ------------------------------------------------------------
     try:
         _gps_on = (status or {}).get("gps_on", 0)
@@ -597,6 +556,95 @@ def connectivity_carousel(
     if sp in ("quad", "debug"):
         return sp
 
+    if a != "single":
+        return _exit(a)
+
+    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ------------------------------------------------------------
+    # 4) WIFI SCREEN — disabled state handled by the screen itself
+    # ------------------------------------------------------------
+    try:
+        _w_ssid = (cfg or {}).get("wifi_ssid", "") or ""
+        _log_screen("wifi", "ssid={}  connected={}".format(_w_ssid or "?", wifi_ok))
+    except Exception:
+        _log_screen("wifi")
+    wifi_scr = get_screen("wifi")
+    if wifi_scr and hasattr(wifi_scr, "show_live"):
+        try:
+            a = wifi_scr.show_live(btn, tick_fn=tick_fn)
+        except Exception:
+            a = wait_for_single(btn, tick_fn=tick_fn)
+    else:
+        draw_text(oled, "WIFI", y=24)
+        a = wait_for_single(btn, tick_fn=tick_fn)
+
+    sp = _handle_special(a)
+    if sp == "handled":
+        return
+    if sp in ("quad", "debug"):
+        return sp
+
+    if a != "single":
+        return _exit(a)
+
+    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ------------------------------------------------------------
+    # 5) DEVICE SCREEN — last; uses boot-time cached info (no in-carousel
+    #    HTTP unless the cache is empty and WiFi is up).
+    # ------------------------------------------------------------
+    try:
+        _dn = (device_info or {}).get("device_name", "?") if isinstance(device_info, dict) else "?"
+        if bool((cfg or {}).get("turtle_mode", False)):
+            _mn = (device_info or {}).get("mission_full_name", "?") if isinstance(device_info, dict) else "?"
+            _log_screen("device", "name={}  mission={}".format(_dn, _mn))
+        else:
+            _hn = (device_info or {}).get("home_name", "?") if isinstance(device_info, dict) else "?"
+            _log_screen("device", "name={}  home={}".format(_dn, _hn))
+    except Exception:
+        _log_screen("device")
+    device_scr = get_screen("device")
+    if device_scr and hasattr(device_scr, "show_live"):
+        try:
+            # Use boot-time device info if available; skip HTTP entirely.
+            _use_cached = (
+                isinstance(device_info, dict)
+                and device_info.get("ok")
+                and device_info.get("device_name")
+            )
+            if _use_cached:
+                api_info = device_info
+                print("[DEVICE] using boot cache:", device_info.get("device_name"))
+                try:
+                    from src.ui import connection_header as _ch_dev
+                    _ch_dev.set_api_ok(True)
+                except Exception:
+                    pass
+            elif wifi_ok:
+                # Fall back to a single fresh fetch only if WiFi is up.
+                _gc(); _gc()
+                api_info = _fetch_device_info(cfg, tick_cb=None, wifi=wifi)
+                try:
+                    from src.ui import connection_header as _ch_dev
+                    _ch_dev.set_api_ok(bool(api_info))
+                except Exception:
+                    pass
+            else:
+                api_info = None
+            a = device_scr.show_live(btn=btn, api_info=api_info, tick_fn=tick_fn)
+        except Exception:
+            a = wait_for_single(btn, tick_fn=tick_fn)
+    else:
+        draw_text(oled, "DEVICE", y=24)
+        a = wait_for_single(btn, tick_fn=tick_fn)
+
+    sp = _handle_special(a)
+    if sp == "handled":
+        return
+    if sp in ("quad", "debug"):
+        return sp
+
     return _exit(None)
 
 # ============================================================
@@ -614,21 +662,32 @@ def sensor_carousel(
         gps=None,
         cfg=None,
 ):
-    if air is None:
-        print("[SINGLE] air=None — no sensors available")
-        _show_frowny(oled, btn, "Ack! No sensors", "are connected!")
-        return
+    _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
-    # One full reading for CO2/TVOC screens
-    try:
-        reading = air.finish_sampling(log=False)
-    except Exception as e:
-        print("[FLOW] finish_sampling error:", repr(e))
-        return
+    # Air sensors are optional in turtle_mode — the single-click carousel there
+    # is navigation screens (sailpoint/servo/gps/destination), which don't need
+    # the ENS160/AHT21. Only block on missing sensors in airOS mode.
+    reading = None
+    if air is None:
+        if not _turtle_mode:
+            print("[SINGLE] air=None — no sensors available")
+            _show_frowny(oled, btn, "Ack! No sensors", "are connected!")
+            return
+        print("[SINGLE] air=None — turtle_mode, showing nav screens only")
+    else:
+        # One full reading for CO2/TVOC screens
+        try:
+            reading = air.finish_sampling(log=False)
+        except Exception as e:
+            print("[FLOW] finish_sampling error:", repr(e))
+            if not _turtle_mode:
+                return
+            # turtle_mode: keep going with the nav screens, no reading
 
     gc_collect()
 
-    # Determine which sensors are present after hardware init (done inside finish_sampling)
+    # Determine which sensors are present after hardware init (done inside finish_sampling).
+    # getattr(None, ...) is safe when air is None → all flags False → no sensor screens.
     _has_scd41 = getattr(air, '_scd41', None) is not None
     _has_ens = getattr(air, '_ens', None) is not None
     _has_aht = getattr(air, '_aht', None) is not None
@@ -647,8 +706,6 @@ def sensor_carousel(
         _sensor_screens.append("temp")      # temp screen: AHT21, BME280, or both
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
-
-    _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
     _all_screens = (["sailpoint", "servo", "gps", "destination"] if _turtle_mode else []) \
                    + _sensor_screens \
@@ -899,19 +956,21 @@ def sensor_carousel(
         reset_and_flush(btn, flush_ms, poll_ms)
         return a
 
-    # SUMMARY (after TEMP)
-    _gc()   # (bug fix) reclaim heap before summary allocation
-    _log_screen("summary")
-    summ = get_screen("summary")
-    if summ and hasattr(summ, "show_live"):
-        try:
-            # show_live polls btn and exits on any click
-            summ.show_live(get_reading=lambda: reading, btn=btn, tick_fn=tick_fn)
-        except Exception as e:
-            print("[FLOW] summary error:", repr(e))
-    else:
-        draw_text(oled, "SUMMARY", y=24)
-        wait_for_single(btn, tick_fn=tick_fn)
+    # SUMMARY (after TEMP) — air-quality summary; only meaningful when air
+    # sensors are present. Skip entirely for a sensorless (turtle) carousel.
+    if _sensor_screens:
+        _gc()   # (bug fix) reclaim heap before summary allocation
+        _log_screen("summary")
+        summ = get_screen("summary")
+        if summ and hasattr(summ, "show_live"):
+            try:
+                # show_live polls btn and exits on any click
+                summ.show_live(get_reading=lambda: reading, btn=btn, tick_fn=tick_fn)
+            except Exception as e:
+                print("[FLOW] summary error:", repr(e))
+        else:
+            draw_text(oled, "SUMMARY", y=24)
+            wait_for_single(btn, tick_fn=tick_fn)
 
     _gc()   # (#2) reclaim all carousel transients before returning to waiting loop
     reset_and_flush(btn, flush_ms, poll_ms)

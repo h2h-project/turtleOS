@@ -390,6 +390,36 @@ def draw_gps9(fb, x, y, on=True, color=1, state=None):
 
 
 # ----------------------------
+# Battery indicator (12x6)  <-- 6px height matches WiFi/GPS/API, width = 2x height
+#
+# Used by the turtle waiting screen only (top-left corner); deliberately NOT
+# part of the connection_header icon cluster.
+#
+# Layout: 11px body (x0..x10) + 1px terminal nub (x11) on the vertical centre.
+# Empty outline for now — fill bars can be added inside the body later.
+# ----------------------------
+
+BATT_W = 12
+BATT_H = 6
+
+_BATT_EMPTY_6 = [
+    "111111111110",
+    "100000000010",
+    "100000000011",
+    "100000000011",
+    "100000000010",
+    "111111111110",
+]
+
+
+def draw_battery(fb, x, y, color=1):
+    """
+    Draw an empty battery outline at (x, y). Size: 12x6.
+    """
+    draw_bitmap_rows(fb, x, y, _BATT_EMPTY_6, c=color)
+
+
+# ----------------------------
 # API indicator (7x6)  <-- matches WiFi/GPS height
 #
 # Visual Logic:

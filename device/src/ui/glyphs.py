@@ -390,6 +390,50 @@ def draw_gps9(fb, x, y, on=True, color=1, state=None):
 
 
 # ----------------------------
+# Battery indicator (12x6)  <-- 6px height matches WiFi/GPS/API, width = 2x height
+#
+# Used by the turtleOS and airOS waiting screens (bottom-right corner);
+# deliberately NOT part of the connection_header icon cluster.
+#
+# Layout: 11px body (x0..x10) + 1px terminal nub (x11) on the vertical centre.
+# Empty outline for now — fill bars can be added inside the body later.
+# ----------------------------
+
+BATT_W = 12
+BATT_H = 6
+
+_BATT_EMPTY_6 = [
+    "111111111110",
+    "100000000010",
+    "100000000011",
+    "100000000011",
+    "100000000010",
+    "111111111110",
+]
+
+# Same outline, with an X filling the body — shown when no INA219 battery
+# monitor is detected on the I2C bus (nothing to report a charge level for).
+_BATT_NONE_6 = [
+    "111111111110",
+    "101000001010",
+    "100010100011",
+    "100010100011",
+    "101000001010",
+    "111111111110",
+]
+
+
+def draw_battery(fb, x, y, color=1, no_battery=False):
+    """
+    Draw a battery outline at (x, y). Size: 12x6.
+    When no_battery is True, draws an X inside the outline instead of an
+    empty body (no INA219 detected on the I2C bus).
+    """
+    rows = _BATT_NONE_6 if no_battery else _BATT_EMPTY_6
+    draw_bitmap_rows(fb, x, y, rows, c=color)
+
+
+# ----------------------------
 # API indicator (7x6)  <-- matches WiFi/GPS height
 #
 # Visual Logic:

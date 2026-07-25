@@ -104,8 +104,21 @@ class TurtleWaitingScreen:
     _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
     # Space to reserve left of the mission text for the target glyph
-    # (7px glyph + 5px gap).
-    _TARGET_GAP = 12
+    # (7px glyph + 4px gap).
+    _TARGET_GAP = 11
+
+    # Gap between the target glyph and the mission text that follows it.
+    _TARGET_TEXT_GAP = 4
+
+    # Downward nudge for the target glyph so it sits on the mission text's
+    # baseline rather than riding high on the f_small row.
+    _TARGET_DY = 1
+
+    # Battery icon: bottom-right corner, flush to the right edge. _BATT_DY
+    # nudges it down onto the mission/heading baseline; _BATT_TEXT_GAP is the
+    # space between it and the heading text on its left.
+    _BATT_DY = 1
+    _BATT_TEXT_GAP = 6
 
     def __init__(self, oled, nav_get=None, mission_get=None):
         self.oled = oled
@@ -165,7 +178,7 @@ class TurtleWaitingScreen:
     def _overlay(self, dst):
         """Nav status in the screen corners: machine state top-left,
         mission (target glyph + name) or next-sweep countdown bottom-left,
-        heading bottom-right."""
+        heading then battery icon bottom-right."""
         o = self.oled
         w = o.width
         h = o.height
@@ -180,9 +193,22 @@ class TurtleWaitingScreen:
 
         nav = self._nav()
 
-        # Bottom-right: compass heading like NE-45° (------ without compass),
-        # right-aligned. Track its rendered width so the bottom-left text can
-        # steer clear.
+        # Bottom-right corner: empty battery outline, flush to the right edge.
+        try:
+            from src.ui.glyphs import BATT_W as _batt_w
+        except Exception:
+            _batt_w = 12
+        batt_x = w - _batt_w
+        try:
+            from src.ui.glyphs import draw_battery
+            draw_battery(dst, batt_x, ty + self._BATT_DY)
+        except Exception:
+            pass
+
+        # Compass heading like NE-45° (------ without compass), right-aligned
+        # against the battery. Track the total width consumed from the right
+        # edge so the bottom-left mission text can steer clear.
+        heading_right = batt_x - self._BATT_TEXT_GAP
         heading = None
         if nav is not None:
             try:
@@ -195,8 +221,9 @@ class TurtleWaitingScreen:
                 tw, _ = o._text_size(o.f_small, txt)
             except Exception:
                 tw = 24
-            o.f_small.write(txt, w - tw - 1, ty)
-            right_w = tw + 1
+            tx = heading_right - tw
+            o.f_small.write(txt, tx, ty)
+            right_w = w - tx
         else:
             letter = self._LETTERS[int((float(heading) + 22.5) / 45.0) % 8]
             txt = "{}-{}".format(letter, int(heading))
@@ -204,10 +231,10 @@ class TurtleWaitingScreen:
                 tw, _ = o._text_size(o.f_small, txt)
             except Exception:
                 tw = len(txt) * 5
-            # Text + degree glyph (6px) as one right-aligned unit.
-            tx = w - (tw + 6) - 1
+            # Text + degree glyph (6px) as one unit, right-aligned on the battery.
+            tx = heading_right - (tw + 6)
             o.f_small.write(txt, tx, ty)
-            right_w = tw + 6 + 1
+            right_w = w - tx
             try:
                 from src.ui.glyphs import draw_degree
                 draw_degree(dst, tx + tw + 2, ty, r=2)
@@ -245,10 +272,11 @@ class TurtleWaitingScreen:
                 glyph_cx = 3                        # leftmost glyph pixel at 0
                 try:
                     from src.ui.glyphs import draw_circle
-                    draw_circle(dst, glyph_cx, ty + 3, r=3, filled=True, color=1)
+                    draw_circle(dst, glyph_cx, ty + 3 + self._TARGET_DY,
+                                r=3, filled=True, color=1)
                 except Exception:
                     pass
-                tx = glyph_cx + 3 + 5               # glyph_right + 5px gap
+                tx = glyph_cx + 3 + self._TARGET_TEXT_GAP   # glyph_right + gap
             else:
                 tx = 0                              # sweep countdown: left-aligned
             o.f_small.write(bl_txt, tx, ty)

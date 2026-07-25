@@ -36,9 +36,29 @@ def _to_gps_state(val):
 
 
 class WaitingScreen:
-    def __init__(self, flip_x=False, flip_y=True, gap=6, logo_drop_px=10):
+    # Space to reserve left of the room text for the target glyph
+    # (7px glyph + 4px gap). Mirrors turtle_waiting.py's layout.
+    _TARGET_GAP = 11
+
+    # Gap between the target glyph and the room text that follows it.
+    _TARGET_TEXT_GAP = 4
+
+    # Downward nudge for the target glyph so it sits on the room text's
+    # baseline rather than riding high on the f_small row.
+    _TARGET_DY = 1
+
+    # Battery icon: bottom-right corner, flush to the right edge. _BATT_DY
+    # nudges it down onto the room-text baseline.
+    _BATT_DY = 1
+    _BATT_TEXT_GAP = 6
+
+    def __init__(self, flip_x=False, flip_y=True, gap=6, logo_drop_px=10,
+                 room_get=None, battery_present_get=None):
         self.flip_x = bool(flip_x)
         self.flip_y = bool(flip_y)
+
+        self._room_get = room_get                    # callable -> room name str or None
+        self._battery_present_get = battery_present_get  # callable -> bool or None
 
         self.gap = int(gap)
         self.logo_drop_px = int(logo_drop_px)
@@ -488,6 +508,92 @@ class WaitingScreen:
         return True
 
     # ============================================================
+    # Footer overlay: target glyph + room name (bottom-left),
+    # battery icon (bottom-right) — mirrors turtle_waiting.py.
+    # ============================================================
+    def _room(self):
+        if self._room_get is None:
+            return None
+        try:
+            name = self._room_get()
+        except Exception:
+            return None
+        if not name:
+            return None
+        return str(name).strip() or None
+
+    def _battery_present(self):
+        if self._battery_present_get is None:
+            return None
+        try:
+            return bool(self._battery_present_get())
+        except Exception:
+            return None
+
+    def _fit(self, oled, text, max_w):
+        """Truncate text (from the end) until it fits within max_w pixels."""
+        if max_w <= 0:
+            return ""
+        try:
+            tw, _ = oled._text_size(oled.f_small, text)
+        except Exception:
+            tw = len(text) * 5
+        if tw <= max_w:
+            return text
+        s = text
+        while len(s) > 1:
+            s = s[:-1]
+            try:
+                tw, _ = oled._text_size(oled.f_small, s)
+            except Exception:
+                tw = len(s) * 5
+            if tw <= max_w:
+                break
+        return s
+
+    def _draw_footer(self, oled, fb):
+        f_small = getattr(oled, "f_small", None)
+        if f_small is None:
+            return
+
+        w = int(getattr(oled, "width", 128))
+        h = int(getattr(oled, "height", 64))
+        ty = h - 8  # bottom text row (f_small is 7 px)
+
+        # Bottom-right corner: battery icon, flush to the right edge.
+        # Filled with an X when no INA219 battery monitor was detected.
+        try:
+            from src.ui.glyphs import BATT_W as _batt_w
+        except Exception:
+            _batt_w = 12
+        batt_x = w - _batt_w
+        try:
+            from src.ui.glyphs import draw_battery
+            present = self._battery_present()
+            draw_battery(fb, batt_x, ty + self._BATT_DY, no_battery=(present is False))
+        except Exception:
+            pass
+
+        # Bottom-left corner: target glyph + room name.
+        name = self._room()
+        if name:
+            max_w = batt_x - self._BATT_TEXT_GAP - self._TARGET_GAP
+            txt = self._fit(oled, name.upper(), max_w)
+            if txt:
+                glyph_cx = 3
+                try:
+                    from src.ui.glyphs import draw_circle
+                    draw_circle(fb, glyph_cx, ty + 3 + self._TARGET_DY,
+                                r=3, filled=True, color=1)
+                except Exception:
+                    pass
+                tx = glyph_cx + 3 + self._TARGET_TEXT_GAP
+                try:
+                    f_small.write(txt, tx, ty)
+                except Exception:
+                    pass
+
+    # ============================================================
     # Status icons
     # ============================================================
     def _draw_status_icons(self, oled, wifi_ok=False, gps_on=GPS_NONE, api_ok=False, api_sending=False):
@@ -578,6 +684,11 @@ class WaitingScreen:
 
         try:
             writer.write(line_to_draw, x, int(line_y))
+        except Exception:
+            pass
+
+        try:
+            self._draw_footer(oled, fb)
         except Exception:
             pass
 

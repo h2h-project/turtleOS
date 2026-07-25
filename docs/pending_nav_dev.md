@@ -1,11 +1,23 @@
 # Pending Navigation Development — Road to the Full Olive Turtle Autonomy Stack
 
-This document tracks what remains between the **minimal SAIL-NAV implementation**
-now in `device/src/nav/` and the full vision in
+This document tracks what remains between the **minimal SAIL-NAV system**
+now running in `device/src/nav/` and the full vision described in
 `docs/Olive_Turtle_Dev_Deploy.pdf`, plus robustness work the PDF does not
-cover. Each item lists where it lands in the codebase.
+cover. It is written to be readable by assistant engineers as well as the
+core team: each section opens with a plain-language summary of *why* the
+work matters, followed by the concrete task checklist and where each item
+lands in the codebase.
+
+For the team-wide, non-technical overview (with diagrams and animations),
+see `docs/nav_system/July_nav_system_current+proposed.html`.
 
 ## What is already in place (June 2026)
+
+In plain terms: the turtle can already boot up, figure out which way it is
+pointing (compass), find the wind by sweeping its sail and feeling for the
+flutter, steer toward a GPS waypoint, and put itself into a SAFE mode when
+something goes wrong. What follows in the later sections is about making
+that loop *more accurate, more robust, and able to sail upwind*.
 
 - Five-state machine (`nav/state_machine.py`): BOOT → ACQUIRE → SAIL_NAV →
   ARRIVAL, any → SAFE, reboot → BOOT. Reported in every telemetry payload
@@ -27,20 +39,131 @@ cover. Each item lists where it lands in the codebase.
 
 ---
 
-## PDF Phase 1 — Sensor fusion (ICM-20948)
+## The official IMU: the "MPU6050 module" (MPU-9250 chip)
 
-The PDF specifies an ICM-20948 9-axis IMU; the boat currently carries a
-QMC5883L magnetometer only, isolated behind `nav/heading.py:HeadingSource`.
+**Decision (July 2026):** the sourced and wired IMU module is the official
+motion sensor for the turtles, replacing the ICM-20948 that the original
+PDF specified. Everywhere the PDF or older notes say "ICM-20948", read
+"our IMU module" instead — the integration plan is the same.
 
-- [ ] **Hardware**: ICM-20948 default I2C address 0x68 **collides with the
-  DS3231 RTC** on the shared bus. Strap AD0 high (→ 0x69) or move the RTC.
-- [ ] `Icm20948HeadingSource` in `nav/heading.py` implementing the
+### One important naming clarification
+
+The module is *sold* as an "MPU6050 module", but the supplier's own spec
+sheet says the chip on the board is an **MPU-9250**. These are different
+chips:
+
+| | MPU6050 | **MPU-9250 (what we have)** |
+|---|---|---|
+| Gyroscope (turn rate) | yes | yes (±250/500/1000/2000 °/s) |
+| Accelerometer (tilt/motion) | yes | yes (±2/4/8/16 g) |
+| Magnetometer (compass) | **no** | **yes** (AK8963 inside, ±4800 µT) |
+| Axes | 6 | 9 |
+
+This is good news — the MPU-9250 is the more capable part, and its
+built-in compass could eventually replace the separate GY-271 board. But
+it means **the driver must be written for the MPU-9250, not the MPU6050**;
+their register maps differ.
+
+First job when a unit is on the bench: confirm which chip is really on the
+board by reading the WHO_AM_I register (address `0x75`). Expected values:
+`0x71` = MPU-9250 ✅, `0x70` = MPU-6500 (9250 without the compass),
+`0x68` = genuine MPU6050. Cheap modules are sometimes mislabeled in *both*
+directions, so verify every batch. `tests/i2c_scan.py` plus a two-line
+register read does this in under a minute.
+
+### Wiring the module — and fixing the 0x68 address clash
+
+The IMU speaks I2C, the same shared two-wire bus every other sensor uses.
+The catch: the IMU's factory I2C address is **0x68 — the exact same
+address our DS3231 clock chip already uses**. Two devices with the same
+address on one bus is like two houses with the same street number: the
+mail (data) goes to the wrong place. The bus cannot work until one of
+them moves.
+
+Fortunately the chip designers planned for this. The module has a pin
+labeled **AD0** (sometimes printed ADO). It is an address-select switch:
+
+- AD0 left unconnected or wired to GND → address **0x68** (clashes ❌)
+- AD0 wired to 3.3 V → address **0x69** (free ✅)
+
+**So: do we wire AD0 to the VCC pin on the IMU's own board, or to the
+XIAO's 3V3 pin?** Answer: **either works — they are the same wire.** The
+module's VCC pin is fed from the XIAO's 3V3 pin, so both points carry the
+same 3.3 V. The tidiest option is a short jumper (or a solder bridge)
+right on the IMU board from **AD0 to the module's VCC pin**, because it
+keeps the fix on the module itself — any board wired that way is
+plug-in-safe no matter who connects it later.
+
+**One hard rule: power the module from the XIAO's 3V3 pin, never from
+5 V.** The spec sheet says "3–5 V supply", but that tolerance is for the
+VCC pin only (some boards have a regulator behind it). The AD0 pin
+connects straight to the sensor chip, which is a 3.3 V part — putting 5 V
+on AD0 can damage it. Powering everything at 3.3 V makes the whole
+question moot: every point is 3.3 V and AD0-to-VCC is safe by
+construction.
+
+Full hookup (4 wires + the AD0 strap):
+
+| IMU module pin | Connects to | Why |
+|---|---|---|
+| VCC | XIAO **3V3** | power (3.3 V only — see above) |
+| GND | XIAO GND | ground |
+| SCL | XIAO D5 / GPIO6 | shared I2C clock |
+| SDA | XIAO D4 / GPIO5 | shared I2C bus data |
+| **AD0** | **module VCC** (short jumper on the board) | moves address 0x68 → 0x69 |
+| INT, FSYNC, others | leave unconnected | not used |
+
+### Updated I2C bus map with the IMU installed
+
+| Device | Address | Notes |
+|---|---|---|
+| AK8963 compass (inside the MPU-9250) | 0x0C | visible once bypass mode is enabled |
+| QMC5883L compass (GY-271) | 0x0D | current heading source; no clash with 0x0C |
+| OLED | 0x3C | |
+| INA219 battery monitor | 0x40 | |
+| DS3231 clock | 0x68 | keeps its address; IMU moves instead |
+| **MPU-9250 IMU** | **0x69** | with AD0 strapped high |
+
+The MPU-9250's internal AK8963 compass is normally hidden behind the
+MPU-9250 itself; setting the "I2C bypass" bit (register `INT_PIN_CFG`,
+`0x37`) exposes it directly on our bus at 0x0C. That address does **not**
+collide with the GY-271 at 0x0D, so both compasses can coexist during the
+changeover and be compared against each other on the bench.
+
+---
+
+## PDF Phase 1 — Sensor fusion (MPU-9250)
+
+Plain-language why: today the turtle's sense of direction comes from a
+magnetometer alone. A compass is truthful on average but jittery
+second-to-second, and it lies when the boat heels over. A gyroscope is
+the opposite: silky-smooth over seconds but slowly drifts. Fusing the two
+("complementary filter") gives a heading that is both smooth *and* true,
+and the accelerometer tells us which way is down so we can un-tilt the
+compass reading on a heeled boat.
+
+- [x] **Hardware selected and wired**: MPU-9250 module (see section above).
+  Default address 0x68 collides with the DS3231 RTC — resolved by
+  strapping AD0 to VCC on the module (→ 0x69).
+- [ ] **Bench verification**: WHO_AM_I check (expect `0x71`) and
+  `tests/i2c_scan.py` showing 0x69 (and 0x0C once bypass is enabled)
+  alongside the existing devices.
+- [ ] **`src/drivers/mpu9250.py` driver**: init, gyro/accel/mag reads at
+  the ranges we need (±250 °/s and ±2 g are plenty for a sailboat),
+  bypass-mode enable for the AK8963.
+- [ ] `Mpu9250HeadingSource` in `nav/heading.py` implementing the
   complementary filter from the PDF (every IMU sample):
-  `heading = 0.98 x (heading + gyro_yaw_rate x dt) + 0.02 x mag_heading`
-- [ ] Tilt-compensated heading (mag + accelerometer) — a heeled sailboat
-  reads garbage from a flat-mounted magnetometer; this matters more at sea
-  than the gyro fusion does.
-- [ ] 50 Hz inner yaw-rate loop to arrest spin onset before the 300 ms
+  `heading = 0.98 × (heading + gyro_yaw_rate × dt) + 0.02 × mag_heading`
+  The `HeadingSource` abstraction already exists so this drops in without
+  touching NavController or any screen.
+- [ ] **Tilt-compensated heading** (mag + accelerometer) — a heeled
+  sailboat reads garbage from a flat-mounted magnetometer; this matters
+  more at sea than the gyro fusion does.
+- [ ] **Compass changeover decision**: run the AK8963 (inside the IMU) and
+  the GY-271 side by side on the bench; if the AK8963 is as good or
+  better, retire the GY-271 and free the board space. Keep the GY-271 as
+  the fallback path in `heading.py` either way.
+- [ ] **50 Hz inner yaw-rate loop** to arrest spin onset before the 300 ms
   outer loop sees it (PDF autopilot step 4). Needs a timer IRQ or a faster
   tick path than `_bg_tick` — design carefully against heap/IRQ rules.
 - [ ] `is_stable()` gate for BOOT→ACQUIRE: heading drift < 2°/min over a
@@ -48,9 +171,16 @@ QMC5883L magnetometer only, isolated behind `nav/heading.py:HeadingSource`.
 
 ## PDF Phase 4 — SAIL-NAV maturation
 
+Plain-language why: the current autopilot can hold a rough course in easy
+conditions. This phase makes it hold course *well* (gain tuning), trim the
+sail properly instead of approximately, correct sideways drift, and —
+biggest of all — sail toward an upwind destination by zig-zagging
+(tacking), which no sailboat can avoid.
+
 - [ ] **PID gain tuning** in tethered water trials (target: heading hold
   ±10° in calm water). Gains live in `nav/pid.py`; make them config keys
-  (`pid_kp/pid_ki/pid_kd`) once tuning starts so trials don't need reflashes.
+  (`pid_kp/pid_ki/pid_kd`) once tuning starts so trials don't need
+  reflashes.
 - [ ] **Encoder↔servo↔wind trim calibration.** The minimal loop steers
   around servo neutral (90°) and "feathers" by centering. Real trim needs
   the mapping between AS5600 encoder degrees (0–360, arbitrary zero),
@@ -76,9 +206,16 @@ QMC5883L magnetometer only, isolated behind `nav/heading.py:HeadingSource`.
 
 ## PDF Phase 5 — Reliability
 
+Plain-language why: a turtle at sea is on its own. This phase is about
+noticing when something is wrong (GPS gone quiet, position that doesn't
+match the compass, drifted outside the allowed area, water inside the
+hull) and reacting safely instead of sailing off confidently in the wrong
+direction.
+
 - [ ] **Dead-reckoning** during GPS dropouts (gyro + accel integration)
   before the SAFE timer fires; the PDF allows a short-duration estimate.
-  Blocked on Phase 1 (needs the IMU).
+  Was blocked on the IMU — **unblocked now that the MPU-9250 is wired**;
+  still depends on the Phase 1 driver work.
 - [ ] **GPS spoofing detection**: compare RMC COG (already parsed into
   `nav/gpsfix.py:cog_deg()`) against compass heading; sustained
   disagreement beyond leeway → SAFE.
@@ -90,6 +227,11 @@ QMC5883L magnetometer only, isolated behind `nav/heading.py:HeadingSource`.
   long-hold on the state screen) and implement.
 
 ## PDF Phase 6 — Watchdog + persistence
+
+Plain-language why: over a multi-day crossing the software *will* hit a
+condition nobody predicted. A watchdog restarts a hung turtle
+automatically, and mission persistence means a restarted turtle picks up
+where it left off instead of forgetting its trip.
 
 - [ ] **Hardware watchdog**: deliberately deferred. Existing blocking flows
   (boot pipeline 500 ms holds, carousel dwells, `time_flow`) would trip a
@@ -105,9 +247,15 @@ QMC5883L magnetometer only, isolated behind `nav/heading.py:HeadingSource`.
 
 ## Beyond the PDF — robustness suggestions
 
+Plain-language why: field lessons and known weak spots — mostly about the
+compass being our dominant error source, the servo being our dominant
+power drain, and making failures observable from shore.
+
 - [ ] **Magnetometer hard/soft-iron calibration**: rotate-the-boat routine
   storing offsets/scales in config; an on-device calibration screen.
-  Compass error is the dominant navigation error source right now.
+  Compass error is the dominant navigation error source right now. Applies
+  to the MPU-9250's AK8963 exactly as it did to the GY-271 — the new
+  hardware does not remove the need to calibrate.
 - [ ] **Sweep failure handling**: `LuffSweep` fails cleanly today
   (`no luff (A)/(B)`) but nothing retries. Policy: retry with slower speed
   and lower threshold; N consecutive failures → SAFE. Known edge: wind
