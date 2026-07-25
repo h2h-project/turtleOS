@@ -564,7 +564,10 @@ def run(
 
             elif name == "summary":
                 from src.ui.screens.summary import SummaryScreen
-                screens[name] = SummaryScreen(oled)
+                screens[name] = SummaryScreen(
+                    oled, cfg=cfg, i2c=i2c, ina=_ina_dev,
+                    rtc_info=rtc, room_get=_room_name,
+                )
 
             elif name == "time":
                 from src.ui.screens.time import TimeScreen

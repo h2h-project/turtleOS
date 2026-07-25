@@ -376,7 +376,7 @@ def api_device_lookup(cfg):
         _dname = info.get("device_name") or "device"
         _mis = info.get("mission_short_name") or info.get("mission_full_name") or ""
         print("API lookup: {} is connected!".format(_dname))
-        print("[BOOT] Turtle: {}".format(_dname))
+        print("[BOOT] {}: {}".format("Turtle" if cfg.get("turtle_mode", True) else "Device", _dname))
         if _mis:
             print("[BOOT] Mission: {}".format(_mis))
             _detail = "{} / {}".format(_dname, _mis)
@@ -493,10 +493,22 @@ def go_waiting(oled, wifi_boot=None, api_boot=None, gps_boot=None):
 # ============================================================
 # BOOT SEQUENCE
 # ============================================================
-print("[BOOT] Turtle is waking up...")
+# Lightweight, direct config.json read for turtle_mode — load_config() and
+# _early_cfg aren't populated until later in the boot sequence, but the
+# wake-up banner needs to know which brand ("Turtle"/"turtleOS" vs "airOS")
+# to log before that point.
 try:
-    from src.app.booter import VERSION as _boot_version
-    print("[BOOT] " + _boot_version)
+    import json as _boot_json
+    with open("config.json") as _boot_cfg_f:
+        _boot_turtle_mode = bool(_boot_json.load(_boot_cfg_f).get("turtle_mode", True))
+except Exception:
+    _boot_turtle_mode = True
+
+print("[BOOT] Turtle is waking up..." if _boot_turtle_mode else "[BOOT] airOS is waking up...")
+try:
+    from src.app.booter import VERSION_NUM as _boot_version_num
+    _boot_brand = "turtleOS" if _boot_turtle_mode else "airOS"
+    print("[BOOT] " + _boot_brand + " version " + _boot_version_num)
 except Exception:
     pass
 try:

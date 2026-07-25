@@ -15,7 +15,7 @@ fi
 # airOS (airBuddy) Installer
 # ------------------------------------------------------------
 # First-time setup for the simple airBuddy XIAO ESP32-S3 —
-# the air-quality-only build of turtleOS (turtle_mode=false).
+# the air-quality-only firmware build (turtle_mode=false).
 # Walks you through MicroPython flashing (if needed),
 # configures your device, and uploads airOS firmware.
 #
@@ -28,23 +28,24 @@ fi
 
 cat <<'BANNER'
 
-    _      ___   ____     ___    ____
-   / \    |_ _| |  _ \   / _ \  / ___|
-  / _ \    | |  | |_) | | | | | \___ \
- / ___ \   | |  |  _ <  | |_| |  ___) |
-/_/   \_\ |___| |_| \_\  \___/  |____/
+            ███               ███████     █████████
+           ░░░              ███░░░░░███  ███░░░░░███
+  ██████   ████  ████████  ███     ░░███░███    ░░░
+ ░░░░░███ ░░███ ░░███░░███░███      ░███░░█████████
+  ███████  ░███  ░███ ░░░ ░███      ░███ ░░░░░░░░███
+ ███░░███  ░███  ░███     ░░███     ███  ███    ░███
+░░████████ █████ █████     ░░░███████░  ░░█████████
+ ░░░░░░░░ ░░░░░ ░░░░░        ░░░░░░░     ░░░░░░░░░
 
     D E V I C E   I N S T A L L E R
 
         K n o w   T h y   A i r
 
-      ~ A Human to Human project ~
-
 BANNER
 
 echo "Welcome!  You're about to install airOS onto your Xiao ESP32-S3"
 echo "microcontroller.  Make sure that this is in fact your circuit."
-echo "This build is the simple air-quality-only version of turtleOS —"
+echo "This build is the simple air-quality-only version of the firmware —"
 echo "no sail servo, no compass, no navigation."
 echo
 
@@ -202,7 +203,7 @@ escape_json_string() {
 }
 
 # ------------------------------------------------------------
-# Clone / update the turtleOS repository
+# Clone / update the firmware repository
 # (needed before flashing — the firmware .bin lives in resources/;
 #  airOS is the turtle_mode=false build of the same firmware)
 # ------------------------------------------------------------
@@ -215,7 +216,7 @@ cd "$WORKDIR"
 REPO_URL="https://github.com/h2h-project/turtleOS.git"
 
 if [ ! -d "turtleOS" ]; then
-    echo "Cloning the turtleOS repository..."
+    echo "Cloning the firmware repository..."
     git clone "$REPO_URL"
 fi
 
@@ -679,15 +680,12 @@ echo
 
 cat <<'WAVES'
 
-        .  *  .    ,  .   *
-      *    (   )  .    *   .
-    .   *   )  (  (    .  *
-          (  (    )  )    *
-      _.-'~~~~~~~~~~~~`-._
-    ,'    a i r B u d d y   `.
-    |    ~  ~   ~    ~   ~   |
-    `._                    _.'
-        `-.,________,.-'
+,--. ,--.                              ,--------.,--.                    ,---.  ,--.
+|  .'   /,--,--,  ,---. ,--.   ,--.    '--.  .--'|  ,---. ,--. ,--.     /  O  \ `--',--.--.
+|  .   ' |      \| .-. ||  |.'.|  |       |  |   |  .-.  | \  '  /     |  .-.  |,--.|  .--'
+|  |\   \|  ||  |' '-' '|   .'.   |       |  |   |  | |  |  \   '      |  | |  ||  ||  |.--.
+`--' '--'`--''--' `---' '--'   '--'       `--'   `--' `--'.-'  /       `--' `--'`--'`--''--'
+                                                          `---'
 
 WAVES
 

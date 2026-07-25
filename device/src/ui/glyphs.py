@@ -684,12 +684,22 @@ def _f_mouth_grin(fb, w, h, cx, cy, radius, w_half, thick=2, c=1):
     _f_pix(fb, w, h, cx + w_half, teeth_y - 1, c)
 
 
-def draw_face(fb, width, height, mood, *, right_edge=True, fill_height_ratio=0.90):
-    r = int((height * float(fill_height_ratio)) / 2)
-    r = max(10, min(r, (height // 2) - 2))
+def draw_face(fb, width, height, mood, *, right_edge=True, fill_height_ratio=0.90,
+              y0=0, area_height=None):
+    """
+    y0 / area_height let the face be confined to a vertical band within the
+    screen (e.g. between a header row and a footer icon row) rather than
+    always spanning the full framebuffer height. width/height still bound
+    the pixel-clipping in the vector helpers below. Defaults (y0=0,
+    area_height=None -> height) reproduce the original full-height behaviour.
+    """
+    ah = int(area_height) if area_height is not None else int(height)
+
+    r = int((ah * float(fill_height_ratio)) / 2)
+    r = max(10, min(r, (ah // 2) - 2))
 
     cx = (width - 1) - r if right_edge else (width // 2)
-    cy = height // 2
+    cy = int(y0) + ah // 2
 
     draw_thick_circle(fb, width, height, cx, cy, r, thickness=3, c=1)
 
