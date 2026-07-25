@@ -1,0 +1,18 @@
+{
+
+    "board_type": "xiao_esp32s3",
+    "wifi_enabled": true,
+    "wifi_ssid": "Wu-Tang LAN",
+    "wifi_password": "W3L0v3b008135!",
+    "gps_enabled": false,
+    "api_base": "http://air2.earthen.io",
+    "device_id": "",
+    "device_key": "",
+    "telemetry_enabled": true,
+    "telemetry_post_every_s": 120,
+    "timezone_offset_min": 60,
+    "oled_col_offset": 2,
+    "turtle_mode": false,
+    "joke_mode": true,
+    "servo_present": false
+}
