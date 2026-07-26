@@ -2,18 +2,13 @@
 #
 # Shows the brand mark centred on the screen — the airBuddy logo + "Know thy
 # air..." tagline in airOS, or the animated ASCII turtle in turtleOS — with
-# the firmware version number top-left and the connectivity icon cluster
+# the firmware version number top-left and "by Earthen.io" attribution
 # top-right.
 #
 # Reached via: hold 2s -> Battery screen -> Sleep screen -> single click on
 # Sleep -> Version screen -> any click returns to the waiting screen.
 
 import time
-
-try:
-    from src.ui import connection_header as _ch
-except Exception:
-    _ch = None
 
 try:
     from src.app.booter import VERSION_NUM
@@ -45,60 +40,30 @@ class VersionScreen:
                 self._waiting_helper = None
 
     # ------------------------------------------------------------
-    # Shared overlay: version number top-left, connection icons top-right.
+    # Shared overlay: version number top-left, attribution top-right.
     # ------------------------------------------------------------
     def _draw_header(self, dst, status=None):
         o = self.oled
-        if _ch is not None:
-            try:
-                st = status or {}
-                _ch.draw(
-                    dst,
-                    o.width,
-                    gps_state=_ch.get_gps_state(),
-                    api_sending=bool(st.get("api_sending", False)),
-                    icon_y=1,
-                )
-            except Exception:
-                pass
+        writer = getattr(o, "f_small", None)
 
         try:
             o.f_small.write("v" + str(VERSION_NUM), 0, 1)
         except Exception:
             pass
 
-    # ------------------------------------------------------------
-    # Copyright (bottom-right) + attribution (bottom-left) footer.
-    # ------------------------------------------------------------
-    def _draw_footer(self, dst, ow, oh):
-        o = self.oled
-        writer = getattr(o, "f_small", None)
-        if writer is None:
-            return
-
-        left = "by Earthen.io"
-        right = "(c)2025-26"
-
-        try:
-            _, lh = o._text_size(writer, left)
-        except Exception:
-            lh = 7
-        y = oh - lh - 1
-
-        try:
-            writer.write(left, 0, y)
-        except Exception:
-            pass
-
-        try:
-            rw, _ = o._text_size(writer, right)
-            x = max(0, ow - int(rw))
-        except Exception:
-            x = 0
-        try:
-            writer.write(right, x, y)
-        except Exception:
-            pass
+        # Top-right: attribution.
+        if writer is not None:
+            attrib = "by Earthen.io"
+            try:
+                w = int(getattr(o, "width", 128))
+                aw, _ = o._text_size(writer, attrib)
+                x = max(0, w - int(aw))
+            except Exception:
+                x = 0
+            try:
+                writer.write(attrib, x, 1)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------
     # airOS: logo + tagline, centred on the full screen.
@@ -158,8 +123,6 @@ class VersionScreen:
                 writer.write(line, x, int(line_y))
             except Exception:
                 pass
-
-        self._draw_footer(fb, ow, oh)
 
         self._draw_header(fb, status)
         fb.show()

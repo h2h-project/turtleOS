@@ -2,8 +2,8 @@
 
 import time
 from src.ui.glyphs import (
-    draw_circle, draw_degree, draw_c, draw_sub2, draw_face,
-    draw_battery, BATT_W, BATT_H,
+    draw_home, HOME_W, HOME_H, draw_degree, draw_c, draw_sub2, draw_face,
+    draw_battery, BATT_W, BATT_H, draw_x_mark, XMARK_W, XMARK_H,
 )
 
 try:
@@ -16,8 +16,7 @@ ROTATE_MS = 3000
 
 
 class SummaryScreen:
-    # Heartbeat glyph + room-name label, top-left.
-    _GLYPH_R = 3
+    # Home glyph + room-name label, top-left.
     _GLYPH_TEXT_GAP = 4
 
     def __init__(self, oled, cfg=None, i2c=None, ina=None, rtc_info=None, room_get=None):
@@ -30,7 +29,7 @@ class SummaryScreen:
         self.rtc_info = rtc_info if isinstance(rtc_info, dict) else {}
         self._room_get = room_get        # callable -> room name str or None
 
-        self.indent_x = 4
+        self.indent_x = 0
 
     # -------------------------------------------------
     # Classification (score + mood)
@@ -95,66 +94,68 @@ class SummaryScreen:
     # -------------------------------------------------
     # Reading line renderers
     # -------------------------------------------------
-    def _draw_temp_line(self, temp_c, x, y):
+    def _draw_temp_line(self, temp_c, x, y1, y2):
         """
-        MED: 29.7°C (degree ring pixel + C)
+        Two lines, nestled into the bottom-left corner:
+          29.7°   (number + degree ring pixel)
+          C       (unit)
         """
         try:
             t = round(float(temp_c), 1)
             num = "{:.1f}".format(t)
         except Exception:
-            self.f.write("--.-", x, y)
+            self.f.write("--.-", x, y1)
             return
 
-        self.f.write(num, x, y)
+        self.f.write(num, x, y1)
         w_num, _ = self.oled._text_size(self.f, num)
 
         deg_r = 2
-        deg_w = deg_r * 2 + 1
         x_deg = x + int(w_num) + 1
-        draw_degree(self.oled.oled, x_deg, y + 3, r=deg_r, color=1)
+        draw_degree(self.oled.oled, x_deg, y1 + 3, r=deg_r, color=1)
 
-        x_c = x_deg + deg_w + 1
-        if not self.f.write("C", x_c, y):
-            draw_c(self.oled.oled, x_c, y + 2, scale=1, color=1)
+        if not self.f.write("C", x, y2):
+            draw_c(self.oled.oled, x, y2 + 2, scale=1, color=1)
 
-    def _draw_humidity_line(self, rh, x, y):
+    def _draw_humidity_line(self, rh, x, y1, y2):
         """
-        MED: 67%
+        67
+        %
         """
         try:
             rh_i = int(round(float(rh)))
-            txt = "{}%".format(rh_i)
+            txt = str(rh_i)
         except Exception:
-            txt = "--%"
+            txt = "--"
 
-        self.f.write(txt, x, y)
+        self.f.write(txt, x, y1)
+        self.f.write("%", x, y2)
 
-    def _draw_co2_line(self, co2, x, y):
+    def _draw_co2_line(self, co2, x, y1, y2):
         """
-        MED: 638 CO₂
-        (CO + sub2 glyph)
+        638
+        CO₂   (CO + sub2 glyph)
         """
         try:
             n = str(int(co2))
         except Exception:
             n = "--"
 
-        # write "<n> CO"
-        base = "{} CO".format(n)
-        self.f.write(base, x, y)
+        self.f.write(n, x, y1)
 
-        w_base, _ = self.oled._text_size(self.f, base)
+        self.f.write("CO", x, y2)
+        w_base, _ = self.oled._text_size(self.f, "CO")
         # subscript sits a bit lower than baseline (tuned for MED)
-        draw_sub2(self.oled.oled, x + int(w_base) + 1, y + 9, scale=1, color=1)
+        draw_sub2(self.oled.oled, x + int(w_base) + 1, y2 + 9, scale=1, color=1)
 
-    def _draw_tvoc_line(self, tvoc, x, y):
+    def _draw_tvoc_line(self, tvoc, x, y1, y2):
         try:
-            self.f.write(str(int(tvoc)) + " ppb", x, y)
+            self.f.write(str(int(tvoc)), x, y1)
         except Exception:
-            self.f.write("-- ppb", x, y)
+            self.f.write("--", x, y1)
+        self.f.write("ppb", x, y2)
 
-    def _draw_time_line(self, x, y):
+    def _draw_time_line(self, x, y1, y2):
         try:
             offset_min = self.cfg.get("timezone_offset_min", None)
         except Exception:
@@ -169,7 +170,7 @@ class SummaryScreen:
         except Exception:
             txt = "--:--"
 
-        self.f.write(txt, x, y)
+        self.f.write(txt, x, y2)
 
     # -------------------------------------------------
     # Bottom-left rotating reading — same priority/availability protocol
@@ -195,11 +196,11 @@ class SummaryScreen:
         rh = scd41_rh if scd41_rh is not None else (getattr(r, "humidity", None) if r else None)
 
         ordered = (
-            (temp_val is not None, lambda x, y: self._draw_temp_line(temp_val, x, y)),
-            (co2 is not None and co2 > 0, lambda x, y: self._draw_co2_line(co2, x, y)),
-            (tvoc is not None, lambda x, y: self._draw_tvoc_line(tvoc, x, y)),
-            (rh is not None, lambda x, y: self._draw_humidity_line(rh, x, y)),
-            (True, lambda x, y: self._draw_time_line(x, y)),
+            (temp_val is not None, lambda x, y1, y2: self._draw_temp_line(temp_val, x, y1, y2)),
+            (co2 is not None and co2 > 0, lambda x, y1, y2: self._draw_co2_line(co2, x, y1, y2)),
+            (tvoc is not None, lambda x, y1, y2: self._draw_tvoc_line(tvoc, x, y1, y2)),
+            (rh is not None, lambda x, y1, y2: self._draw_humidity_line(rh, x, y1, y2)),
+            (True, lambda x, y1, y2: self._draw_time_line(x, y1, y2)),
         )
 
         out = []
@@ -217,11 +218,15 @@ class SummaryScreen:
         draw_fn = candidates[int(rotate_index) % len(candidates)]
 
         _, h = self.oled._text_size(self.f, "Ag")
-        y = self.oled.height - h - 2
-        draw_fn(self.indent_x, y)
+        # Two-line stack nestled into the bottom-left corner: the unit line
+        # keeps the same baseline the single-line reading used to sit on,
+        # and the number line sits directly above it.
+        y2 = self.oled.height - h - 2
+        y1 = y2 - h - 1
+        draw_fn(self.indent_x, y1, y2)
 
     # -------------------------------------------------
-    # Header: connection icons (top-right), heartbeat glyph + room name
+    # Header: connection icons (top-right), home glyph + room name
     # (top-left). Footer: battery icon (bottom-right).
     # -------------------------------------------------
     def _room(self):
@@ -282,32 +287,41 @@ class SummaryScreen:
             except Exception:
                 pass
 
-        # Top-left: heartbeat glyph + room name.
-        gcx = self._GLYPH_R
-        gcy = 1 + self._GLYPH_R
-        draw_circle(fb, gcx, gcy, r=self._GLYPH_R, filled=beat_filled, color=1)
+        # Top-left: static home glyph + room name.
+        gx = 0
+        gy = 1
+        draw_home(fb, gx, gy, color=1)
 
         room = self._room()
         f_small = getattr(self.oled, "f_small", None)
-        if room and f_small is not None:
-            tx = gcx + self._GLYPH_R + self._GLYPH_TEXT_GAP
+        if f_small is not None:
+            tx = gx + HOME_W + self._GLYPH_TEXT_GAP
             # Leave room for the connection icon cluster on the right.
             max_w = w - tx - 44
-            txt = self._fit(room.upper(), max_w)
+            txt = self._fit(room.upper(), max_w) if room else "- - -"
             if txt:
                 f_small.write(txt, tx, 1)
 
     def _draw_footer(self, fb):
         # Bottom-right: battery icon, vertically aligned with the bottom-left
-        # reading text row. A horizontal centre line when no INA219 is detected.
+        # reading text row. When no INA219 is detected, an "x" glyph sits to
+        # its left instead of a line through the battery body.
         batt_x = self.oled.width - BATT_W
         _, h = self.oled._text_size(self.f, "Ag")
         text_y = self.oled.height - h - 2
         batt_y = text_y + (h - BATT_H) // 2
+        present = self._battery_present()
         try:
-            draw_battery(fb, batt_x, batt_y, no_battery=(not self._battery_present()))
+            draw_battery(fb, batt_x, batt_y)
         except Exception:
             pass
+        if not present:
+            try:
+                x_x = batt_x - XMARK_W - 3
+                x_y = batt_y + (BATT_H - XMARK_H) // 2
+                draw_x_mark(fb, x_x, x_y, color=1)
+            except Exception:
+                pass
 
     # -------------------------------------------------
     # Render
@@ -319,8 +333,7 @@ class SummaryScreen:
         score = self._score_from_reading(reading) if reading else 2
         mood = self._mood_from_score(score)
 
-        # Face glyph: true screen centre (both axes). Sized 10px smaller in
-        # diameter than the previous 85%-of-height fill. Drawn first so the
+        # Face glyph: true screen centre (both axes). Drawn first so the
         # header/footer overlays below are painted on top of it and stay
         # legible.
         width = self.oled.width
@@ -331,7 +344,7 @@ class SummaryScreen:
         draw_face(
             fb, width, height, mood,
             right_edge=False,
-            fill_height_ratio=0.6875,
+            fill_height_ratio=0.75625,
             y0=y0,
             area_height=area_h,
         )

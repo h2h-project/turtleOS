@@ -319,10 +319,11 @@ class SummaryScreen:
         score = self._score_from_reading(reading) if reading else 2
         mood = self._mood_from_score(score)
 
-        # Face glyph: true screen centre (both axes), sized to nearly reach
-        # the top row and bottom row of the display (85% of full height —
-        # 15% smaller than edge-to-edge). Drawn first so the header/footer
-        # overlays below are painted on top of it and stay legible.
+
+        # Face glyph: true screen centre (both axes). Sized 10px smaller in
+        # diameter than the previous 85%-of-height fill. Drawn first so the
+        # header/footer overlays below are painted on top of it and stay
+        # legible.
         width = self.oled.width
         height = self.oled.height
         y0 = 0
@@ -331,7 +332,7 @@ class SummaryScreen:
         draw_face(
             fb, width, height, mood,
             right_edge=False,
-            fill_height_ratio=0.85,
+            fill_height_ratio=0.6875,
             y0=y0,
             area_height=area_h,
         )

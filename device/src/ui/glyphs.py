@@ -102,6 +102,55 @@ def draw_circle(fb, cx, cy, r=4, filled=False, color=1):
 
 
 # ------------------------------------------------------------
+# Home (house) glyph — static, 7x7
+#
+# Two slanted roof lines meeting at an apex, over two vertical walls.
+# Same footprint as the old r=3 heartbeat circle so it drops into the
+# same corner without any layout changes.
+# ------------------------------------------------------------
+
+HOME_W = 7
+HOME_H = 7
+
+_HOME_7 = [
+    "0001000",
+    "0010100",
+    "0100010",
+    "1000001",
+    "1000001",
+    "1000001",
+    "1000001",
+]
+
+
+def draw_home(fb, x, y, color=1):
+    """Draw a static 7x7 house glyph (roof + walls) at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _HOME_7, c=color)
+
+
+# ------------------------------------------------------------
+# "No sensor" x-mark — small 5x5 cross, used beside an icon to flag
+# that the underlying hardware (e.g. INA219) was not detected on I2C.
+# ------------------------------------------------------------
+
+XMARK_W = 5
+XMARK_H = 5
+
+_XMARK_5 = [
+    "10001",
+    "01010",
+    "00100",
+    "01010",
+    "10001",
+]
+
+
+def draw_x_mark(fb, x, y, color=1):
+    """Draw a small 5x5 'x' glyph at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _XMARK_5, c=color)
+
+
+# ------------------------------------------------------------
 # Pixel "C" glyph (for LARGE temp units)
 # ------------------------------------------------------------
 
