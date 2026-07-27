@@ -129,19 +129,15 @@ class AirBuddyButton:
 
                         # Short press = click
                         if held_ms < self.hold_ms:
-                            if self._click_count == 0:
-                                self._click_window_start_ms = now
                             self._click_count += 1
 
-                            # On the 3rd click, reset the window so there's a
-                            # full click_window_ms to land the 4th (quad) click.
-                            if self._click_count == 3:
-                                self._click_window_start_ms = now
-
-                            # On the 4th click, reset the window so there's a
-                            # full click_window_ms to land the 5th (quint) click.
-                            if self._click_count == 4:
-                                self._click_window_start_ms = now
+                            # Restart the window on EVERY click, so the budget is
+                            # click_window_ms *between* clicks rather than for the
+                            # whole burst. Measuring from the first click meant a
+                            # triple had to fit three debounced presses inside one
+                            # 500 ms window — right at the edge of what a hand can
+                            # do, so triples routinely emitted as single/double.
+                            self._click_window_start_ms = now
 
                             if self._click_count >= 5:
                                 self._click_count = 0

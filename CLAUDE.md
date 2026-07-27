@@ -213,14 +213,15 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 2 s** | GPS → Battery → Sleep → Version screens | GPS → Battery → Sleep → Version screens |
+| **Hold 3 s** | GPS → Battery → Sleep → Version screens | GPS → Battery → Sleep → Version screens |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
 - 50 ms debounce on edges.
-- Clicks counted within a **500 ms window** after the first press. After the window expires, `poll_action()` returns the count as a string (`"single"`, `"double"`, etc.).
-- Quad fires immediately on the 4th release (no window wait).
-- A hold of ≥ 2 s while pressed returns `"sleep"` immediately.
+- Each release **restarts** the 500 ms `click_window_ms`, so the budget is 500 ms *between* clicks, not 500 ms for the whole burst. `poll_action()` returns the count as a string (`"single"`, `"double"`, …) once the window expires with no further click. Measuring the window from the first press instead made a triple need three debounced presses inside a single 500 ms window — anything slower than ~120 ms per click emitted as `double` + `single`.
+- Quint (5 clicks) fires immediately on the 5th release; all other counts wait out the window.
+- A hold of ≥ 3 s while pressed returns `"sleep"` immediately (`hold_ms`, not 2 s).
+- A click is only ~100 ms of debounced level change and the button is **sampled only when polled** — any screen loop that does a frame draw plus a telemetry/nav tick between polls can step straight over one. Interleave `poll_action()` between expensive steps, as `TurtleWaitingScreen._poll()` does.
 - `btn.reset()` clears all pending state — call it at the start of any interactive screen.
 
 ### Double-click on toggle screens
@@ -289,7 +290,7 @@ the GPS screen into a field logger. It is the **first screen of the hold flow**,
 recording a position is: hold 2 s, then click.
 
 ```
-Waiting --hold 2s--> GPS screen --double click--> Battery --> Sleep --> Version --> Waiting
+Waiting --hold 3s--> GPS screen --double click--> Battery --> Sleep --> Version --> Waiting
                        ↑ single click = record one reading
                        ↑ triple click = toggle gps_enabled
                        ↑ hold         = leave the flow
