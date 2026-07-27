@@ -764,7 +764,7 @@ def _preload_screens(oled, is_pico=False, turtle_mode=False):
 
     if turtle_mode:
         for mod in (
-            "src.ui.screens.gps",       # GPS status screen (turtle sensor carousel)
+            "src.ui.screens.gps",       # GPS status + manual logging (hold flow)
             "src.ui.screens.compass",   # compass heading screen (turtle sensor carousel)
             "src.ui.screens.sailpoint", # AS5600 sail angle screen (turtle only)
             # Nav stack: imported post-WiFi via _get_nav()/get_screen("state")

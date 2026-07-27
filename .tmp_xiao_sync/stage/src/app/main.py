@@ -914,7 +914,8 @@ def run(
 
         if action == "sleep":
             screens.clear(); _gc()
-            sleep_flow(btn, oled, get_screen, tick_fn=_bg_tick)
+            sleep_flow(btn, oled, get_screen, tick_fn=_bg_tick,
+                       gps=gps, cfg=cfg, telemetry=telemetry, status=status)
             continue
 
         if action == "quint":
