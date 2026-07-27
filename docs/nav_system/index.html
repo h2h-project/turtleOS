@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hope Turtle Navigation — Current System &amp; Roadmap</title>
+<style>
+  :root {
+    --ink: #1e2a32;
+    --ink-soft: #4a5a64;
+    --paper: #f7f9f8;
+    --card: #ffffff;
+    --sea: #0e7490;
+    --sea-deep: #155e75;
+    --sea-mist: #e0f2f7;
+    --shell: #2e7d52;
+    --shell-mist: #e3f2ea;
+    --sand: #b45309;
+    --sand-mist: #fdf0e0;
+    --alert: #b3403a;
+    --alert-mist: #fbe9e7;
+    --plum: #5e548e;
+    --plum-mist: #ede7f6;
+    --line: #d8e2e6;
+    --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    line-height: 1.65;
+    font-size: 17px;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 0 24px 96px; }
+  header.hero {
+    background: linear-gradient(160deg, var(--sea-deep) 0%, var(--sea) 70%);
+    color: #f0fbff;
+    padding: 64px 24px 56px;
+    text-align: center;
+  }
+  header.hero h1 { font-size: 2.1rem; margin: 0 0 10px; letter-spacing: -0.01em; }
+  header.hero p.sub { max-width: 640px; margin: 0 auto; font-size: 1.05rem; opacity: 0.92; }
+  header.hero .date-chip {
+    display: inline-block; margin-top: 22px; padding: 5px 16px;
+    border: 1px solid rgba(255,255,255,0.45); border-radius: 999px;
+    font-size: 0.85rem; letter-spacing: 0.04em;
+  }
+  h2 {
+    font-size: 1.55rem; margin: 72px 0 8px; letter-spacing: -0.01em;
+    color: var(--sea-deep);
+  }
+  h2 .kicker {
+    display: block; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--sand); margin-bottom: 6px;
+  }
+  h3 { font-size: 1.15rem; margin: 36px 0 6px; }
+  p { margin: 12px 0; }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); }
+  figure { margin: 28px 0; }
+  figure .frame {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; overflow-x: auto;
+  }
+  figcaption {
+    font-size: 0.88rem; color: var(--ink-soft); margin-top: 10px; text-align: center;
+  }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .svg-label { font-family: inherit; font-size: 13px; fill: var(--ink); }
+  .svg-label-soft { font-family: inherit; font-size: 11.5px; fill: var(--ink-soft); }
+  .svg-mono { font-family: var(--mono); font-size: 12px; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 0.93rem;
+    background: var(--card); border-radius: 10px; overflow: hidden;
+  }
+  th, td { border: 1px solid var(--line); padding: 9px 13px; text-align: left; }
+  th { background: var(--sea-mist); color: var(--sea-deep); font-weight: 600; }
+  .table-scroll { overflow-x: auto; }
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: #eef3f5; border-radius: 5px; padding: 2px 6px;
+  }
+  .callout {
+    border-left: 4px solid var(--sea); background: var(--sea-mist);
+    border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 24px 0;
+  }
+  .callout.warn { border-color: var(--alert); background: var(--alert-mist); }
+  .callout.good { border-color: var(--shell); background: var(--shell-mist); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; border-radius: 999px;
+    padding: 3px 11px; vertical-align: middle; margin-left: 8px;
+  }
+  .badge.now { background: var(--shell-mist); color: var(--shell); }
+  .badge.next { background: var(--sand-mist); color: var(--sand); }
+  .badge.later { background: var(--plum-mist); color: var(--plum); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 24px 0; }
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+  .mini-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .mini-card h4 { margin: 0 0 6px; font-size: 1rem; }
+  .mini-card p { margin: 0; font-size: 0.92rem; color: var(--ink-soft); }
+  .glossary dt { font-weight: 700; margin-top: 16px; }
+  .glossary dd { margin: 2px 0 0 0; color: var(--ink-soft); }
+  footer {
+    text-align: center; color: var(--ink-soft); font-size: 0.85rem;
+    padding: 32px 24px 48px; border-top: 1px solid var(--line); margin-top: 48px;
+  }
+  ol.steps { padding-left: 0; counter-reset: step; list-style: none; }
+  ol.steps li {
+    counter-increment: step; position: relative; padding: 10px 0 10px 52px; margin: 6px 0;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 8px;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--sea); color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ---------- animations (tight, short cycles, gentle easing) ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; }
+  }
+
+  /* sense→think→trim→check cycle: nodes pulse in crisp sequence */
+  @keyframes nodePulse {
+    0%, 25%, 100% { opacity: 0.4; }
+    5%, 18% { opacity: 1; }
+  }
+  .cycle-node { animation: nodePulse 4.8s ease-in-out infinite; }
+  .cycle-n1 { animation-delay: 0s; }
+  .cycle-n2 { animation-delay: 1.2s; }
+  .cycle-n3 { animation-delay: 2.4s; }
+  .cycle-n4 { animation-delay: 3.6s; }
+
+  /* steering chain: pulse travels sail → hull → motion */
+  @keyframes chainPulse {
+    0%, 30%, 100% { opacity: 0.45; }
+    8%, 22% { opacity: 1; }
+  }
+  .chain-node { animation: chainPulse 5s ease-in-out infinite; }
+  .chain-c1 { animation-delay: 0s; }
+  .chain-c2 { animation-delay: 1.25s; }
+  .chain-c3 { animation-delay: 2.5s; }
+  @keyframes qBlink { 0%, 55%, 100% { opacity: 0.25; } 70%, 85% { opacity: 1; } }
+  .chain-q { animation: qBlink 5s ease-in-out infinite; }
+
+  /* luff sweep: double sail arm sweeps on the central axle, brief flutter at each wind crossing */
+  @keyframes sailSweep {
+    0%   { transform: rotate(-70deg); }
+    8%   { transform: rotate(-70deg); }
+    28%  { transform: rotate(-11deg); }
+    30%  { transform: rotate(-6deg); }
+    32%  { transform: rotate(-13deg); }
+    34%  { transform: rotate(-7deg); }   /* flutter A */
+    36%  { transform: rotate(-11deg); }
+    50%  { transform: rotate(70deg); }
+    56%  { transform: rotate(70deg); }
+    72%  { transform: rotate(12deg); }
+    74%  { transform: rotate(6deg); }
+    76%  { transform: rotate(13deg); }   /* flutter B */
+    78%  { transform: rotate(7deg); }
+    80%  { transform: rotate(11deg); }
+    94%  { transform: rotate(-70deg); }
+    100% { transform: rotate(-70deg); }
+  }
+  .sail-arm { transform-origin: 150px 150px; animation: sailSweep 10s ease-in-out infinite; }
+  @keyframes flashA { 0%,26%,40%,100% {opacity:0;} 30%,37% {opacity:1;} }
+  @keyframes flashB { 0%,70%,84%,100% {opacity:0;} 74%,81% {opacity:1;} }
+  @keyframes flashWind { 0%,84% {opacity:0;} 90%,100% {opacity:1;} }
+  .luff-a { animation: flashA 10s infinite; }
+  .luff-b { animation: flashB 10s infinite; }
+  .luff-solved { animation: flashWind 10s infinite; }
+
+  /* address clash: brief shake, then clean swap to 0x69 */
+  @keyframes clashShake {
+    0%, 34%, 46%, 100% { transform: translateX(0); }
+    36% { transform: translateX(-3px); } 39% { transform: translateX(3px); }
+    42% { transform: translateX(-2px); }
+  }
+  .clash-chip { animation: clashShake 6s ease-in-out infinite; }
+  @keyframes addrFix { 0%, 50% { opacity: 0; } 60%, 100% { opacity: 1; } }
+  @keyframes addrOld { 0%, 50% { opacity: 1; } 60%, 100% { opacity: 0.12; } }
+  .addr-new { animation: addrFix 6s infinite; }
+  .addr-old { animation: addrOld 6s infinite; }
+
+  /* jumper wire pulse */
+  @keyframes wirePulse { 0%,100% { stroke-opacity: 0.55; } 50% { stroke-opacity: 1; } }
+  .wire-hot { animation: wirePulse 1.4s ease-in-out infinite; }
+
+  /* heading fusion: jittery vs fused needle */
+  @keyframes jitterNeedle {
+    0% {transform:rotate(-6deg);} 12% {transform:rotate(9deg);}
+    24% {transform:rotate(-11deg);} 36% {transform:rotate(4deg);}
+    48% {transform:rotate(11deg);} 60% {transform:rotate(-8deg);}
+    72% {transform:rotate(6deg);} 86% {transform:rotate(-4deg);}
+    100% {transform:rotate(-6deg);}
+  }
+  @keyframes smoothNeedle {
+    0% {transform:rotate(-2deg);} 50% {transform:rotate(2deg);} 100% {transform:rotate(-2deg);}
+  }
+  .needle-raw { transform-origin: 90px 105px; animation: jitterNeedle 1.8s linear infinite; }
+  .needle-fused { transform-origin: 380px 105px; animation: smoothNeedle 4s ease-in-out infinite; }
+
+  /* cadence ladder: rows highlight top-to-bottom, fast to slow */
+  @keyframes rowGlow { 0%, 40%, 100% { opacity: 0.55; } 8%, 30% { opacity: 1; } }
+  .cad-row { animation: rowGlow 6s ease-in-out infinite; }
+  .cad-r1 { animation-delay: 0s; }
+  .cad-r2 { animation-delay: 1.5s; }
+  .cad-r3 { animation-delay: 3s; }
+
+  /* AOELL loop: nine nodes light in sequence around the double loop */
+  @keyframes aoellPulse {
+    0%, 14%, 100% { opacity: 0.4; }
+    3%, 10% { opacity: 1; }
+  }
+  .ao-node { animation: aoellPulse 10.8s linear infinite; }
+  .ao-1 { animation-delay: 0s; }    .ao-2 { animation-delay: 1.2s; }
+  .ao-3 { animation-delay: 2.4s; }  .ao-4 { animation-delay: 3.6s; }
+  .ao-5 { animation-delay: 4.8s; }  .ao-6 { animation-delay: 6s; }
+  .ao-7 { animation-delay: 7.2s; }  .ao-8 { animation-delay: 8.4s; }
+  .ao-9 { animation-delay: 9.6s; }
+  /* two streams: packets travel up (records) and down (policies) the joint links */
+  @keyframes packetUp { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(-52px); opacity: 0; } }
+  @keyframes packetDown { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(52px); opacity: 0; } }
+  .pkt-up { animation: packetUp 2.6s linear infinite; }
+  .pkt-down { animation: packetDown 2.6s linear infinite; }
+  .pkt-d2 { animation-delay: 1.3s; }
+
+  /* ---------- mediterranean voyage (concept animation, 26 s timeline) ---------- */
+  /* current arrows: dashes drift along the stroke to show flow */
+  @keyframes currentFlow { to { stroke-dashoffset: -36; } }
+  .current-flow { animation: currentFlow 2.4s linear infinite; }
+  /* wind arrows: drift down-and-right, fading in and out */
+  @keyframes windDrift {
+    0% { transform: translate(0,0); opacity: 0; }
+    18% { opacity: 0.75; }
+    82% { opacity: 0.75; }
+    100% { transform: translate(14px,30px); opacity: 0; }
+  }
+  .wind-drift { animation: windDrift 3.2s linear infinite; }
+  .wind-d2 { animation-delay: 1.1s; }
+  .wind-d3 { animation-delay: 2.2s; }
+  /* stage annotations fade in and out in sync with the turtle's progress */
+  @keyframes vStage1 { 0%,1% {opacity:0;} 4%,15% {opacity:1;} 20%,100% {opacity:0;} }
+  @keyframes vStage2 { 0%,16% {opacity:0;} 20%,37% {opacity:1;} 42%,100% {opacity:0;} }
+  @keyframes vStage3 { 0%,38% {opacity:0;} 43%,60% {opacity:1;} 65%,100% {opacity:0;} }
+  @keyframes vStage4 { 0%,58% {opacity:0;} 63%,75% {opacity:1;} 80%,100% {opacity:0;} }
+  @keyframes vStage5 { 0%,80% {opacity:0;} 85%,99% {opacity:1;} 100% {opacity:0;} }
+  .v-s1 { animation: vStage1 26s linear infinite; }
+  .v-s2 { animation: vStage2 26s linear infinite; }
+  .v-s3 { animation: vStage3 26s linear infinite; }
+  .v-s4 { animation: vStage4 26s linear infinite; }
+  .v-s5 { animation: vStage5 26s linear infinite; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>🐢 How a Hope Turtle Finds Its Way</h1>
+  <p class="sub">The turtleOS navigation system — what our solar sailboats can do today,
+  what we still have to prove, and the two-stream roadmap (turtle + shore) to full
+  learning autonomy. Written for the whole team: no engineering background required.</p>
+  <span class="date-chip">July 2026 · Revised: design review + AOELL learning architecture · Only "Today" items are built</span>
+</header>
+
+<main>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">The Big Idea</span>A turtle senses, thinks, and trims — forever</h2>
+<p class="lede">Every Hope Turtle is a small autonomous sailboat. It has no motor for
+propulsion — the wind pushes it, and a tiny computer (the XIAO ESP32-S3, about the
+size of a postage stamp) decides everything. The turtle has exactly <strong>one
+moving part: the sail</strong>, rotated by a servo motor. The rudder is fixed.
+About three times every second, the computer runs one loop of the same routine:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 640 300" role="img" aria-label="The sense-think-trim-check navigation cycle">
+    <circle cx="320" cy="150" r="105" fill="none" stroke="#d8e2e6" stroke-width="2" stroke-dasharray="5 6"/>
+    <polygon points="425,150 413,143 413,157" fill="#9fb4bd"/>
+    <polygon points="215,150 227,143 227,157" fill="#9fb4bd"/>
+    <g class="cycle-node cycle-n1">
+      <rect x="245" y="8" width="150" height="58" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="320" y="32" text-anchor="middle" class="svg-label" font-weight="700">1 · SENSE</text>
+      <text x="320" y="52" text-anchor="middle" class="svg-label-soft">GPS · compass · sail angle · battery</text>
+    </g>
+    <g class="cycle-node cycle-n2">
+      <rect x="470" y="121" width="150" height="58" rx="12" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <text x="545" y="145" text-anchor="middle" class="svg-label" font-weight="700">2 · THINK</text>
+      <text x="545" y="165" text-anchor="middle" class="svg-label-soft">Which way to the waypoint?</text>
+    </g>
+    <g class="cycle-node cycle-n3">
+      <rect x="245" y="234" width="150" height="58" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+      <text x="320" y="258" text-anchor="middle" class="svg-label" font-weight="700">3 · TRIM</text>
+      <text x="320" y="278" text-anchor="middle" class="svg-label-soft">Adjust the sail — the only moving part</text>
+    </g>
+    <g class="cycle-node cycle-n4">
+      <rect x="20" y="121" width="150" height="58" rx="12" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="95" y="145" text-anchor="middle" class="svg-label" font-weight="700">4 · CHECK</text>
+      <text x="95" y="165" text-anchor="middle" class="svg-label-soft">Battery OK? GPS alive? Arrived?</text>
+    </g>
+    <text x="320" y="145" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">every ~300 ms</text>
+    <text x="320" y="166" text-anchor="middle" class="svg-label-soft">(about 3× per second)</text>
+  </svg>
+  </div>
+  <figcaption>The navigation cycle. Each step lights up in turn — in real life the whole
+  loop takes about a third of a second, then repeats, for days or weeks at a time.
+  Note step 3: the sail is adjusted only when needed, not every loop.</figcaption>
+</figure>
+
+<h3>How a sail-only boat actually steers — the honest version</h3>
+<p>This is the single most important correction from our design review. The turtle
+has <strong>no movable rudder</strong>. Trimming the sail does not point the boat
+the way a steering wheel points a car. It changes the <em>force</em> the wind puts
+on the boat; the fixed rudder, hull, and keel then convert that force into some
+mix of forward motion and turning:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 660 190" role="img" aria-label="Steering chain: sail trim changes force, hull and fixed rudder convert it to motion and turning">
+    <g class="chain-node chain-c1">
+      <rect x="20" y="55" width="170" height="70" rx="12" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <text x="105" y="84" text-anchor="middle" class="svg-label" font-weight="700">SAIL TRIM</text>
+      <text x="105" y="105" text-anchor="middle" class="svg-label-soft">changes wind force</text>
+    </g>
+    <line x1="190" y1="90" x2="235" y2="90" stroke="#4a5a64" stroke-width="2"/>
+    <polygon points="243,90 231,84 231,96" fill="#4a5a64"/>
+    <g class="chain-node chain-c2">
+      <rect x="247" y="55" width="180" height="70" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="337" y="80" text-anchor="middle" class="svg-label" font-weight="700">HULL · KEEL ·</text>
+      <text x="337" y="96" text-anchor="middle" class="svg-label" font-weight="700">FIXED RUDDER</text>
+      <text x="337" y="115" text-anchor="middle" class="svg-label-soft">convert force to motion</text>
+    </g>
+    <line x1="427" y1="90" x2="472" y2="90" stroke="#4a5a64" stroke-width="2"/>
+    <polygon points="480,90 468,84 468,96" fill="#4a5a64"/>
+    <g class="chain-node chain-c3">
+      <rect x="484" y="55" width="156" height="70" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+      <text x="562" y="84" text-anchor="middle" class="svg-label" font-weight="700">FORWARD + TURN</text>
+      <text x="562" y="105" text-anchor="middle" class="svg-label-soft">in some combination</text>
+    </g>
+    <g class="chain-q">
+      <text x="562" y="35" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">how predictably? unknown</text>
+      <line x1="562" y1="42" x2="562" y2="52" stroke="#b3403a" stroke-width="2" stroke-dasharray="3 3"/>
+    </g>
+    <text x="330" y="165" text-anchor="middle" class="svg-label-soft">the middle box is passive — we can only influence it through the sail</text>
+  </svg>
+  </div>
+  <figcaption>The steering chain. We command the first box; physics owns the second;
+  we observe the third. Whether that chain is consistent enough for dependable
+  navigation is the central open question — and the experiments in Part Three
+  are designed to answer it.</figcaption>
+</figure>
+
+<div class="callout warn">
+<p><strong>Why this matters:</strong> our earlier plan assumed sail moves translate
+into predictable steering, and stacked automatic controllers on top of that
+assumption. The revised roadmap flips the order — first <em>measure</em> whether a
+10° sail change produces a repeatable heading response, and only then automate.
+Until measured, an automatic controller wrapped around an unknown relationship is,
+as the review put it, "an elegant way to automate confusion."</p>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part One</span>What the turtle can do today <span class="badge now">Running now</span></h2>
+
+<h3>The turtle's life story: five states</h3>
+<p>From the moment it powers on, the turtle is always in exactly one of five
+"states" — think of them as chapters of its voyage. The state is reported home to
+hopeturtles.org with every telemetry message, so we always know which chapter a
+turtle is in.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 720 250" role="img" aria-label="Five state machine: BOOT, ACQUIRE, SAIL-NAV, ARRIVAL, with SAFE below">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#4a5a64"/>
+      </marker>
+      <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#b3403a"/>
+      </marker>
+    </defs>
+    <g>
+      <rect x="20" y="45" width="130" height="62" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="85" y="72" text-anchor="middle" class="svg-label" font-weight="700">BOOT</text>
+      <text x="85" y="92" text-anchor="middle" class="svg-label-soft">waking up, self-checks</text>
+
+      <rect x="200" y="45" width="130" height="62" rx="12" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <text x="265" y="72" text-anchor="middle" class="svg-label" font-weight="700">ACQUIRE</text>
+      <text x="265" y="92" text-anchor="middle" class="svg-label-soft">find GPS + wind</text>
+
+      <rect x="380" y="45" width="130" height="62" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+      <text x="445" y="72" text-anchor="middle" class="svg-label" font-weight="700">SAIL-NAV</text>
+      <text x="445" y="92" text-anchor="middle" class="svg-label-soft">sailing the mission</text>
+
+      <rect x="560" y="45" width="130" height="62" rx="12" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="625" y="72" text-anchor="middle" class="svg-label" font-weight="700">ARRIVAL</text>
+      <text x="625" y="92" text-anchor="middle" class="svg-label-soft">made it! feather &amp; drift</text>
+
+      <line x1="150" y1="76" x2="196" y2="76" stroke="#4a5a64" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="330" y1="76" x2="376" y2="76" stroke="#4a5a64" stroke-width="2" marker-end="url(#arr)"/>
+      <line x1="510" y1="76" x2="556" y2="76" stroke="#4a5a64" stroke-width="2" marker-end="url(#arr)"/>
+    </g>
+    <rect x="280" y="170" width="160" height="62" rx="12" fill="#fbe9e7" stroke="#b3403a" stroke-width="2.5"/>
+    <text x="360" y="197" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">SAFE</text>
+    <text x="360" y="217" text-anchor="middle" class="svg-label-soft">sail loose, wait for help</text>
+    <path d="M 85 107 C 85 160, 200 195, 276 198" fill="none" stroke="#b3403a" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#arrR)"/>
+    <path d="M 445 107 C 445 135, 420 155, 400 166" fill="none" stroke="#b3403a" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#arrR)"/>
+    <path d="M 625 107 C 625 165, 520 195, 444 199" fill="none" stroke="#b3403a" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#arrR)"/>
+    <text x="150" y="165" class="svg-label-soft" fill="#b3403a">any problem →</text>
+    <!-- travelling dot along the happy path, pausing at each state -->
+    <circle r="6" fill="#0e7490">
+      <animateMotion dur="8s" repeatCount="indefinite" calcMode="linear"
+        path="M 85 34 L 265 34 L 445 34 L 625 34"
+        keyPoints="0;0;0.333;0.333;0.667;0.667;1;1"
+        keyTimes="0;0.16;0.28;0.44;0.56;0.72;0.84;1"/>
+    </circle>
+  </svg>
+  </div>
+  <figcaption>The five states. The blue dot travels the happy path, pausing at each
+  chapter; the red dashed arrows show that <em>any</em> serious problem — lost GPS,
+  low battery — drops the turtle into SAFE, where it loosens the sail and waits.</figcaption>
+</figure>
+
+<div class="two-col">
+  <div class="mini-card"><h4>Why SAFE matters</h4>
+  <p>A confused robot boat that keeps sailing is dangerous to itself. SAFE means:
+  stop trying, "feather" the sail so the wind slides past, keep reporting position
+  home. A human (or a recovery rule) decides what happens next.</p></div>
+  <div class="mini-card"><h4>What ARRIVAL honestly means</h4>
+  <p>A sail-only boat with a fixed rudder can't park. ARRIVAL means: inside the
+  target circle → feather the sail, report "arrived", and keep sending position
+  while drifting. If drift carries it back out, it sails in again. No
+  station-keeping is claimed.</p></div>
+</div>
+
+<h3>The clever trick: finding the wind with no wind sensor</h3>
+<p>Sailboats need to know the wind direction, but wind vanes are fragile and our
+turtles don't carry one. Instead, the turtle does something a human sailor would
+recognize: it <strong>sweeps the sail slowly from one side to the other and feels
+for the flutter</strong>. When the sail points straight into the wind it stops
+"filling" and starts flapping — sailors call this <em>luffing</em>. A little angle
+sensor on the sail (the AS5600) feels that flapping as jitter.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 640 270" role="img" aria-label="Animated luff sweep: the double sail arm sweeps on the central axle of the cruciform hull and flutters at the wind line">
+    <g stroke="#0e7490" stroke-width="2" opacity="0.7">
+      <line x1="55" y1="18" x2="55" y2="52"/><polygon points="55,60 49,48 61,48" fill="#0e7490"/>
+      <line x1="75" y1="10" x2="75" y2="44"/><polygon points="75,52 69,40 81,40" fill="#0e7490"/>
+      <line x1="95" y1="18" x2="95" y2="52"/><polygon points="95,60 89,48 101,48" fill="#0e7490"/>
+    </g>
+    <text x="75" y="80" text-anchor="middle" class="svg-label" fill="#0e7490" font-weight="700">wind</text>
+    <!-- cruciform hull (swiss cross, top view), axle at the center -->
+    <g fill="#e3f2ea" stroke="#2e7d52" stroke-width="2">
+      <rect x="132" y="85" width="36" height="130" rx="8"/>
+      <rect x="85" y="132" width="130" height="36" rx="8"/>
+      <rect x="133.5" y="133.5" width="33" height="33" fill="#e3f2ea" stroke="none"/>
+    </g>
+    <!-- double sail arm: equal arms both sides of the axle -->
+    <g class="sail-arm">
+      <line x1="150" y1="75" x2="150" y2="225" stroke="#b45309" stroke-width="5" stroke-linecap="round"/>
+    </g>
+    <circle cx="150" cy="150" r="6" fill="#2e7d52"/>
+    <text x="228" y="228" class="svg-label-soft">central axle · AS5600 underneath</text>
+    <line x1="224" y1="223" x2="160" y2="156" stroke="#9fb4bd" stroke-width="1"/>
+    <g class="luff-a">
+      <text x="120" y="110" text-anchor="end" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset A</text>
+    </g>
+    <g class="luff-b">
+      <text x="182" y="110" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset B</text>
+    </g>
+    <g class="luff-solved">
+      <rect x="330" y="95" width="280" height="120" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="470" y="127" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">Wind solved ✓</text>
+      <text x="470" y="152" text-anchor="middle" class="svg-label-soft">wind direction = the midpoint</text>
+      <text x="470" y="170" text-anchor="middle" class="svg-label-soft">between flutter A and flutter B</text>
+      <text x="470" y="196" text-anchor="middle" class="svg-label-soft">(accuracy: to be measured at sea)</text>
+    </g>
+    <text x="150" y="258" text-anchor="middle" class="svg-label-soft">top view · cruciform hull · the sweep takes ~20–25 seconds</text>
+  </svg>
+  </div>
+  <figcaption>The luff sweep. The hull is a cruciform (like the cross in the Swiss
+  flag) with the sail on a central axle at its center point — two equal arms that
+  rotate together as one rigid piece. Both arms flutter as they cross the wind
+  going out (A) and coming back (B); the midpoint of A and B <em>is</em> the wind
+  direction. It works beautifully in simulation — but a simulation cannot flutter,
+  so its real accuracy is one of the first things the roadmap measures.</figcaption>
+</figure>
+
+<p>The turtle re-runs this sweep every 10 minutes while sailing. The revised plan
+makes re-sweeps <strong>event-driven</strong> — sweep when confidence in the wind
+estimate drops, or after a big turn — with the fixed timer relaxing to a 30–60
+minute backup.</p>
+
+<h3>What else is already working</h3>
+<div class="two-col">
+  <div class="mini-card"><h4>🧭 Compass heading</h4>
+  <p>A magnetometer (the GY-271 board) tells the turtle which way it's pointing,
+  corrected for local magnetic declination.</p></div>
+  <div class="mini-card"><h4>📍 Waypoint bearing</h4>
+  <p>The turtle carries a list of GPS waypoints, computes the great-circle bearing
+  to the next one, and advances waypoints on arrival — progress is saved so a
+  reboot doesn't lose it.</p></div>
+  <div class="mini-card"><h4>🎛️ Placeholder autopilot</h4>
+  <p>A simple heading-error → sail-nudge formula exists in the code — but it's
+  scaffolding, not a tuned controller. Until we measure how sail moves actually
+  turn the boat (Part Three), no controller can honestly be tuned.</p></div>
+  <div class="mini-card"><h4>🛟 Basic safety net</h4>
+  <p>GPS silent too long → SAFE. Battery low → feather the sail to save power.
+  Every telemetry message reports the machine state to hopeturtles.org.</p></div>
+</div>
+
+<div class="callout good">
+<p><strong>Quiet superpowers we already have.</strong> Three foundations make the
+experiments in Part Three possible without new infrastructure: <strong>GPS
+logging</strong> gives ground truth — position, course over ground, speed over
+ground, and progress toward or away from the waypoint; the <strong>AS5600 sail
+sensor</strong> reports where the sail <em>actually is</em>, not just where we
+told the servo to go; and the <strong>telemetry schema</strong> already carries
+<code>values_json</code>, <code>confidence_json</code>, and
+<code>flags_json</code> with GPS coordinates and separate device/server
+timestamps — every experiment logs straight through it.</p>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part Two</span>The new hardware: our IMU <span class="badge next">Sourced &amp; wired</span></h2>
+
+<p class="lede">The big July decision: every turtle gets an <strong>IMU</strong>
+(Inertial Measurement Unit) — a fingernail-sized motion sensor, the same kind of
+chip that lets your phone know when you rotate it. It gives the turtle heading,
+heel (tilt), turn rate, and a feel for wave disturbance — the senses everything
+in Part Three builds on.</p>
+
+<div class="callout good">
+<p><strong>A naming heads-up before anything else.</strong> The module we sourced is
+sold as an "MPU6050 module", but the supplier's spec sheet says the chip on the
+board is actually an <strong>MPU-9250</strong> — a better chip. An MPU6050 senses
+rotation and tilt (6 measurements). The MPU-9250 adds a built-in compass, for
+9 measurements in total — which is exactly what a sailboat wants. The catch:
+software written for one won't run on the other, so our driver must target the
+MPU-9250, and the first thing we do on the bench is ask the chip its identity
+(it answers with a code: <code>0x71</code> means MPU-9250). Cheap modules are
+sometimes mislabeled in both directions, so we check every batch.</p>
+</div>
+
+<h3>What the IMU senses</h3>
+<div class="two-col">
+  <div class="mini-card"><h4>🌀 Gyroscope</h4>
+  <p>"How fast am I turning?" Silky-smooth from second to second, but slowly drifts
+  over minutes — like a dancer counting spins with closed eyes.</p></div>
+  <div class="mini-card"><h4>📉 Accelerometer</h4>
+  <p>"Which way is down?" Tells us how much the boat is heeled (tilted) — essential
+  for correcting the compass on a leaning sailboat — and how roughly the waves
+  are shaking it.</p></div>
+  <div class="mini-card"><h4>🧲 Magnetometer</h4>
+  <p>"Which way is north?" Truthful on average but noisy moment-to-moment — and
+  wrong when tilted, unless we correct it with the accelerometer.</p></div>
+  <div class="mini-card"><h4>🤝 Together: sensor fusion</h4>
+  <p>Blend the gyro's smoothness with the compass's honesty and the accelerometer's
+  sense of "down", and you get a heading that is smooth, true, <em>and</em>
+  tilt-proof.</p></div>
+</div>
+
+<h3>The address clash — and the one-jumper fix</h3>
+<p>All our sensors share a single two-wire party line called the I2C bus, and each
+device on it needs a unique address, like houses on a street. Problem: the IMU's
+factory address is <strong>0x68 — the exact same number our clock chip (the
+DS3231) already uses</strong>. Two houses, one street number: the mail goes to the
+wrong place and the bus can't work.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 660 240" role="img" aria-label="Address clash animation: IMU moves from 0x68 to 0x69 via the AD0 pin">
+    <line x1="40" y1="120" x2="620" y2="120" stroke="#4a5a64" stroke-width="3"/>
+    <text x="330" y="108" text-anchor="middle" class="svg-label-soft">the shared I2C bus (two wires, drawn as one)</text>
+    <g>
+      <line x1="150" y1="120" x2="150" y2="150" stroke="#4a5a64" stroke-width="2"/>
+      <rect x="90" y="150" width="120" height="60" rx="10" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="150" y="176" text-anchor="middle" class="svg-label" font-weight="700">Clock (DS3231)</text>
+      <text x="150" y="197" text-anchor="middle" class="svg-mono" fill="#155e75">address 0x68</text>
+    </g>
+    <g class="clash-chip">
+      <line x1="450" y1="120" x2="450" y2="150" stroke="#4a5a64" stroke-width="2"/>
+      <rect x="380" y="150" width="140" height="60" rx="10" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <text x="450" y="176" text-anchor="middle" class="svg-label" font-weight="700">IMU (MPU-9250)</text>
+      <g class="addr-old"><text x="450" y="197" text-anchor="middle" class="svg-mono" fill="#b3403a">address 0x68 ⚠ clash!</text></g>
+      <g class="addr-new"><text x="450" y="197" text-anchor="middle" class="svg-mono" fill="#2e7d52">address 0x69 ✓</text></g>
+    </g>
+    <g class="addr-new">
+      <path d="M 520 180 C 570 180, 590 150, 590 120" fill="none" stroke="#2e7d52" stroke-width="2.5" class="wire-hot"/>
+      <text x="540" y="230" text-anchor="middle" class="svg-label" fill="#2e7d52" font-weight="700">AD0 pin wired to 3.3 V</text>
+    </g>
+    <g class="addr-old">
+      <text x="300" y="60" text-anchor="middle" class="svg-label" fill="#b3403a" font-weight="700">💥 two devices, one address</text>
+    </g>
+    <g class="addr-new">
+      <text x="300" y="60" text-anchor="middle" class="svg-label" fill="#2e7d52" font-weight="700">✓ every device unique — bus happy</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The IMU ships at address 0x68, colliding with the clock chip. Wiring
+  its AD0 pin to 3.3&nbsp;V flips it to 0x69 and the collision disappears.</figcaption>
+</figure>
+
+<p>The chip designers anticipated this: the module has a pin labeled
+<strong>AD0</strong> (sometimes printed "ADO") that works like an address-select
+switch. Leave it low → 0x68. Connect it to 3.3&nbsp;V → <strong>0x69</strong>,
+which is free on our bus.</p>
+
+<div class="callout">
+<p><strong>The question everyone asks: wire AD0 to the VCC pin on the IMU board, or
+to the XIAO's 3V3 pin?</strong> Either — they're the same wire! The IMU's VCC pin
+is fed <em>from</em> the XIAO's 3V3 pin, so both points carry the identical
+3.3&nbsp;V. Our standard: put a short jumper (or solder bridge) <strong>right on
+the IMU board, from AD0 to its own VCC pin</strong>. That way the fix travels with
+the module — any board strapped like this is plug-in-safe forever, no matter who
+wires it up later.</p>
+<p><strong>One hard rule: power the module from the XIAO's 3V3 pin, never from
+5&nbsp;V.</strong> The spec sheet's "3–5&nbsp;V" tolerance applies to the VCC pin
+only. The AD0 pin connects straight to the sensor chip, which is a 3.3&nbsp;V
+part — 5&nbsp;V on AD0 can damage it. Powering everything at 3.3&nbsp;V makes
+this a non-issue.</p>
+</div>
+
+<h3>The full hookup</h3>
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 680 300" role="img" aria-label="Wiring diagram from XIAO to IMU module">
+    <rect x="40" y="40" width="170" height="220" rx="14" fill="#e0f2f7" stroke="#0e7490" stroke-width="2.5"/>
+    <text x="125" y="70" text-anchor="middle" class="svg-label" font-weight="700">XIAO ESP32-S3</text>
+    <text x="125" y="88" text-anchor="middle" class="svg-label-soft">(the turtle's brain)</text>
+    <g class="svg-mono">
+      <circle cx="210" cy="120" r="5" fill="#b3403a"/><text x="200" y="124" text-anchor="end" fill="#1e2a32">3V3</text>
+      <circle cx="210" cy="155" r="5" fill="#1e2a32"/><text x="200" y="159" text-anchor="end" fill="#1e2a32">GND</text>
+      <circle cx="210" cy="190" r="5" fill="#b45309"/><text x="200" y="194" text-anchor="end" fill="#1e2a32">D5 (SCL)</text>
+      <circle cx="210" cy="225" r="5" fill="#2e7d52"/><text x="200" y="229" text-anchor="end" fill="#1e2a32">D4 (SDA)</text>
+    </g>
+    <rect x="470" y="40" width="170" height="220" rx="14" fill="#fdf0e0" stroke="#b45309" stroke-width="2.5"/>
+    <text x="555" y="70" text-anchor="middle" class="svg-label" font-weight="700">IMU module</text>
+    <text x="555" y="88" text-anchor="middle" class="svg-label-soft">(MPU-9250)</text>
+    <g class="svg-mono">
+      <circle cx="470" cy="120" r="5" fill="#b3403a"/><text x="482" y="124" fill="#1e2a32">VCC</text>
+      <circle cx="470" cy="155" r="5" fill="#1e2a32"/><text x="482" y="159" fill="#1e2a32">GND</text>
+      <circle cx="470" cy="190" r="5" fill="#b45309"/><text x="482" y="194" fill="#1e2a32">SCL</text>
+      <circle cx="470" cy="225" r="5" fill="#2e7d52"/><text x="482" y="229" fill="#1e2a32">SDA</text>
+      <circle cx="470" cy="252" r="5" fill="#2e7d52"/><text x="482" y="256" fill="#1e2a32">AD0</text>
+    </g>
+    <line x1="215" y1="120" x2="465" y2="120" stroke="#b3403a" stroke-width="3"/>
+    <line x1="215" y1="155" x2="465" y2="155" stroke="#1e2a32" stroke-width="3"/>
+    <line x1="215" y1="190" x2="465" y2="190" stroke="#b45309" stroke-width="3"/>
+    <line x1="215" y1="225" x2="465" y2="225" stroke="#2e7d52" stroke-width="3"/>
+    <path d="M 470 252 C 445 252, 445 120, 468 120" fill="none" stroke="#b3403a" stroke-width="2.5" class="wire-hot"/>
+    <text x="415" y="285" class="svg-label" fill="#b3403a" font-weight="700">← AD0→VCC jumper (on the module): sets address 0x69</text>
+    <text x="340" y="112" text-anchor="middle" class="svg-label-soft">power (3.3 V only!)</text>
+    <text x="340" y="182" text-anchor="middle" class="svg-label-soft">shared I2C clock</text>
+    <text x="340" y="247" text-anchor="middle" class="svg-label-soft">shared I2C data</text>
+  </svg>
+  </div>
+  <figcaption>Four wires to the XIAO plus one tiny jumper on the module itself.
+  The INT and FSYNC pins stay unconnected.</figcaption>
+</figure>
+
+<p>Bonus: the MPU-9250's built-in compass appears on the bus at its own address
+(0x0C), which doesn't clash with anything — including our current GY-271 compass
+at 0x0D. So during the changeover we can run <em>both</em> compasses side by side
+and compare them before deciding whether to retire the GY-271.</p>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part Three</span>The proposed nav system — measure first, automate second <span class="badge next">For review</span></h2>
+
+<p class="lede">With the IMU aboard, here is the plan. It is now an
+<strong>experimental ladder</strong>: each rung must be demonstrated on real water
+before the next is attempted, and every measured quantity carries a
+<strong>confidence score</strong> that decides what the turtle is allowed to do
+with it.</p>
+
+<h3>1 · A heading you can trust: sensor fusion</h3>
+<p>Today's compass-only heading is like a nervous witness — right on average,
+jittery in the moment, and unreliable when the boat heels. The fusion recipe
+(a "complementary filter") blends 98% gyro smoothness with 2% compass truth on
+every sample, while the accelerometer un-tilts the compass math:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 640 200" role="img" aria-label="Two cruciform turtles: jittery compass-only heading needle versus smooth fused needle">
+    <g>
+      <!-- cruciform hull with double sail arm -->
+      <g fill="#f4f9f6" stroke="#9fb4bd" stroke-width="2">
+        <rect x="77" y="57" width="26" height="96" rx="6"/>
+        <rect x="42" y="92" width="96" height="26" rx="6"/>
+        <rect x="78.5" y="93.5" width="23" height="23" fill="#f4f9f6" stroke="none"/>
+      </g>
+      <line x1="90" y1="61" x2="90" y2="149" stroke="#b45309" stroke-width="4" stroke-linecap="round" opacity="0.4" transform="rotate(42 90 105)"/>
+      <g class="needle-raw"><line x1="90" y1="105" x2="90" y2="55" stroke="#b3403a" stroke-width="4" stroke-linecap="round"/></g>
+      <circle cx="90" cy="105" r="4" fill="#4a5a64"/>
+      <text x="90" y="192" text-anchor="middle" class="svg-label">Today: compass alone</text>
+    </g>
+    <text x="220" y="112" text-anchor="middle" class="svg-label" font-weight="700" fill="#4a5a64">+ gyro + tilt fix =</text>
+    <g>
+      <g fill="#f4f9f6" stroke="#2e7d52" stroke-width="2">
+        <rect x="367" y="57" width="26" height="96" rx="6"/>
+        <rect x="332" y="92" width="96" height="26" rx="6"/>
+        <rect x="368.5" y="93.5" width="23" height="23" fill="#f4f9f6" stroke="none"/>
+      </g>
+      <line x1="380" y1="61" x2="380" y2="149" stroke="#b45309" stroke-width="4" stroke-linecap="round" opacity="0.4" transform="rotate(42 380 105)"/>
+      <g class="needle-fused"><line x1="380" y1="105" x2="380" y2="55" stroke="#2e7d52" stroke-width="4" stroke-linecap="round"/></g>
+      <circle cx="380" cy="105" r="4" fill="#4a5a64"/>
+      <text x="380" y="192" text-anchor="middle" class="svg-label">Proposed: fused heading</text>
+    </g>
+    <g>
+      <rect x="480" y="60" width="145" height="90" rx="10" fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.5"/>
+      <text x="552" y="88" text-anchor="middle" class="svg-label-soft">smooth</text>
+      <text x="552" y="108" text-anchor="middle" class="svg-label-soft">true north on average</text>
+      <text x="552" y="128" text-anchor="middle" class="svg-label-soft">correct while heeled</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Same turtle, same moment (top view — cruciform hull, double sail arm
+  shown faded): the compass-only heading needle (left) versus the fused needle
+  (right). Steering on the left needle wastes servo power chasing noise; steering
+  on the right holds a line.</figcaption>
+</figure>
+
+<p>The IMU also gives us <strong>spin detection</strong>: the gyro notices the boat
+starting to rotate long before the compass average does. Important honesty note —
+detection is all it gives us for now. <strong>We do not yet know whether any sail
+movement reliably arrests a spin, or accidentally worsens one.</strong> So spin
+events are flagged and reported home, and the "what should the sail do about it?"
+question is answered by experiment, not assumption.</p>
+
+<h3>2 · Sense fast, decide slowly, move rarely</h3>
+<p>The system's rhythm is deliberately layered. Sensors sample fast; decisions
+happen at boat speed; the servo — our biggest power drain — moves only when a
+change is worth making:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 660 210" role="img" aria-label="Three-layer cadence: sense at tens of hertz, decide at a few hertz, act every few seconds">
+    <g class="cad-row cad-r1">
+      <rect x="20" y="20" width="620" height="50" rx="10" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="40" y="42" class="svg-label" font-weight="700" fill="#155e75">SENSE · 20–50× per second</text>
+      <text x="40" y="60" class="svg-label-soft">IMU sampling, heading fusion, spin detection — no physical action, ever</text>
+    </g>
+    <g class="cad-row cad-r2">
+      <rect x="20" y="80" width="620" height="50" rx="10" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <text x="40" y="102" class="svg-label" font-weight="700" fill="#8a4207">DECIDE · 2–5× per second</text>
+      <text x="40" y="120" class="svg-label-soft">heading controller computes the sail change it would like</text>
+    </g>
+    <g class="cad-row cad-r3">
+      <rect x="20" y="140" width="620" height="50" rx="10" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+      <text x="40" y="162" class="svg-label" font-weight="700" fill="#2e7d52">ACT · at most every 1–3 seconds</text>
+      <text x="40" y="180" class="svg-label-soft">servo moves only when the change exceeds a deadband — sailing is patient</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The cadence ladder. Note there is no path where a fast sensing loop
+  drives the servo directly — the earlier idea of a 50&nbsp;Hz "spin guard that
+  counters immediately" has been removed.</figcaption>
+</figure>
+
+<div class="table-scroll">
+<table>
+  <tr><th>Function</th><th>Suggested active cadence</th><th>Physical action</th></tr>
+  <tr><td>IMU sampling and heading fusion</td><td>20–50 Hz</td><td>None</td></tr>
+  <tr><td>Rotation/spin detection</td><td>10–25 Hz</td><td>Trigger only after persistent excessive turn rate</td></tr>
+  <tr><td>Heading controller</td><td>2–5 Hz</td><td>Compute a desired sail change</td></tr>
+  <tr><td>Servo command</td><td>At most every 1–3 s, when needed</td><td>Move only beyond a deadband</td></tr>
+  <tr><td>GPS position acquisition</td><td>0.2–1 Hz</td><td>None</td></tr>
+  <tr><td>Route, bearing and cross-track calculation</td><td>Every 5–30 s</td><td>Update desired heading</td></tr>
+  <tr><td>Waypoint/geofence evaluation</td><td>Every 10–60 s</td><td>Change navigation mode if necessary</td></tr>
+  <tr><td>Wind re-acquisition sweep</td><td>Event-driven; every 30–60 min as backup</td><td>Full sweep only when confidence is low</td></tr>
+  <tr><td>Battery and hull health</td><td>Every 10–60 s</td><td>Immediate response to serious fault</td></tr>
+  <tr><td>Routine telemetry</td><td>Every 5–30 min</td><td>Transmit summary</td></tr>
+  <tr><td>Emergency telemetry</td><td>Immediate</td><td>Transmit fault/event</td></tr>
+</table>
+</div>
+
+<h3>3 · The make-or-break experiments: does sail trim steer at all?</h3>
+<p>Before any autopilot is tuned, we run structured experiments and judge them
+against the GPS track:</p>
+<div class="two-col">
+  <div class="mini-card"><h4>🍃 Can we sense? (luff validation)</h4>
+  <p>Repeated sweeps against a known reference wind, on real water and real chop.
+  Output: a measured accuracy figure and a confidence score on every wind solve.</p></div>
+  <div class="mini-card"><h4>⛵ Can we go? (propulsion)</h4>
+  <p>Hold a series of sail trims at each wind angle; log GPS speed and course per
+  trim. Output: demonstrated trims that actually move the boat toward a goal.</p></div>
+  <div class="mini-card"><h4>🔄 Can we turn? (turning influence)</h4>
+  <p>From steady sailing, step the sail ±10°, ±20° and record the heading response.
+  Same input, same conditions — same result? The repeatability number is the
+  go/no-go for any automatic steering.</p></div>
+  <div class="mini-card"><h4>🌪️ Can we stop a spin?</h4>
+  <p>When the gyro flags a spin: does feathering help? Sheeting in? Nothing?
+  Until measured, spin detection stays report-only.</p></div>
+</div>
+
+<div class="callout">
+<p><strong>Confidence scoring sits at the heart of all of this</strong>, not off in
+a diagnostics corner. The wind estimate, the heading, the position, and the
+sail→turn model each carry a confidence value, reported home in
+<code>confidence_json</code>. Low confidence narrows what the turtle may attempt:
+an uncertain wind solve blocks tack attempts; an uncertain steering model widens
+the deadband. The turtle acts boldly only on what it has proven.</p>
+</div>
+
+<h3>4 · Sailing upwind: the tack sequence <span class="badge later">Much later</span></h3>
+<p>No sailboat can point straight into the wind — there's a roughly 90°-wide
+"no-go zone" where the sail just flaps. Sailors beat this by zig-zagging
+("tacking"). A tack presumes <em>everything</em> above it on the ladder: a trusted
+wind solve, demonstrated propulsion, and repeatable turning authority. That is why
+it now sits deliberately near the end of the roadmap — attempting it earlier would
+be testing three unproven systems at once.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 640 300" role="img" aria-label="Animated tacking: boat zig-zags upwind toward the waypoint inside the no-go zone">
+    <g stroke="#0e7490" stroke-width="2" opacity="0.7">
+      <line x1="300" y1="14" x2="300" y2="40"/><polygon points="300,48 294,36 306,36" fill="#0e7490"/>
+      <line x1="330" y1="14" x2="330" y2="40"/><polygon points="330,48 324,36 336,36" fill="#0e7490"/>
+      <line x1="360" y1="14" x2="360" y2="40"/><polygon points="360,48 354,36 366,36" fill="#0e7490"/>
+    </g>
+    <text x="410" y="34" class="svg-label" fill="#0e7490" font-weight="700">wind</text>
+    <path d="M 330 250 L 240 60 L 420 60 Z" fill="#fbe9e7" opacity="0.75"/>
+    <text x="330" y="150" text-anchor="middle" class="svg-label-soft" fill="#b3403a">no-go zone</text>
+    <text x="330" y="168" text-anchor="middle" class="svg-label-soft" fill="#b3403a">(can't sail here)</text>
+    <circle cx="330" cy="72" r="9" fill="none" stroke="#5e548e" stroke-width="3"/>
+    <circle cx="330" cy="72" r="3" fill="#5e548e"/>
+    <text x="352" y="77" class="svg-label" fill="#5e548e" font-weight="700">waypoint</text>
+    <path id="tackPath" d="M 330 262 L 430 210 L 245 140 L 395 96 L 330 74" fill="none" stroke="#2e7d52" stroke-width="2" stroke-dasharray="6 5"/>
+    <g>
+      <circle r="8" fill="#2e7d52">
+        <animateMotion dur="9s" repeatCount="indefinite" rotate="auto">
+          <mpath href="#tackPath"/>
+        </animateMotion>
+      </circle>
+    </g>
+    <text x="120" y="272" class="svg-label-soft">zig-zag legs stay just outside</text>
+    <text x="120" y="290" class="svg-label-soft">the zone — net progress upwind</text>
+  </svg>
+  </div>
+  <figcaption>Tacking — the goal, once the ladder beneath it is proven. The waypoint
+  sits inside the no-go zone, so the turtle sails angled legs on alternating sides;
+  each leg makes real progress, and the zig-zag converges on the goal.</figcaption>
+</figure>
+
+<h3>5 · Putting it all together: a voyage to Gaza <span class="badge later">Concept</span></h3>
+<p>Here is what the whole system adds up to — a concept animation of a turtle
+released in the middle of the Mediterranean working its way to the Gaza
+shoreline. It doesn't fight the sea; it enlists it. The summer winds over the
+eastern Mediterranean blow steadily from the north-west, and the Levantine
+surface current sweeps counter-clockwise — east along the Egyptian coast, then
+north up the Levant coast. Waypoints are chosen ashore to ride both:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 680 360" role="img" aria-label="Concept voyage: a turtle released mid-Mediterranean rides wind and current to the Gaza shoreline, with annotated stages">
+    <!-- sea -->
+    <rect x="0" y="0" width="680" height="360" fill="#e0f2f7"/>
+    <!-- land: North Africa → Nile delta → Sinai → Gaza → Levant coast (one shoreline) -->
+    <path d="M 0 306
+             C 100 302, 250 301, 376 306
+             C 392 296, 404 280, 420 274
+             C 436 270, 452 276, 462 292
+             C 468 302, 470 306, 478 308
+             C 505 312, 530 312, 556 308
+             C 566 304, 572 296, 578 288
+             C 590 268, 595 261, 599 252
+             C 606 232, 608 218, 611 204
+             C 616 176, 622 148, 630 120
+             C 638 90, 646 58, 650 30
+             L 656 0 L 680 0 L 680 360 L 0 360 Z"
+          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
+    <!-- the Nile, threading south from the delta -->
+    <path d="M 428 285 C 431 308, 426 334, 429 360" fill="none" stroke="#7fb8c9" stroke-width="3" opacity="0.85"/>
+    <path d="M 428 288 C 416 300, 404 304, 396 305 M 428 288 C 440 299, 452 302, 460 303"
+          fill="none" stroke="#7fb8c9" stroke-width="2" opacity="0.7"/>
+    <!-- Crete: long, narrow, east-west -->
+    <path d="M 70 55 C 90 39, 132 34, 162 40 C 182 44, 196 50, 202 58 C 190 68, 150 72, 120 68 C 98 65, 78 62, 70 55 Z"
+          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
+    <!-- Cyprus, with the Karpas peninsula pointing north-east -->
+    <path d="M 484 78 C 490 60, 510 50, 535 52 C 552 54, 560 60, 566 58 L 592 42 L 588 53 C 575 63, 560 67, 548 71 C 525 81, 500 87, 484 78 Z"
+          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
+    <text x="530" y="40" text-anchor="middle" class="svg-label-soft">Cyprus</text>
+    <text x="136" y="27" text-anchor="middle" class="svg-label-soft">Crete</text>
+    <text x="250" y="344" text-anchor="middle" class="svg-label-soft">Egypt</text>
+    <text x="424" y="258" text-anchor="middle" class="svg-label-soft">Nile Delta</text>
+    <text x="530" y="344" text-anchor="middle" class="svg-label-soft">Sinai</text>
+
+    <!-- prevailing NW wind (drifting arrows, upper left) -->
+    <g stroke="#0e7490" stroke-width="2" fill="#0e7490">
+      <g class="wind-drift"><line x1="215" y1="95" x2="229" y2="123"/><polygon points="233,131 222,125 234,119"/></g>
+      <g class="wind-drift wind-d2"><line x1="255" y1="80" x2="269" y2="108"/><polygon points="273,116 262,110 274,104"/></g>
+      <g class="wind-drift wind-d3"><line x1="295" y1="95" x2="309" y2="123"/><polygon points="313,131 302,125 314,119"/></g>
+    </g>
+    <text x="262" y="68" text-anchor="middle" class="svg-label" fill="#0e7490" font-weight="700">summer wind (from NW)</text>
+
+    <!-- Levantine current: counter-clockwise — east past the delta, then north up the Levant coast -->
+    <path class="current-flow" d="M 40 292 C 140 286, 260 284, 360 288 C 396 264, 448 260, 492 278 C 526 291, 552 288, 572 270"
+          fill="none" stroke="#0e7490" stroke-width="3" stroke-dasharray="9 9" opacity="0.55"/>
+    <path class="current-flow" d="M 578 258 C 588 216, 596 165, 607 108"
+          fill="none" stroke="#0e7490" stroke-width="3" stroke-dasharray="9 9" opacity="0.55"/>
+    <text x="255" y="270" class="svg-label-soft" fill="#155e75">surface current →</text>
+
+    <!-- release point: mid-Med, between Crete and the Egyptian coast -->
+    <circle cx="200" cy="170" r="10" fill="none" stroke="#5e548e" stroke-width="2" stroke-dasharray="3 3"/>
+    <text x="200" y="156" text-anchor="middle" class="svg-label" fill="#5e548e" font-weight="700">release</text>
+
+    <!-- Gaza target: where the coast turns north -->
+    <circle cx="580" cy="285" r="5" fill="#b3403a"/>
+    <circle cx="580" cy="285" r="5" fill="none" stroke="#b3403a" stroke-width="2">
+      <animate attributeName="r" values="5;14;5" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.9;0;0.9" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <text x="613" y="282" text-anchor="middle" class="svg-label" fill="#b3403a" font-weight="700">Gaza</text>
+
+    <!-- the voyage -->
+    <path id="voyagePath" d="M 200 170 L 265 205 L 235 240 L 310 264 L 292 284 C 370 292, 408 258, 455 260 C 500 262, 535 298, 561 292 C 570 289, 575 287, 578 286"
+          fill="none" stroke="#2e7d52" stroke-width="2" stroke-dasharray="5 5" opacity="0.7"/>
+    <!-- travelling turtle: cruciform hull + double sail arm -->
+    <g>
+      <g>
+        <animateMotion dur="26s" repeatCount="indefinite" rotate="auto">
+          <mpath href="#voyagePath"/>
+        </animateMotion>
+        <rect x="-3" y="-10" width="6" height="20" rx="2" fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.5"/>
+        <rect x="-10" y="-3" width="20" height="6" rx="2" fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.5"/>
+        <line x1="0" y1="-13" x2="0" y2="13" stroke="#b45309" stroke-width="2.5" stroke-linecap="round" transform="rotate(38)"/>
+        <circle r="1.8" fill="#2e7d52"/>
+      </g>
+    </g>
+
+    <!-- staged annotations, synced to the turtle's progress -->
+    <g class="v-s1">
+      <rect x="24" y="100" width="196" height="40" rx="9" fill="#ffffff" stroke="#0e7490" stroke-width="1.5"/>
+      <text x="122" y="117" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">1 · ACQUIRE</text>
+      <text x="122" y="133" text-anchor="middle" class="svg-label-soft">luff sweep finds the wind + GPS fix</text>
+    </g>
+    <g class="v-s2">
+      <rect x="40" y="205" width="212" height="40" rx="9" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
+      <text x="146" y="222" text-anchor="middle" class="svg-label" font-weight="700" fill="#8a4207">2 · SAIL-NAV</text>
+      <text x="146" y="238" text-anchor="middle" class="svg-label-soft">broad downwind legs, waypoint by waypoint</text>
+    </g>
+    <g class="v-s3">
+      <rect x="290" y="196" width="220" height="40" rx="9" fill="#ffffff" stroke="#0e7490" stroke-width="1.5"/>
+      <text x="400" y="213" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">3 · RIDE THE CURRENT</text>
+      <text x="400" y="229" text-anchor="middle" class="svg-label-soft">waypoints track the eastward drift for free miles</text>
+    </g>
+    <g class="v-s4">
+      <rect x="400" y="118" width="212" height="40" rx="9" fill="#ffffff" stroke="#2e7d52" stroke-width="1.5"/>
+      <text x="506" y="135" text-anchor="middle" class="svg-label" font-weight="700" fill="#2e7d52">4 · RE-SWEEP</text>
+      <text x="506" y="151" text-anchor="middle" class="svg-label-soft">wind re-found after each turn; geofence watching</text>
+    </g>
+    <g class="v-s5">
+      <rect x="404" y="312" width="216" height="40" rx="9" fill="#ffffff" stroke="#b3403a" stroke-width="1.5"/>
+      <text x="512" y="329" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">5 · ARRIVAL</text>
+      <text x="512" y="345" text-anchor="middle" class="svg-label-soft">feather the sail; wind + current drift it ashore</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Concept voyage (stylized but geographically oriented: Crete, Cyprus,
+  the Nile Delta, Sinai, and the coast's turn north at Gaza). The turtle never
+  sails hard upwind: its waypoints are laid out ashore so the north-west summer
+  wind and the counter-clockwise Levantine current — which sweeps east past the
+  delta and then north up the Levant coast — both push toward the destination,
+  with the sail doing course-keeping rather than brute force. ARRIVAL is honest — the last
+  miles to the shoreline are a feathered drift, delivered by the same wind and
+  current that carried it there. Everything shown assumes the experimental ladder
+  in Part Five has been climbed and the AOELL learning loop of Part Four has been
+  refining the turtle's policies voyage after voyage.</figcaption>
+</figure>
+
+<h3>6 · A deeper safety net</h3>
+<div class="two-col">
+  <div class="mini-card"><h4>🧮 Dead reckoning</h4>
+  <p>If GPS drops out, the fused heading plus the last known speed keeps a
+  short-term position estimate going — buying minutes of graceful sailing before
+  the SAFE timer fires. <em>Unlocked by the IMU.</em></p></div>
+  <div class="mini-card"><h4>🕵️ GPS sanity check</h4>
+  <p>If GPS claims we're moving north but the compass insists we point south for
+  minutes on end, something is lying (glitch, or spoofing). Sustained disagreement
+  → SAFE.</p></div>
+  <div class="mini-card"><h4>🗺️ Geofence</h4>
+  <p>A boundary drawn around the mission area. A turtle that drifts outside it
+  goes SAFE and calls home, instead of wandering into a shipping lane.</p></div>
+  <div class="mini-card"><h4>💧 Hull watch</h4>
+  <p>Moisture and temperature sensors inside the hull → SAFE plus an immediate
+  distress telemetry packet the moment water shows up where it shouldn't.</p></div>
+  <div class="mini-card"><h4>🐕 Watchdog</h4>
+  <p>A hardware timer that reboots the computer if the software ever hangs. Paired
+  with mission persistence, a rebooted turtle resumes its voyage on its own.</p></div>
+  <div class="mini-card"><h4>📡 Nav telemetry</h4>
+  <p>Heading error, wind solution + confidence, commanded <em>and actual</em> sail
+  angle, and progress-made-good in every packet home — so we can replay and tune a
+  turtle's decisions from shore.</p></div>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part Four</span>Learning twice: AOELL and hopeturtles.org <span class="badge next">New dimension</span></h2>
+
+<p class="lede">The July revision added the piece the plan was missing. turtleOS is
+not a finished navigation controller — it is an <strong>instrumented sailing
+experiment</strong> that acts, observes the consequences, evaluates honestly,
+records enough context to explain itself, and learns. And it must learn
+<strong>twice</strong>: once aboard for the next decision, and again ashore —
+on hopeturtles.org — so the whole team, and eventually the whole fleet, improves.</p>
+
+<h3>The AOELL cycle: every action is a little experiment</h3>
+<p>We call the onboard loop <strong>AOELL</strong>: <strong>A</strong>ct ·
+<strong>O</strong>bserve · <strong>E</strong>valuate · <strong>L</strong>og ·
+<strong>L</strong>earn. Even "do nothing" is a recorded action — hold periods are
+the control cases that let us tell a sail effect apart from a current or a wind
+shift that would have happened anyway. But the cycle isn't complete when the
+turtle updates itself. The records sail on to shore, where humans and (later)
+models interpret them and send back improved, versioned instructions:</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 680 330" role="img" aria-label="The AOELL double learning loop: act, observe, evaluate, log, learn aboard, then share, visualize, learn ashore, adjust, and act again">
+    <!-- aboard lane -->
+    <rect x="15" y="20" width="650" height="130" rx="14" fill="#e3f2ea" opacity="0.45"/>
+    <text x="32" y="44" class="svg-label" font-weight="700" fill="#2e7d52">🐢 ABOARD — one cycle, one causal record</text>
+    <!-- ashore lane -->
+    <rect x="15" y="180" width="650" height="130" rx="14" fill="#e0f2f7" opacity="0.5"/>
+    <text x="32" y="204" class="svg-label" font-weight="700" fill="#155e75">🖥️ ASHORE — hopeturtles.org</text>
+    <!-- aboard nodes -->
+    <g class="ao-node ao-1">
+      <rect x="30" y="62" width="108" height="56" rx="10" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      <text x="84" y="86" text-anchor="middle" class="svg-label" font-weight="700">ACT</text>
+      <text x="84" y="104" text-anchor="middle" class="svg-label-soft">even "hold sail"</text>
+    </g>
+    <g class="ao-node ao-2">
+      <rect x="158" y="62" width="108" height="56" rx="10" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      <text x="212" y="86" text-anchor="middle" class="svg-label" font-weight="700">OBSERVE</text>
+      <text x="212" y="104" text-anchor="middle" class="svg-label-soft">before + after</text>
+    </g>
+    <g class="ao-node ao-3">
+      <rect x="286" y="62" width="108" height="56" rx="10" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      <text x="340" y="86" text-anchor="middle" class="svg-label" font-weight="700">EVALUATE</text>
+      <text x="340" y="104" text-anchor="middle" class="svg-label-soft">30 s · 2 min · 5 min</text>
+    </g>
+    <g class="ao-node ao-4">
+      <rect x="414" y="62" width="108" height="56" rx="10" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      <text x="468" y="86" text-anchor="middle" class="svg-label" font-weight="700">LOG</text>
+      <text x="468" y="104" text-anchor="middle" class="svg-label-soft">reasoning, not just data</text>
+    </g>
+    <g class="ao-node ao-5">
+      <rect x="542" y="62" width="108" height="56" rx="10" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      <text x="596" y="86" text-anchor="middle" class="svg-label" font-weight="700">LEARN aboard</text>
+      <text x="596" y="104" text-anchor="middle" class="svg-label-soft">bounded, reversible</text>
+    </g>
+    <!-- ashore nodes (right to left so the loop reads clockwise) -->
+    <g class="ao-node ao-6">
+      <rect x="542" y="222" width="108" height="56" rx="10" fill="#fff" stroke="#0e7490" stroke-width="2"/>
+      <text x="596" y="246" text-anchor="middle" class="svg-label" font-weight="700">SHARE</text>
+      <text x="596" y="264" text-anchor="middle" class="svg-label-soft">store &amp; retry batches</text>
+    </g>
+    <g class="ao-node ao-7">
+      <rect x="380" y="222" width="140" height="56" rx="10" fill="#fff" stroke="#0e7490" stroke-width="2"/>
+      <text x="450" y="246" text-anchor="middle" class="svg-label" font-weight="700">VISUALIZE</text>
+      <text x="450" y="264" text-anchor="middle" class="svg-label-soft">mission_review replay</text>
+    </g>
+    <g class="ao-node ao-8">
+      <rect x="218" y="222" width="140" height="56" rx="10" fill="#fff" stroke="#0e7490" stroke-width="2"/>
+      <text x="288" y="246" text-anchor="middle" class="svg-label" font-weight="700">LEARN ashore</text>
+      <text x="288" y="264" text-anchor="middle" class="svg-label-soft">team + models</text>
+    </g>
+    <g class="ao-node ao-9">
+      <rect x="56" y="222" width="140" height="56" rx="10" fill="#fff" stroke="#0e7490" stroke-width="2"/>
+      <text x="126" y="246" text-anchor="middle" class="svg-label" font-weight="700">ADJUST</text>
+      <text x="126" y="264" text-anchor="middle" class="svg-label-soft">signed, versioned policy</text>
+    </g>
+    <!-- arrows: along the top, down, along the bottom, back up -->
+    <g stroke="#4a5a64" stroke-width="2" fill="#4a5a64">
+      <line x1="138" y1="90" x2="152" y2="90"/><polygon points="158,90 149,85 149,95"/>
+      <line x1="266" y1="90" x2="280" y2="90"/><polygon points="286,90 277,85 277,95"/>
+      <line x1="394" y1="90" x2="408" y2="90"/><polygon points="414,90 405,85 405,95"/>
+      <line x1="522" y1="90" x2="536" y2="90"/><polygon points="542,90 533,85 533,95"/>
+      <line x1="596" y1="118" x2="596" y2="216"/><polygon points="596,222 591,213 601,213"/>
+      <line x1="542" y1="250" x2="526" y2="250"/><polygon points="520,250 529,245 529,255"/>
+      <line x1="380" y1="250" x2="364" y2="250"/><polygon points="358,250 367,245 367,255"/>
+      <line x1="218" y1="250" x2="202" y2="250"/><polygon points="196,250 205,245 205,255"/>
+      <line x1="84" y1="222" x2="84" y2="124"/><polygon points="84,118 79,127 89,127"/>
+    </g>
+    <text x="620" y="172" text-anchor="middle" class="svg-label-soft" fill="#155e75">records go ashore</text>
+    <text x="120" y="172" text-anchor="middle" class="svg-label-soft" fill="#2e7d52">policies come back</text>
+  </svg>
+  </div>
+  <figcaption>The double learning loop. Each node lights in turn: the five AOELL
+  steps run aboard on every cycle; sharing, visualizing, shore-side learning, and
+  the adjusted policy close the outer loop — sometimes hours later, sometimes
+  weeks. Every voyage, and especially every failure, becomes evidence.</figcaption>
+</figure>
+
+<div class="two-col">
+  <div class="mini-card"><h4>📖 The log records <em>reasoning</em></h4>
+  <p>Every cycle answers seven questions: what did I do, what did I believe, why
+  did I choose it, what did I predict, what did I observe, how did I score it,
+  what did I update — plus which firmware, policy, and config were in force.</p></div>
+  <div class="mini-card"><h4>🤷 "Not evaluable" is not failure</h4>
+  <p>A lost GPS fix or a wave-thrashed observation window must never become a
+  false training label. The turtle is allowed — required — to say "I couldn't
+  judge that one."</p></div>
+  <div class="mini-card"><h4>📦 Nothing is lost at sea</h4>
+  <p>Connectivity is intermittent, so records queue aboard and upload in
+  checksummed, acknowledged batches. A week-late upload appears in the week-old
+  part of the voyage — never masquerading as live navigation.</p></div>
+  <div class="mini-card"><h4>🔒 No self-rewriting at sea</h4>
+  <p>Onboard learning updates bounded state inside a <em>versioned</em> policy —
+  logged and reversible. New policies arrive signed and checksummed, and the
+  turtle keeps a one-step rollback.</p></div>
+</div>
+
+<h3>Two development streams that must rejoin</h3>
+<p>This gives our work two parallel streams. <strong>Stream A</strong> is the
+turtleOS firmware — the sailing ladder from Part Three plus the AOELL recording
+machinery. <strong>Stream B</strong> is hopeturtles.org — the mission database,
+the batch ingestion, and above all the <strong>mission_review panel</strong>, the
+major later-phase destination everything aboard is working toward connecting to.
+Neither stream is useful alone: perfect logs nobody can interpret teach nothing,
+and a beautiful dashboard with no causal records explains nothing.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 680 300" role="img" aria-label="Two development streams, aboard and ashore, joined by four integration milestones J1 to J4">
+    <!-- stream A lane -->
+    <rect x="20" y="30" width="640" height="72" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+    <text x="36" y="56" class="svg-label" font-weight="700" fill="#2e7d52">STREAM A · aboard (turtleOS)</text>
+    <text x="36" y="78" class="svg-label-soft">AOELL foundations → sensor fusion → luff validation → propulsion → turning → heading control → tacking</text>
+    <!-- stream B lane -->
+    <rect x="20" y="198" width="640" height="72" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+    <text x="36" y="224" class="svg-label" font-weight="700" fill="#155e75">STREAM B · ashore (hopeturtles.org)</text>
+    <text x="36" y="246" class="svg-label-soft">mission + AOELL tables → batch ingestion → mission_review replay → annotation → models → policy lifecycle</text>
+    <!-- joint links J1..J4 -->
+    <g>
+      <line x1="150" y1="102" x2="150" y2="198" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="150" cy="150" r="17" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="150" y="155" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">J1</text>
+      <circle r="3" fill="#155e75" class="pkt-up" cx="141" cy="188"/>
+      <circle r="3" fill="#155e75" class="pkt-up pkt-d2" cx="141" cy="188"/>
+    </g>
+    <g>
+      <line x1="300" y1="102" x2="300" y2="198" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="300" cy="150" r="17" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="300" y="155" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">J2</text>
+      <circle r="3" fill="#155e75" class="pkt-up" cx="291" cy="188"/>
+    </g>
+    <g>
+      <line x1="450" y1="102" x2="450" y2="198" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="450" cy="150" r="17" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="450" y="155" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">J3</text>
+      <circle r="3" fill="#155e75" class="pkt-up" cx="441" cy="188"/>
+      <circle r="3" fill="#2e7d52" class="pkt-down" cx="459" cy="112"/>
+    </g>
+    <g>
+      <line x1="600" y1="102" x2="600" y2="198" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="600" cy="150" r="17" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="600" y="155" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">J4</text>
+      <circle r="3" fill="#155e75" class="pkt-up" cx="591" cy="188"/>
+      <circle r="3" fill="#2e7d52" class="pkt-down" cx="609" cy="112"/>
+      <circle r="3" fill="#2e7d52" class="pkt-down pkt-d2" cx="609" cy="112"/>
+    </g>
+    <!-- milestone labels -->
+    <text x="150" y="129" text-anchor="middle" class="svg-label-soft">first replayed voyage</text>
+    <text x="300" y="129" text-anchor="middle" class="svg-label-soft">trustworthy training data</text>
+    <text x="450" y="129" text-anchor="middle" class="svg-label-soft">shadow mode at sea</text>
+    <text x="600" y="129" text-anchor="middle" class="svg-label-soft">closed learning loop</text>
+    <text x="340" y="290" text-anchor="middle" class="svg-label-soft">dots rising = voyage records going ashore · dots falling = approved policies coming aboard (from J3)</text>
+  </svg>
+  </div>
+  <figcaption>The two streams and where they rejoin. J1: a real voyage can be
+  replayed end to end. J2: reviewed experiments become a trustworthy training
+  dataset. J3: a candidate model "shadows" the real policy at sea without touching
+  the sail. J4: a signed improvement deploys — and can roll back — completing the
+  loop: fail, learn, fail, learn, knot by knot, inch by inch.</figcaption>
+</figure>
+
+<h3>Inside mission_review: the shore-side half</h3>
+<p>The mission_review panel on hopeturtles.org is not a dashboard — it is a
+scientific notebook and review system. Its map draws four different things and
+refuses to blur them: where the turtle <strong>actually</strong> went, where the
+mission <strong>intended</strong> it to go, where turtleOS <strong>predicted</strong>
+an action would take it, and what was <strong>evaluated</strong> afterward. Keeping
+those distinct is how we tell three very different failures apart — wrong
+objective, wrong prediction, or a good decision defeated by the sea.</p>
+
+<div class="two-col">
+  <div class="mini-card"><h4>🗺️ Mission map + time scrubber</h4>
+  <p>Actual / intended / predicted / evaluated layers, action markers, prediction
+  error vectors, confidence shading. Drag the scrubber and every panel follows to
+  the same moment and cycle.</p></div>
+  <div class="mini-card"><h4>📈 Synchronized timeline</h4>
+  <p>Sail commanded vs. measured, wind estimate + confidence, heading vs. course
+  over ground, VMG, battery, state changes — all on one aligned time axis, so
+  causality can be seen instead of guessed.</p></div>
+  <div class="mini-card"><h4>🔍 Cycle inspector</h4>
+  <p>Click any action: the turtle's belief before, the trigger, alternatives it
+  rejected, its prediction, what actually happened at each horizon, and what it
+  learned. Reviewers can confirm or question labels — originals are never
+  erased.</p></div>
+  <div class="mini-card"><h4>📊 Sense-making views</h4>
+  <p>Aggregations across many cycles: response by sail step size and wind angle,
+  hold vs. intervention periods, energy per correction, prediction calibration
+  ("70% confident" should be right ~70% of the time), per-turtle differences.</p></div>
+</div>
+
+<div class="callout">
+<p><strong>Machine learning grows in careful stages</strong> — response tables
+first (is there a learnable relationship at all?), then supervised models
+validated on held-out missions, then <strong>shadow mode</strong> where a
+candidate only <em>says</em> what it would do while the trusted policy keeps the
+sail. Only a model that beats simple baselines, stays calibrated, and knows when
+to say "I don't know" ever gets deployed — signed, versioned, monitored, and one
+step from rollback. No turtle silently rewrites its own brain at sea.</p>
+</div>
+
+<div class="callout good">
+<p><strong>The revised governing principle:</strong> act deliberately, observe
+carefully, evaluate honestly, log completely — and learn twice: once aboard for
+the next decision, and again ashore so the whole team, and eventually the whole
+turtle fleet, can improve.</p>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part Five</span>The experimental ladder — phases for review</h2>
+<p>We propose climbing in this order, with a measurable pass/fail gate at each
+rung. Rungs 2–5 are Stream A's sailing experiments; the Stream B build
+(mission_review) runs in parallel and meets them at the J milestones. Each phase
+earns the next. <strong>None of this starts until the team has reviewed this
+proposal.</strong></p>
+
+<ol class="steps">
+  <li><strong>AOELL foundations.</strong> The cycle record (act, belief, reason,
+  prediction, observation, evaluation, versions), the local queue, and resumable
+  checksummed upload — so every experiment after this one explains itself.
+  <em>Gate: one cycle reconstructable from logs; delayed and duplicate uploads
+  produce one ordered server record.</em></li>
+  <li><strong>Sensor fusion.</strong> Verify the IMU's identity, write the
+  MPU-9250 driver, fuse gyro + compass + tilt into one trustworthy heading; spin
+  detection as a reported event only. <em>Gate: heading drift under 2°/min on the
+  bench, correct at 30° of heel.</em></li>
+  <li><strong>Luff validation.</strong> Measure the wind sweep's real accuracy
+  against a known reference, on water; attach a confidence score to every solve;
+  log every sweep as an AOELL cycle. <em>Gate: a measured accuracy figure — no
+  more assumed numbers.</em></li>
+  <li><strong>Propulsion.</strong> Demonstrate that chosen sail trims produce
+  real forward progress, judged by the GPS track, with hold periods as controls.
+  <em>Gate: repeatable progress-made-good at trial trims.</em></li>
+  <li><strong>Turning influence.</strong> Bounded ±5°/±10°/±20° sail steps
+  against hold baselines; measure the course response at 30 s / 2 min / 5 min;
+  quantify repeatability — including whether anything arrests a spin.
+  <em>Gate: a usable sail→turn model, or an honest "no" that reshapes the
+  plan.</em></li>
+  <li><strong>Heading control.</strong> Only now, wrap a controller (PID or
+  simpler) around the demonstrated model, with deadband and slew limits.
+  <em>Gate: holds a heading within ±10° in calm water.</em></li>
+  <li><strong>Tacking.</strong> The upwind zig-zag, plus a re-sweep after every
+  turn. <em>Gate: net upwind progress across a full tack sequence.</em></li>
+  <li><strong>Safety net.</strong> Dead reckoning, GPS sanity check, geofence,
+  hull sensors, honest ARRIVAL. <em>Gate: goes SAFE within 60 s of GPS loss;
+  sail feathers within 1 s.</em></li>
+  <li><strong>Unattended endurance.</strong> Watchdog + automatic mission resume.
+  <em>Gate: a mid-mission reboot resumes the voyage with no human touch.</em></li>
+</ol>
+
+<p>Meanwhile Stream B climbs its own ladder on hopeturtles.org — mission + AOELL
+database tables, idempotent batch ingestion, the mission_review replay (map,
+timeline, cycle inspector), annotation and comparison views, then staged models
+and the signed policy lifecycle. The two ladders meet at the J milestones:
+<strong>J1</strong> first replayed voyage (after rung 1), <strong>J2</strong>
+trustworthy training data (after the experiment rungs), <strong>J3</strong>
+shadow mode at sea, and <strong>J4</strong> the closed learning loop — the
+roadmap's definition of done for the learning architecture.</p>
+
+<div class="callout">
+<p>For the engineering-level task list behind these phases — file by file,
+checkbox by checkbox, both streams and the J milestones — see
+<code>docs/navigation_roadmap.md</code> in the repository. The full AOELL
+specification (event contract, database tables, API surface, ML stages, and
+statistical safeguards) is in <code>docs/AOELL nav revision.md</code>. This page
+and those documents describe the same plan at different zoom levels.</p>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Appendix</span>Little glossary</h2>
+<dl class="glossary">
+  <dt>I2C bus</dt><dd>A two-wire "party line" that lets many sensors share the
+  same pair of wires, each answering to its own address.</dd>
+  <dt>IMU (Inertial Measurement Unit)</dt><dd>A chip that senses rotation
+  (gyroscope), tilt and motion (accelerometer), and — on our MPU-9250 — magnetic
+  north (magnetometer).</dd>
+  <dt>AOELL</dt><dd>The onboard cycle — Act, Observe, Evaluate, Log, Learn. Every
+  action, even "hold the sail," becomes a recorded experiment with a prediction
+  and an honestly scored outcome.</dd>
+  <dt>mission_review</dt><dd>The planned analysis panel on hopeturtles.org: a
+  synchronized map, timeline, and cycle inspector for replaying any voyage and
+  understanding what the turtle believed, did, predicted, and observed.</dd>
+  <dt>Hold period</dt><dd>A stretch where the sail deliberately isn't moved. The
+  control case — without holds, we can't tell a sail effect from a current or
+  wind shift that would have happened anyway.</dd>
+  <dt>Shadow mode</dt><dd>A candidate model rides along recording what it
+  <em>would</em> have done while the trusted policy keeps control of the sail.
+  Only candidates that prove themselves in shadow get deployed.</dd>
+  <dt>Policy version</dt><dd>The turtle's decision rules as a signed, numbered
+  release. Adjustments arrive checksummed, are acknowledged, and can always be
+  rolled back one step.</dd>
+  <dt>Luffing</dt><dd>The flapping of a sail pointed into the wind. Our wind
+  "sensor" is really just noticing where luffing starts.</dd>
+  <dt>Feathering</dt><dd>Turning the sail edge-on to the wind so it produces no
+  force — the sailing equivalent of putting the car in neutral.</dd>
+  <dt>Fixed rudder</dt><dd>Our rudder does not move. It acts like the feathers on
+  an arrow — a passive stabilizer — while the sail is the only thing we control.</dd>
+  <dt>Confidence score</dt><dd>A number attached to every estimate (wind, heading,
+  position) saying how much we trust it. Low confidence means the turtle attempts
+  less and re-measures more.</dd>
+  <dt>Deadband</dt><dd>A "close enough" zone around the target within which the
+  servo does not move — small errors are cheaper to tolerate than to chase.</dd>
+  <dt>Sensor fusion / complementary filter</dt><dd>Blending two imperfect sensors
+  so each covers the other's weakness — here, a drifty-but-smooth gyro with a
+  noisy-but-honest compass.</dd>
+  <dt>Dead reckoning</dt><dd>Estimating your position from your last known fix
+  plus your heading and speed since — what sailors did for centuries before GPS.</dd>
+  <dt>Tacking</dt><dd>Zig-zagging at angles to the wind to make progress toward an
+  upwind destination.</dd>
+  <dt>Waypoint</dt><dd>A GPS coordinate on the mission route. The turtle sails to
+  each in order.</dd>
+  <dt>Telemetry</dt><dd>The status messages each turtle sends home to
+  hopeturtles.org: position, battery, machine state, and (proposed) nav internals
+  with confidence scores.</dd>
+</dl>
+
+</main>
+
+<footer>
+  Hope Turtles · turtleOS navigation system · current + roadmap · revised July 2026<br>
+  Companion engineering document: <code>docs/navigation_roadmap.md</code>
+</footer>
+
+</body>
+</html>

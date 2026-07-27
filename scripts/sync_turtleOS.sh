@@ -334,6 +334,9 @@ rsync -a \
   --exclude '*.pyc' \
   --exclude '*.pyo' \
   --exclude '.gitignore' \
+  `# ── Device-owned runtime data (never overwrite the board's own records) ─` \
+  --exclude 'telemetry_queue.json' \
+  --exclude 'telemetry_last_sent.json' \
   \
   `# ── Pico HAL (not needed on ESP32-S3) ───────────────────────` \
   --exclude 'src/hal/board_pico.py' \

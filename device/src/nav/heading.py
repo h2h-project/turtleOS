@@ -7,7 +7,7 @@
 #
 # NOTE for the ICM-20948 integration: its default I2C address 0x68
 # collides with the DS3231 RTC on the shared bus — strap AD0 high (0x69)
-# or relocate the RTC. See docs/pending_nav_dev.md.
+# or relocate the RTC. See docs/navigation_roadmap.md.
 
 
 class HeadingSource:

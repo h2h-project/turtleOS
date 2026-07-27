@@ -102,7 +102,7 @@ class VersionScreen:
 
         if use_logo:
             logo_x = max(0, (ow - lw) // 2)
-            logo_y = y0 + 10
+            logo_y = y0 + 11
             ok = False
             try:
                 ok = wh._blit_logo_fixed(o, logo_x, logo_y, lw, lh, data)
@@ -111,7 +111,7 @@ class VersionScreen:
             line_y = (logo_y + lh + gap) if ok else y0
         else:
             line_y = y0
-        line_y -= 3
+        line_y -= 9
 
         if writer is not None:
             try:

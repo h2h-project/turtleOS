@@ -15,7 +15,22 @@ except Exception:
 class LoggingScreen:
     def __init__(self, oled):
         self.oled = oled
-        self.toggle = ToggleSwitch(x=100, y=21, w=24, h=40)
+
+        w = int(getattr(oled, "width", 128))
+        h = int(getattr(oled, "height", 64))
+
+        # Match the Online screen's toggle geometry exactly — same x/y/w/h,
+        # tallest the switch can be without running off the bottom edge.
+        tx = 100
+        ty = 16
+        tw = 24
+        th = 43
+        if tx + tw > w:
+            tw = max(1, w - tx)
+        if ty + th > h:
+            th = max(1, h - ty)
+
+        self.toggle = ToggleSwitch(x=tx, y=ty, w=tw, h=th)
 
         self._enabled = False
         self._post_every_s = 120
@@ -51,6 +66,29 @@ class LoggingScreen:
         except Exception:
             return 0
 
+    def _fit(self, text, max_w):
+        """Truncate text (from the end) until it fits within max_w pixels."""
+        o = self.oled
+        f_small = getattr(o, "f_small", None)
+        if f_small is None or max_w <= 0:
+            return text
+        try:
+            tw, _ = o._text_size(f_small, text)
+        except Exception:
+            tw = len(text) * 5
+        if tw <= max_w:
+            return text
+        s = text
+        while len(s) > 1:
+            s = s[:-1]
+            try:
+                tw, _ = o._text_size(f_small, s)
+            except Exception:
+                tw = len(s) * 5
+            if tw <= max_w:
+                break
+        return s
+
     def _draw(self):
         o = self.oled
         fb = o.oled
@@ -71,10 +109,26 @@ class LoggingScreen:
         o.f_arvo20.write("Telemetry", 0, 0)
         self.toggle.draw(fb, on=self._enabled)
 
-        api_str = (self._api_base or "---")[:18]
-        o.f_med.write(api_str, 0, 28)
-        o.f_med.write("Post: " + str(self._post_every_s) + "s", 0, 41)
-        o.f_med.write("Unsynced: " + str(self._queue_size()), 0, 53)
+        # Status line — current font (f_med), directly under the title.
+        _, title_h = o._text_size(o.f_arvo20, "Telemetry")
+        y_status = title_h + 2
+        o.f_med.write("Auto", 0, y_status)
+
+        # Detail lines — API base, post frequency, unsynced — shrunk to the
+        # smallest available font (f_small) to make room for the status line.
+        _, row_h = o._text_size(o.f_med, "Auto")
+        _, small_h = o._text_size(o.f_small, "Ag")
+        y1 = y_status + row_h + 3
+        y2 = y1 + small_h + 3
+        y3 = y2 + small_h + 3
+
+        # f_small is narrow enough that the API base line can run right up
+        # to the toggle switch instead of stopping at a fixed char count.
+        api_max_w = self.toggle.x - 4
+        api_str = self._fit(self._api_base or "---", api_max_w)
+        o.f_small.write(api_str, 0, y1)
+        o.f_small.write("Post: " + str(self._post_every_s) + "s", 0, y2)
+        o.f_small.write("Unsynced: " + str(self._queue_size()), 0, y3)
 
         fb.show()
 

@@ -245,7 +245,7 @@ def connectivity_carousel(
     log_scr = get_screen("logging")
     if log_scr and hasattr(log_scr, "show_live"):
         try:
-            a = log_scr.show_live(btn, tick_fn=tick_fn)
+            a = log_scr.show_live(btn, tick_fn=tick_fn, cfg=cfg)
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)
     else:

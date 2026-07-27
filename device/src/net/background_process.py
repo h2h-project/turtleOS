@@ -54,6 +54,7 @@ def _gc():
 
 class TelemetryBackgroundProcess:
     LOOP_SLEEP_MS = 100
+    PENDING_MAX = 8
 
     def __init__(self, wifi_manager):
         self._wifi = wifi_manager
@@ -64,12 +65,10 @@ class TelemetryBackgroundProcess:
         else:
             self._lock = None
 
-        # Payload slot: main thread writes, background thread reads and clears.
-        # Only the most recent payload is kept; when the background thread picks
-        # up the payload and WiFi is offline it enqueues it to flash, so
-        # displaced payloads are not lost once the first offline tick has forced
-        # a client init.
-        self._pending = None       # (payload_dict, cfg_dict) | None
+        # Payload FIFO: main thread appends, background thread pops. Bounded at
+        # PENDING_MAX; only an overflow beyond that drops anything, and every
+        # payload the thread pops is either sent or enqueued to flash.
+        self._pending = []         # [(payload_dict, cfg_dict), ...]
 
         # Result snapshot: background thread writes, main thread reads.
         self._result = {
@@ -111,18 +110,24 @@ class TelemetryBackgroundProcess:
 
     def put_payload(self, payload, cfg):
         """
-        Hand off a payload for the background thread to send.
-        Non-blocking. Replaces any pending unsent payload (the replaced payload
-        was already enqueued to flash by the offline path in the scheduler, so
-        it is not lost).
+        Hand off a payload for the background thread to send. Non-blocking.
+
+        Returns True if the payload was accepted. False means the background
+        thread is not running (never started, or it crashed) and the caller
+        owns the payload — it must queue it to flash itself, or the reading is
+        lost. Payloads queue up to PENDING_MAX deep so a slow send (a 6 s WiFi
+        reconnect attempt, say) cannot swallow readings taken behind it.
         """
-        if not self._running or self._lock is None:
-            return
+        if not self._running or not self._thread_alive or self._lock is None:
+            return False
         self._lock.acquire()
         try:
-            self._pending = (payload, cfg)
+            self._pending.append((payload, cfg))
+            if len(self._pending) > self.PENDING_MAX:
+                del self._pending[0]
         finally:
             self._lock.release()
+        return True
 
     def result(self):
         """Non-blocking snapshot of the last send outcome."""
@@ -149,24 +154,44 @@ class TelemetryBackgroundProcess:
                 pending = self._take_pending()
                 if pending is not None:
                     payload, cfg = pending
-                    self._send(payload, cfg)
+                    try:
+                        self._send(payload, cfg)
+                    except Exception as e:
+                        # One failed send must never kill the thread — that would
+                        # silently strand every later reading.
+                        print("[BACKGROUND] send failed:", repr(e))
+                        self._safe_enqueue(payload, cfg)
                 time.sleep_ms(self.LOOP_SLEEP_MS)
         except Exception as e:
             print("[BACKGROUND] Thread crashed:", repr(e))
         finally:
             self._thread_alive = False
             self._running = False
+            # Anything still queued in RAM belongs on flash, not in the bin.
+            while True:
+                pending = self._take_pending()
+                if pending is None:
+                    break
+                self._safe_enqueue(pending[0], pending[1])
             print("[BACKGROUND] Thread exited")
 
+    def _safe_enqueue(self, payload, cfg):
+        """Last-resort persist of a payload that could not be sent."""
+        try:
+            self._ensure_client(cfg).enqueue(payload)
+            print("[BACKGROUND] payload queued to flash")
+        except Exception as e:
+            print("[BACKGROUND] queue failed — reading lost:", repr(e))
+
     def _take_pending(self):
-        """Atomically read and clear the pending payload slot."""
+        """Atomically pop the oldest pending payload, or None if there is none."""
         if self._lock is None:
             return None
         self._lock.acquire()
         try:
-            pending = self._pending
-            self._pending = None
-            return pending
+            if not self._pending:
+                return None
+            return self._pending.pop(0)
         finally:
             self._lock.release()
 

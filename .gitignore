@@ -25,3 +25,6 @@ config.json
 backups/
 
 scripts/xiao_config.json
+# Device-owned runtime data pulled off the board (never sync back)
+device/telemetry_queue.json
+device/telemetry_last_sent.json

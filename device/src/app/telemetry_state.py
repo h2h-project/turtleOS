@@ -97,8 +97,13 @@ class TelemetryState:
         Background telemetry attempt (only when due + enabled).
         MemoryError-safe: if scheduler can't be created, telemetry just won't run.
         """
+        # Only "off" short-circuits here. "manual" must still reach the scheduler
+        # so an armed send_manual() stamp can go out; the scheduler owns that gate.
         try:
-            if not cfg or not cfg.get("telemetry_enabled", True):
+            if not cfg:
+                return
+            mode = str(cfg.get("telemetry_mode", "auto") or "auto").strip().lower()
+            if mode == "off":
                 return
         except Exception:
             return
@@ -129,6 +134,38 @@ class TelemetryState:
             self.scheduler.request_now()
         else:
             print("[ONLINE] request_now: scheduler not ready (will retry on next tick)")
+
+    def send_manual(self):
+        """
+        Arm a hand-taken registry stamp (GPS screen, manual telemetry mode).
+        Returns True if the scheduler accepted it.
+        """
+        if not self._ensure_scheduler():
+            print("[TELEMETRY] send_manual: scheduler not ready")
+            return False
+        try:
+            self.scheduler.send_manual()
+            return True
+        except Exception as _e:
+            print("[TELEMETRY] send_manual error:", repr(_e))
+            return False
+
+    def manual_pending(self):
+        """True if an armed manual stamp never produced a payload."""
+        if self.scheduler is None:
+            return False
+        try:
+            return bool(self.scheduler.manual_pending())
+        except Exception:
+            return False
+
+    def clear_manual(self):
+        if self.scheduler is None:
+            return
+        try:
+            self.scheduler.clear_manual()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------
     # Helpers for UI

@@ -85,7 +85,7 @@ device/               ← everything deployed to the microcontroller
     │       ├── online.py         ← API/telemetry toggle screen
     │       ├── logging.py        ← telemetry rate screen
     │       ├── device.py         ← device info from API
-    │       ├── gps.py            ← GPS fix status
+    │       ├── gps.py            ← GPS fix status + manual telemetry logging
     │       ├── sleep.py          ← low-power screen
     │       ├── selfdestruct.py   ← factory reset / wipe (joke_mode gate)
     │       └── frowny.py         ← error / sad-face screen
@@ -213,7 +213,7 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 2 s** | Time → Battery → Sleep screens | Time → Battery → Sleep screens |
+| **Hold 2 s** | GPS → Battery → Sleep → Version screens | GPS → Battery → Sleep → Version screens |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
@@ -236,10 +236,13 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 ### turtleOS sensor carousel (turtle_mode=true)
 
 Single-click enters `sensor_carousel()` configured for navigation screens:
-1. **Compass** screen — live heading from QMC5883L with cardinal directions.
-2. **Sailpoint** screen — sail-angle overlay on heading.
-3. **Servo** screen — sail servo status; double-click triggers a gentle, low-power 90°→80°→100°→90° test sweep (small ±10° range + slow ramp to avoid a battery rail sag that makes the servo stutter).
-4. **Battery** screen — INA219 voltage, current, and charge estimate.
+1. **Sailpoint** screen — sail-angle overlay on heading.
+2. **Servo** screen — sail servo status; double-click triggers a gentle, low-power 90°→80°→100°→90° test sweep (small ±10° range + slow ramp to avoid a battery rail sag that makes the servo stutter).
+3. **Destination** screen — active waypoint.
+
+The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
+leads the hold flow instead, so hand-taken position stamps are one hold away from
+the waiting screen. See [Manual GPS logging](#manual-gps-logging-hold-flow).
 
 ### airOS sensor carousel (turtle_mode=false)
 
@@ -259,23 +262,67 @@ Any non-single click during a dwell exits the carousel early.
 Triple-click enters `connectivity_carousel()` — same in both modes:
 
 ```
-Waiting → WiFi screen
-            ↓ single click (+ wifi_ok in status)
-         Online screen
+Waiting → Online screen
             ↓ single click (always advances)
-         Telemetry screen
-            ↓ single click (+ telemetry_enabled in config)
+         Logging screen
+            ↓ single click (always advances)
+         WiFi screen
+            ↓ single click
          Device screen
             ↓ single click
          Waiting
 ```
 
 **Key rules:**
-- WiFi screen always shows. After it, if `status["wifi_ok"]` is `False`, the carousel exits to Waiting.
-- Online screen always shows if WiFi is OK. A single click **always** advances to Telemetry (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
-- Telemetry screen always shows after Online. A single click only advances to Device if `cfg["telemetry_enabled"]` is `True`.
+- Online screen leads and is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
+- A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
+- The GPS screen is **not** in this carousel; it leads the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
+
+---
+
+## Manual GPS logging (hold flow)
+
+`telemetry_mode: "manual"` (set on the Logging screen: off → auto → manual) turns
+the GPS screen into a field logger. It is the **first screen of the hold flow**, so
+recording a position is: hold 2 s, then click.
+
+```
+Waiting --hold 2s--> GPS screen --double click--> Battery --> Sleep --> Version --> Waiting
+                       ↑ single click = record one reading
+                       ↑ triple click = toggle gps_enabled
+                       ↑ hold         = leave the flow
+```
+
+In `manual` mode the GPS screen inverts the usual gestures — **single click stamps a
+reading, double click advances** — because stamping is the action repeated dozens of
+times in a session while advancing happens once. In `auto`/`off` mode the legacy
+mapping stands (single advances, double toggles GPS).
+
+**What a stamp does** (`GPSScreen._manual_send` → `TelemetryState.send_manual`):
+1. Arms `scheduler._manual_flag`, which punches through the `manual` gate in `tick()`
+   and marks the payload `{"auto_log": false, "manual_registry": true}`.
+2. `tick()` builds the payload and **commits it before returning** — handed to the
+   background sender, or written straight to the flash queue when it can't be.
+3. The screen reports "Stamped" immediately and never blocks; if a send outcome
+   arrives within 6 s, `_poll_send_outcome()` upgrades the line to "Sent".
+4. The registry line then shows `Logged: N` for the session. `Not stamped` means no
+   payload could be built — check serial for the reason (`skip (rtc not epoch)` is
+   the usual one: no DS3231 time, and a record with no timestamp is unusable).
+
+**Invariants worth preserving:**
+- A manual stamp is valid with **no sensor values at all** — position plus time is a
+  complete record. `_build_full_payload()` reads GPS before the "no values" gate for
+  exactly this reason; a turtle carrying no air sensor is the normal case.
+- Whoever drains the GPS UART **must** publish to `src/nav/gpsfix.py`. The GPS screen
+  and `NavController` both consume the same single UART, and the telemetry scheduler
+  falls back to that cache when its own drain comes up empty. A screen that reads
+  NMEA without publishing silently strips lat/lon from every stamp taken while it is
+  open.
+- `device/telemetry_queue.json` is **device-owned**. The sync/install scripts exclude
+  it (along with `telemetry_last_sent.json`) from the rsync stage — staging it would
+  overwrite the board's unsent readings on the next upload.
 
 ---
 
@@ -327,7 +374,8 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 | `wifi_enabled` | bool | `false` | |
 | `wifi_ssid` | str | `""` | |
 | `wifi_password` | str | `""` | |
-| `telemetry_enabled` | bool | `true` | controls Online and Telemetry screens |
+| `telemetry_mode` | str | `"auto"` | **authoritative**: `"auto"` posts on the interval, `"manual"` only on hand-taken GPS stamps, `"off"` never |
+| `telemetry_enabled` | bool | `true` | derived mirror of `telemetry_mode != "off"`, rebuilt on every load; writers must set `telemetry_mode` |
 | `telemetry_post_every_s` | int | `120` | min 10 |
 | `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
 | `device_id` | str | `""` | |

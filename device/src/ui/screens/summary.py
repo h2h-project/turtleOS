@@ -12,7 +12,7 @@ except Exception:
     _ch = None
 
 # How often the bottom-left reading rotates to the next available sensor value.
-ROTATE_MS = 3000
+ROTATE_MS = 5000
 
 
 class SummaryScreen:
@@ -29,7 +29,7 @@ class SummaryScreen:
         self.rtc_info = rtc_info if isinstance(rtc_info, dict) else {}
         self._room_get = room_get        # callable -> room name str or None
 
-        self.indent_x = 0
+        self.indent_x = 6
 
     # -------------------------------------------------
     # Classification (score + mood)
@@ -97,8 +97,8 @@ class SummaryScreen:
     def _draw_temp_line(self, temp_c, x, y1, y2):
         """
         Two lines, nestled into the bottom-left corner:
-          29.7°   (number + degree ring pixel)
-          C       (unit)
+          29.7    (number)
+          °C      (degree ring pixel + unit)
         """
         try:
             t = round(float(temp_c), 1)
@@ -108,14 +108,15 @@ class SummaryScreen:
             return
 
         self.f.write(num, x, y1)
-        w_num, _ = self.oled._text_size(self.f, num)
 
         deg_r = 2
-        x_deg = x + int(w_num) + 1
-        draw_degree(self.oled.oled, x_deg, y1 + 3, r=deg_r, color=1)
+        deg_w = deg_r * 2 + 1
+        x_deg = x
+        draw_degree(self.oled.oled, x_deg, y2 + 3, r=deg_r, color=1)
 
-        if not self.f.write("C", x, y2):
-            draw_c(self.oled.oled, x, y2 + 2, scale=1, color=1)
+        x_c = x_deg + deg_w + 1
+        if not self.f.write("C", x_c, y2):
+            draw_c(self.oled.oled, x_c, y2 + 2, scale=1, color=1)
 
     def _draw_humidity_line(self, rh, x, y1, y2):
         """
@@ -333,18 +334,25 @@ class SummaryScreen:
         score = self._score_from_reading(reading) if reading else 2
         mood = self._mood_from_score(score)
 
-        # Face glyph: true screen centre (both axes). Drawn first so the
-        # header/footer overlays below are painted on top of it and stay
-        # legible.
+        # Face glyph: horizontally centred, resting on the bottom edge of
+        # the screen. Drawn first so the header/footer overlays below are
+        # painted on top of it and stay legible.
         width = self.oled.width
         height = self.oled.height
-        y0 = 0
+        fill_height_ratio = 0.75625
         area_h = height
+
+        r = int((area_h * fill_height_ratio) / 2)
+        r = max(10, min(r, (area_h // 2) - 2))
+        # draw_face centres the circle at y0 + area_h // 2; solve for the
+        # y0 that puts the circle's bottom edge on the last screen row, then
+        # nudge up 4px off the true bottom rest position.
+        y0 = (height - 1 - r) - (area_h // 2) - 4
 
         draw_face(
             fb, width, height, mood,
             right_edge=False,
-            fill_height_ratio=0.75625,
+            fill_height_ratio=fill_height_ratio,
             y0=y0,
             area_height=area_h,
         )

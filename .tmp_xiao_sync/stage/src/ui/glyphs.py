@@ -102,6 +102,55 @@ def draw_circle(fb, cx, cy, r=4, filled=False, color=1):
 
 
 # ------------------------------------------------------------
+# Home (house) glyph — static, 7x7
+#
+# Two slanted roof lines meeting at an apex, over two vertical walls.
+# Same footprint as the old r=3 heartbeat circle so it drops into the
+# same corner without any layout changes.
+# ------------------------------------------------------------
+
+HOME_W = 7
+HOME_H = 7
+
+_HOME_7 = [
+    "0001000",
+    "0010100",
+    "0100010",
+    "1000001",
+    "1000001",
+    "1000001",
+    "1000001",
+]
+
+
+def draw_home(fb, x, y, color=1):
+    """Draw a static 7x7 house glyph (roof + walls) at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _HOME_7, c=color)
+
+
+# ------------------------------------------------------------
+# "No sensor" x-mark — small 5x5 cross, used beside an icon to flag
+# that the underlying hardware (e.g. INA219) was not detected on I2C.
+# ------------------------------------------------------------
+
+XMARK_W = 5
+XMARK_H = 5
+
+_XMARK_5 = [
+    "10001",
+    "01010",
+    "00100",
+    "01010",
+    "10001",
+]
+
+
+def draw_x_mark(fb, x, y, color=1):
+    """Draw a small 5x5 'x' glyph at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _XMARK_5, c=color)
+
+
+# ------------------------------------------------------------
 # Pixel "C" glyph (for LARGE temp units)
 # ------------------------------------------------------------
 
@@ -390,33 +439,53 @@ def draw_gps9(fb, x, y, on=True, color=1, state=None):
 
 
 # ----------------------------
-# Battery indicator (12x6)  <-- 6px height matches WiFi/GPS/API, width = 2x height
+# Battery indicator (12x7)  <-- odd height so a no-battery line sits dead
+# centre; close enough to WiFi/GPS/API's 6px row to sit alongside them.
 #
-# Used by the turtle waiting screen only (top-left corner); deliberately NOT
-# part of the connection_header icon cluster.
+# Used by the turtleOS and airOS waiting screens (bottom-right corner);
+# deliberately NOT part of the connection_header icon cluster.
 #
 # Layout: 11px body (x0..x10) + 1px terminal nub (x11) on the vertical centre.
 # Empty outline for now — fill bars can be added inside the body later.
 # ----------------------------
 
 BATT_W = 12
-BATT_H = 6
+BATT_H = 7
 
-_BATT_EMPTY_6 = [
+_BATT_EMPTY_7 = [
     "111111111110",
     "100000000010",
+    "100000000011",
     "100000000011",
     "100000000011",
     "100000000010",
     "111111111110",
 ]
 
+# Same outline, with a short dash through the centre row — shown when no
+# INA219 battery monitor is detected on the I2C bus (nothing to report a
+# charge level for). BATT_H is odd so this row is dead centre. The dash
+# stops short of the left/right walls (unlike a full-width line) so the
+# body outline stays visually intact.
+_BATT_NONE_7 = [
+    "111111111110",
+    "100000000010",
+    "100000000011",
+    "100111111011",
+    "100000000011",
+    "100000000010",
+    "111111111110",
+]
 
-def draw_battery(fb, x, y, color=1):
+
+def draw_battery(fb, x, y, color=1, no_battery=False):
     """
-    Draw an empty battery outline at (x, y). Size: 12x6.
+    Draw a battery outline at (x, y). Size: 12x7.
+    When no_battery is True, draws a horizontal line through the centre
+    instead of an empty body (no INA219 detected on the I2C bus).
     """
-    draw_bitmap_rows(fb, x, y, _BATT_EMPTY_6, c=color)
+    rows = _BATT_NONE_7 if no_battery else _BATT_EMPTY_7
+    draw_bitmap_rows(fb, x, y, rows, c=color)
 
 
 # ----------------------------
@@ -670,12 +739,22 @@ def _f_mouth_grin(fb, w, h, cx, cy, radius, w_half, thick=2, c=1):
     _f_pix(fb, w, h, cx + w_half, teeth_y - 1, c)
 
 
-def draw_face(fb, width, height, mood, *, right_edge=True, fill_height_ratio=0.90):
-    r = int((height * float(fill_height_ratio)) / 2)
-    r = max(10, min(r, (height // 2) - 2))
+def draw_face(fb, width, height, mood, *, right_edge=True, fill_height_ratio=0.90,
+              y0=0, area_height=None):
+    """
+    y0 / area_height let the face be confined to a vertical band within the
+    screen (e.g. between a header row and a footer icon row) rather than
+    always spanning the full framebuffer height. width/height still bound
+    the pixel-clipping in the vector helpers below. Defaults (y0=0,
+    area_height=None -> height) reproduce the original full-height behaviour.
+    """
+    ah = int(area_height) if area_height is not None else int(height)
+
+    r = int((ah * float(fill_height_ratio)) / 2)
+    r = max(10, min(r, (ah // 2) - 2))
 
     cx = (width - 1) - r if right_edge else (width // 2)
-    cy = height // 2
+    cy = int(y0) + ah // 2
 
     draw_thick_circle(fb, width, height, cx, cy, r, thickness=3, c=1)
 

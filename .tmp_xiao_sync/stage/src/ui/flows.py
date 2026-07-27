@@ -511,7 +511,7 @@ def connectivity_carousel(
     log_scr = get_screen("logging")
     if log_scr and hasattr(log_scr, "show_live"):
         try:
-            a = log_scr.show_live(btn, tick_fn=tick_fn)
+            a = log_scr.show_live(btn, tick_fn=tick_fn, cfg=cfg)
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)
     else:
@@ -543,7 +543,7 @@ def connectivity_carousel(
     gps_scr = get_screen("gps")
     if gps_scr and hasattr(gps_scr, "show_live"):
         try:
-            a = gps_scr.show_live(gps, btn)
+            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry)
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)
     else:
@@ -661,6 +661,7 @@ def sensor_carousel(
         tick_fn=None,
         gps=None,
         cfg=None,
+        telemetry=None,
 ):
     _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
@@ -785,7 +786,7 @@ def sensor_carousel(
             _log_screen("gps")
         if gps_scr and hasattr(gps_scr, "show_live"):
             try:
-                a = gps_scr.show_live(gps, btn)
+                a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry)
             except Exception:
                 a = None
         else:
@@ -1058,13 +1059,34 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None):
 
     _log_screen("sleep")
     scr = get_screen("sleep")
+    a = None
     if scr and hasattr(scr, "show_live"):
         try:
-            scr.show_live(btn, tick_fn=tick_fn)
+            a = scr.show_live(btn, tick_fn=tick_fn)
+        except Exception:
+            a = None
+    else:
+        draw_text(oled, "Low Power", y=24)
+        a = wait_for_single(btn, tick_fn=tick_fn)
+
+    if a != "single":
+        reset_and_flush(btn, flush_ms, poll_ms)
+        return
+    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ------------------------------------------------------------
+    # VERSION SCREEN — single click on Sleep advances here (logo/turtle
+    # + firmware version); any click returns to the waiting screen.
+    # ------------------------------------------------------------
+    _log_screen("version")
+    ver_scr = get_screen("version")
+    if ver_scr and hasattr(ver_scr, "show_live"):
+        try:
+            ver_scr.show_live(btn=btn, tick_fn=tick_fn)
         except Exception:
             pass
     else:
-        draw_text(oled, "Low Power", y=24)
+        draw_text(oled, "turtleOS", y=24)
         wait_for_single(btn, tick_fn=tick_fn)
 
     reset_and_flush(btn, flush_ms, poll_ms)

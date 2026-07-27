@@ -36,21 +36,14 @@ def _to_gps_state(val):
 
 
 class WaitingScreen:
-    # Space to reserve left of the room text for the target glyph
-    # (7px glyph + 4px gap). Mirrors turtle_waiting.py's layout.
-    _TARGET_GAP = 11
-
-    # Gap between the target glyph and the room text that follows it.
-    _TARGET_TEXT_GAP = 4
-
-    # Downward nudge for the target glyph so it sits on the room text's
-    # baseline rather than riding high on the f_small row.
-    _TARGET_DY = 1
+    # Gap between the home glyph and the room text that follows it,
+    # top-left corner — mirrors summary.py's layout.
+    _HOME_TEXT_GAP = 4
 
     # Battery icon: bottom-right corner, flush to the right edge. _BATT_DY
-    # nudges it down onto the room-text baseline.
+    # nudges it down onto the bottom text row baseline.
     _BATT_DY = 1
-    _BATT_TEXT_GAP = 6
+    _BATT_XMARK_GAP = 3
 
     def __init__(self, flip_x=False, flip_y=True, gap=6, logo_drop_px=10,
                  room_get=None, battery_present_get=None):
@@ -69,7 +62,7 @@ class WaitingScreen:
         self._logo_lh = None
         self._logo_data = None
 
-        self.logo_y_offset_px = -2
+        self.logo_y_offset_px = 2
         self.line_y_offset_px = -6
 
         self.cluster_right_inset_px = 1
@@ -551,47 +544,69 @@ class WaitingScreen:
                 break
         return s
 
-    def _draw_footer(self, oled, fb):
+    def _draw_home_room(self, oled, fb):
+        # Top-left corner: static home glyph + room name (or "- - -" when
+        # no room is registered). Mirrors summary.py's layout.
         f_small = getattr(oled, "f_small", None)
         if f_small is None:
             return
 
         w = int(getattr(oled, "width", 128))
-        h = int(getattr(oled, "height", 64))
-        ty = h - 8  # bottom text row (f_small is 7 px)
 
-        # Bottom-right corner: battery icon, flush to the right edge.
-        # Filled with an X when no INA219 battery monitor was detected.
         try:
-            from src.ui.glyphs import BATT_W as _batt_w
+            from src.ui.glyphs import draw_home, HOME_W
         except Exception:
-            _batt_w = 12
-        batt_x = w - _batt_w
+            return
+
+        gx = 0
+        gy = 1
         try:
-            from src.ui.glyphs import draw_battery
-            present = self._battery_present()
-            draw_battery(fb, batt_x, ty + self._BATT_DY, no_battery=(present is False))
+            draw_home(fb, gx, gy, color=1)
         except Exception:
             pass
 
-        # Bottom-left corner: target glyph + room name.
         name = self._room()
-        if name:
-            max_w = batt_x - self._BATT_TEXT_GAP - self._TARGET_GAP
-            txt = self._fit(oled, name.upper(), max_w)
-            if txt:
-                glyph_cx = 3
-                try:
-                    from src.ui.glyphs import draw_circle
-                    draw_circle(fb, glyph_cx, ty + 3 + self._TARGET_DY,
-                                r=3, filled=True, color=1)
-                except Exception:
-                    pass
-                tx = glyph_cx + 3 + self._TARGET_TEXT_GAP
-                try:
-                    f_small.write(txt, tx, ty)
-                except Exception:
-                    pass
+        tx = gx + HOME_W + self._HOME_TEXT_GAP
+        # Leave room for the connection icon cluster on the right.
+        max_w = w - tx - 44
+        txt = self._fit(oled, name.upper(), max_w) if name else "- - -"
+        if txt:
+            try:
+                f_small.write(txt, tx, 1)
+            except Exception:
+                pass
+
+    def _draw_footer(self, oled, fb):
+        # Bottom-right corner: battery icon, flush to the right edge. An
+        # "x" glyph sits to its left when no INA219 battery monitor was
+        # detected (no line drawn through the battery body). Mirrors
+        # summary.py's layout.
+        w = int(getattr(oled, "width", 128))
+        h = int(getattr(oled, "height", 64))
+        ty = h - 8  # bottom text row (f_small is 7 px)
+
+        try:
+            from src.ui.glyphs import BATT_W as _batt_w, BATT_H as _batt_h
+        except Exception:
+            _batt_w, _batt_h = 12, 7
+        batt_x = w - _batt_w
+        batt_y = ty + self._BATT_DY
+
+        present = self._battery_present()
+        try:
+            from src.ui.glyphs import draw_battery
+            draw_battery(fb, batt_x, batt_y)
+        except Exception:
+            pass
+
+        if present is False:
+            try:
+                from src.ui.glyphs import draw_x_mark, XMARK_W, XMARK_H
+                x_x = batt_x - XMARK_W - self._BATT_XMARK_GAP
+                x_y = batt_y + (_batt_h - XMARK_H) // 2
+                draw_x_mark(fb, x_x, x_y, color=1)
+            except Exception:
+                pass
 
     # ============================================================
     # Status icons
@@ -649,6 +664,11 @@ class WaitingScreen:
             return
 
         self._draw_status_icons(oled, wifi_ok, gps_on, api_ok, api_sending)
+
+        try:
+            self._draw_home_room(oled, fb)
+        except Exception:
+            pass
 
         base = (line or "").rstrip().rstrip(". ")
         p = int(period_ms) or 1000

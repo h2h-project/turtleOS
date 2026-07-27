@@ -214,7 +214,23 @@ def run(
         debounce_ms=45,
     )
 
-    waiting = WaitingScreen()
+    def _room_name():
+        # Label for the airOS waiting screen's lower-left corner: the
+        # device's assigned room_name from the device API (turtle_mode=False
+        # only returns homes/rooms/communities — see flows._fetch_device_info).
+        try:
+            if isinstance(api_boot, dict):
+                rn = api_boot.get("room_name")
+                if rn:
+                    return rn
+        except Exception:
+            pass
+        return None
+
+    waiting = WaitingScreen(
+        room_get=_room_name,
+        battery_present_get=lambda: _ina_dev is not None,
+    )
 
     def _mission_name():
         # Label for the waiting screen's lower-right corner: the mission
@@ -548,7 +564,10 @@ def run(
 
             elif name == "summary":
                 from src.ui.screens.summary import SummaryScreen
-                screens[name] = SummaryScreen(oled)
+                screens[name] = SummaryScreen(
+                    oled, cfg=cfg, i2c=i2c, ina=_ina_dev,
+                    rtc_info=rtc, room_get=_room_name,
+                )
 
             elif name == "time":
                 from src.ui.screens.time import TimeScreen
@@ -596,6 +615,14 @@ def run(
             elif name == "sleep":
                 from src.ui.screens.sleep import SleepScreen
                 screens[name] = SleepScreen(oled)
+
+            elif name == "version":
+                from src.ui.screens.version import VersionScreen
+                screens[name] = VersionScreen(
+                    oled,
+                    turtle_mode=cfg.get("turtle_mode", False),
+                    turtle_screen_get=lambda: get_screen("turtle_waiting"),
+                )
 
             elif name == "turtle_waiting":
                 from src.ui.screens.turtle_waiting import TurtleWaitingScreen
@@ -846,7 +873,8 @@ def run(
         if action == "single":
             screens.clear(); _gc()
             # If temp/co2/tvoc missing, the improved get_screen() will now PRINT WHY.
-            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg)
+            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
+                            telemetry=telemetry)
             continue
 
         if action == "double":

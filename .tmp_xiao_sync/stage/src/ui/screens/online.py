@@ -223,10 +223,14 @@ class OnlineScreen:
                 return "sleep"
 
             if action == "double":
-                # Toggle telemetry_enabled
+                # Toggle telemetry on/off. telemetry_mode is authoritative —
+                # telemetry_enabled alone would be rebuilt from it on the next
+                # load_config(). Turning back on always lands in "auto"; pick
+                # "manual" explicitly on the Telemetry screen.
                 self._load_cfg()
                 self._enabled = not self._enabled
                 try:
+                    self.cfg["telemetry_mode"] = "auto" if self._enabled else "off"
                     self.cfg["telemetry_enabled"] = self._enabled
                     save_config(self.cfg)
                 except Exception:

@@ -76,6 +76,10 @@ class TelemetryScheduler:
         self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None}
         self._send_now = False
 
+        # One-shot: set by send_manual() so the next payload is flagged as a
+        # hand-taken registry stamp rather than an automatic sample.
+        self._manual_flag = False
+
         # Background process — set via set_background_process() after start-up.
         # When present, tick() hands payloads off non-blocking instead of sending inline.
         self._background_process = None
@@ -93,6 +97,27 @@ class TelemetryScheduler:
         self._send_now = True
         self._next_send_ms = time.ticks_ms()
         self._dbg_print("[ONLINE] request_now: send queued")
+
+    def send_manual(self):
+        """
+        Arm a hand-taken registry stamp. Punches through the "manual" mode gate
+        in tick() and marks the resulting payload as manual, not auto-logged.
+        """
+        self._manual_flag = True
+        self.request_now()
+
+    def manual_pending(self):
+        """
+        True while an armed manual stamp has not yet produced a payload.
+        _build_full_payload() consumes the flag only when it actually builds one,
+        so a still-set flag means no record was created (RTC not yet synced,
+        sampling in flight, or no values) — the caller must not report success.
+        """
+        return bool(self._manual_flag)
+
+    def clear_manual(self):
+        """Drop an unconsumed manual arm so it cannot leak into a later send."""
+        self._manual_flag = False
 
     @staticmethod
     def read_last_sent():
@@ -596,10 +621,15 @@ class TelemetryScheduler:
             if gps_lat is not None:
                 self._dbg_print("telemetry: gps lat=", gps_lat, "lon=", gps_lon)
 
+        # One-shot manual flag: consumed here so a later automatic send is not
+        # mislabelled as a hand-taken stamp.
+        _manual = bool(self._manual_flag)
+        self._manual_flag = False
+
         payload = {
             "recorded_at": recorded_at,
             "values": values,
-            "flags": {"auto_log": True},
+            "flags": {"auto_log": not _manual, "manual_registry": _manual},
         }
 
         # Machine state (BOOT/ACQUIRE/SAIL_NAV/ARRIVAL/SAFE) — top-level so
@@ -620,7 +650,23 @@ class TelemetryScheduler:
         return payload
 
     def tick(self, cfg, rtc_dict=None):
-        if not cfg or not cfg.get("telemetry_enabled", True):
+        if not cfg:
+            return
+
+        # telemetry_mode: "auto" posts on the interval; "manual" posts only when
+        # request_now()/send_manual() has armed _send_now; "off" never posts.
+        try:
+            mode = str(cfg.get("telemetry_mode", "auto") or "auto").strip().lower()
+        except Exception:
+            mode = "auto"
+        if mode not in ("off", "auto", "manual"):
+            mode = "auto"
+
+        if mode == "off":
+            self._send_now = False
+            self._manual_flag = False
+            return
+        if mode != "auto" and not self._send_now:
             return
 
         now = time.ticks_ms()

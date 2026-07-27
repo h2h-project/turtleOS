@@ -56,19 +56,37 @@ class GPSScreen:
         self._next_text_ms = 0
         self._status = ""
 
+        # Manual telemetry registry state (only used when telemetry_mode=="manual")
+        self._tel_mode = "auto"
+        # None | "sending" | "ok" | "fail" | "stamped" | "nostamp"
+        self._send_state = None
+        self._send_result_until_ms = 0
+        # Readings recorded since this screen was opened — the idle registry
+        # line shows it so the user can count stamps without a serial console.
+        self._stamp_count = 0
+        # Async watch for the network outcome of the last stamp
+        self._outcome_before_ms = None
+        self._outcome_watch_until_ms = 0
+        # Next periodic NMEA drain while parked on this screen
+        self._next_read_ms = 0
+
         self._load_config()
 
     # ----------------------------
     # Config
     # ----------------------------
 
-    def _load_config(self):
+    def _load_config(self, cfg=None):
         try:
-            from config import load_config
-            cfg = load_config() or {}
+            if cfg is None:
+                from config import load_config
+                cfg = load_config() or {}
             self.enabled = bool(cfg.get("gps_enabled", False))
+            mode = str(cfg.get("telemetry_mode", "auto") or "auto").strip().lower()
+            self._tel_mode = mode if mode in ("off", "auto", "manual") else "auto"
         except Exception:
             self.enabled = False
+            self._tel_mode = "auto"
 
     def _save_config(self):
         try:
@@ -100,6 +118,21 @@ class GPSScreen:
         except Exception:
             return None
 
+    def _publish_fix(self, lat, lon):
+        """Push a parsed fix into the shared nav cache.
+
+        This screen drains the same UART the telemetry scheduler reads from, so
+        without this the scheduler's own drain comes up empty and a manual stamp
+        is recorded with no lat/lon at all.
+        """
+        try:
+            from src.nav import gpsfix
+            # Keep whatever course-over-ground nav last published — this screen
+            # does not parse it, and clobbering it with None would blind nav.
+            gpsfix.update(round(lat, 6), round(lon, 6), gpsfix.cog_deg())
+        except Exception:
+            pass
+
     def _parse_rmc(self, line):
         try:
             p = line.split(",")
@@ -113,6 +146,8 @@ class GPSScreen:
                 if lat is not None and lon is not None:
                     self.last_lat = lat
                     self.last_lon = lon
+                    if self.last_fix:
+                        self._publish_fix(lat, lon)
         except Exception:
             pass
 
@@ -135,6 +170,8 @@ class GPSScreen:
                 if lat is not None and lon is not None:
                     self.last_lat = lat
                     self.last_lon = lon
+                    if self.last_fix:
+                        self._publish_fix(lat, lon)
         except Exception:
             pass
 
@@ -208,14 +245,66 @@ class GPSScreen:
         if redraw:
             self._draw(gps_flash=self._gps_flash_on)
 
-        # Short read each iteration (50 ms at most)
-        self._consume_short(gps, max_ms=50)
+        # Short read each iteration (20 ms at most) — kept brief so the button
+        # is still sampled roughly every 30 ms during the check phase.
+        self._consume_short(gps, max_ms=20)
 
         # Done once min_ms has elapsed
         if time.ticks_diff(now, self._check_deadline_ms) >= 0:
             self._check_active = False
             return True
 
+        return False
+
+    # ----------------------------
+    # Manual registry line
+    # ----------------------------
+
+    def _pick_fitting(self, candidates):
+        """
+        Return the first candidate that fits left of the toggle in f_small.
+        Avoids mid-word truncation by falling back to shorter wordings.
+        """
+        o = self.oled
+        max_w = self.toggle.x - 4
+        f = getattr(o, "f_small", None)
+        if f is None:
+            return candidates[-1]
+        for text in candidates:
+            try:
+                tw, _ = o._text_size(f, text)
+            except Exception:
+                tw = len(text) * 5
+            if tw <= max_w:
+                return text
+        return candidates[-1]
+
+    def _registry_text(self):
+        st = self._send_state
+        if st == "sending":
+            return self._pick_fitting(
+                ("Stamping & Sending...", "Stamping&Sending...", "Sending...")
+            )
+        if st == "ok":
+            return "Sent"
+        if st == "fail":
+            return "Send failed"
+        if st == "stamped":
+            # Handed to the background sender; outcome unknown from here.
+            return "Stamped"
+        if st == "nostamp":
+            return self._pick_fitting(("Not stamped - retry", "Not stamped"))
+        if self._stamp_count:
+            return "Logged: {}".format(self._stamp_count)
+        return self._pick_fitting(("Click to log", "Click"))
+
+    def _expire_send_result(self):
+        """Clear a transient send result once its hold time is up."""
+        if self._send_state in (None, "sending"):
+            return False
+        if time.ticks_diff(time.ticks_ms(), self._send_result_until_ms) >= 0:
+            self._send_state = None
+            return True
         return False
 
     # ----------------------------
@@ -281,15 +370,45 @@ class GPSScreen:
         else:
             status_text = "No GPS found"
 
-        o.f_med.write(status_text[:18], 0, data_y)
+        # Manual telemetry mode borrows the third data row for the registry
+        # line, so the fix/lat/lon rows shift up one slot. There is no room for
+        # a fourth row: data_y=22 with line_h=13 already ends at y=60 on a 64 px
+        # panel. "Fix acquired" is dropped in manual mode — the header GPS icon
+        # already conveys fix state, and lat/lon presence confirms it.
+        manual = (self._tel_mode == "manual") and not self._check_active
 
-        if self.enabled and not self._check_active:
-            if self.last_fix and self.last_lat is not None and self.last_lon is not None:
-                o.f_med.write("LAT:{:.4f}".format(self.last_lat), 0, data_y + line_h)
-                o.f_med.write("LON:{:.4f}".format(self.last_lon), 0, data_y + line_h * 2)
-            elif self._hw_present:
-                sats = "--" if self.last_sats is None else str(int(self.last_sats))
-                o.f_med.write("Sats: " + sats, 0, data_y + line_h)
+        have_fix = (
+            self.enabled
+            and not self._check_active
+            and self.last_fix
+            and self.last_lat is not None
+            and self.last_lon is not None
+        )
+
+        row = 0
+        if manual and have_fix:
+            o.f_med.write("LAT:{:.4f}".format(self.last_lat), 0, data_y)
+            o.f_med.write("LON:{:.4f}".format(self.last_lon), 0, data_y + line_h)
+            row = 2
+        else:
+            o.f_med.write(status_text[:18], 0, data_y)
+            row = 1
+            if self.enabled and not self._check_active:
+                if have_fix:
+                    o.f_med.write("LAT:{:.4f}".format(self.last_lat), 0, data_y + line_h)
+                    o.f_med.write("LON:{:.4f}".format(self.last_lon), 0, data_y + line_h * 2)
+                    row = 3
+                elif self._hw_present:
+                    sats = "--" if self.last_sats is None else str(int(self.last_sats))
+                    o.f_med.write("Sats: " + sats, 0, data_y + line_h)
+                    row = 2
+
+        if manual and row <= 2:
+            o.f_small.write(
+                self._registry_text(),
+                0,
+                data_y + line_h * 2,
+            )
 
         self.toggle.draw(fb, on=self.enabled)
         fb.show()
@@ -298,14 +417,150 @@ class GPSScreen:
     # Public entry
     # ----------------------------
 
-    def show_live(self, gps, btn):
+    def _toggle_gps(self, gps, btn):
+        """Flip gps_enabled, persist, and restart the check if turning on."""
+        if not gps:
+            return
+
+        self.enabled = not self.enabled
+        self._save_config()
+        self._clear_data()
+
+        if self.enabled:
+            try:
+                gps.enable()
+            except Exception:
+                pass
+            self._start_animated_check(min_ms=1000)
+            self._draw(gps_flash=True)
+        else:
+            try:
+                gps.disable()
+            except Exception:
+                pass
+            self._check_active = False
+            self._draw()
+
+        try:
+            btn.reset()
+        except Exception:
+            pass
+
+    def _manual_send(self, btn, cfg, telemetry):
         """
-        Single click : advance carousel.
-        Double click : toggle GPS enabled and re-check if turning on.
+        Stamp and record one telemetry reading on demand. Never blocks.
+
+        tick() commits the payload before returning — handed to the background
+        sender, or written straight to the flash queue when offline — so this
+        reports "Stamped" and returns immediately. Any network outcome is picked
+        up afterwards by _poll_send_outcome() from the main screen loop, which
+        keeps rapid stamping responsive: a blocking wait here would swallow the
+        next click.
+        """
+        if telemetry is None:
+            self._send_state = "fail"
+            self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
+            self._draw()
+            return
+
+        self._send_state = "sending"
+        self._draw()
+
+        before_ms = None
+        try:
+            before_ms = telemetry.api_state.get("last_ms")
+        except Exception:
+            pass
+
+        armed = False
+        try:
+            armed = bool(telemetry.send_manual())
+        except Exception as _e:
+            print("[GPS] manual send arm failed:", repr(_e))
+
+        if armed:
+            try:
+                telemetry.tick(cfg)
+            except Exception as _e:
+                print("[GPS] manual send tick failed:", repr(_e))
+
+        result = "fail" if not armed else "stamped"
+
+        # No payload was built (RTC not yet synced, sampling in flight, or no
+        # values) — nothing was recorded, so do not claim it was.
+        if armed:
+            try:
+                if telemetry.manual_pending():
+                    telemetry.clear_manual()
+                    self._send_state = "nostamp"
+                    self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
+                    self._draw()
+                    try:
+                        btn.reset()
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+
+        if armed:
+            # A payload was built and committed (queued to flash or handed to
+            # the sender) — count it regardless of what the network does next.
+            self._stamp_count += 1
+            self._outcome_before_ms = before_ms
+            self._outcome_watch_until_ms = time.ticks_add(time.ticks_ms(), 6000)
+        else:
+            self._outcome_watch_until_ms = 0
+
+        self._send_state = result
+        self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
+        self._draw()
+
+    def _poll_send_outcome(self, telemetry):
+        """
+        Upgrade a "Stamped" line to "Sent"/"Send failed" once the background
+        sender reports back. Non-blocking; returns True if a redraw is needed.
+        """
+        if telemetry is None or self._send_state != "stamped":
+            return False
+        if time.ticks_diff(time.ticks_ms(), self._outcome_watch_until_ms) >= 0:
+            self._outcome_watch_until_ms = 0
+            return False
+        try:
+            st = telemetry.api_state
+            if st.get("last_ms") == self._outcome_before_ms or st.get("ok") is None:
+                return False
+            self._send_state = "ok" if st.get("ok") else "fail"
+        except Exception:
+            return False
+        self._outcome_watch_until_ms = 0
+        self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
+        return True
+
+        try:
+            btn.reset()
+        except Exception:
+            pass
+
+    def show_live(self, gps, btn, cfg=None, telemetry=None):
+        """
+        In manual telemetry mode (the field-logging layout):
+          Single click : stamp and record one telemetry reading.
+          Double click : advance to the next screen.
+          Triple click : toggle GPS enabled.
+        In auto/off mode:
+          Single click : advance to the next screen.
+          Double click : toggle GPS enabled (unchanged legacy behaviour).
+
+        Stamping is the single click because it is the one action repeated
+        dozens of times in a session; advancing happens once.
         """
         btn.reset()
-        self._load_config()
+        self._load_config(cfg)
         self._clear_data()
+        self._send_state = None
+        self._stamp_count = 0
+        self._next_read_ms = time.ticks_ms()
 
         try:
             if gps:
@@ -314,55 +569,73 @@ class GPSScreen:
             pass
         gc.collect()
 
-        # Always animate the GPS check on entry (at least 1 s)
-        self._start_animated_check(min_ms=1000)
-        self._draw(gps_flash=True)
+        # This screen listens more sensitively than the rest of the UI: a
+        # shorter click window makes double/triple stamping feel immediate.
+        # Restored in the finally block on every exit path.
+        _saved_window_ms = getattr(btn, "click_window_ms", None)
+        try:
+            if _saved_window_ms is not None:
+                btn.click_window_ms = 350
+        except Exception:
+            _saved_window_ms = None
 
-        while True:
-            try:
-                action = btn.poll_action()
-            except Exception:
-                action = None
+        try:
+            # Always animate the GPS check on entry (at least 1 s)
+            self._start_animated_check(min_ms=1000)
+            self._draw(gps_flash=True)
 
-            if action == "single":
-                return "single"
+            manual = (self._tel_mode == "manual")
 
-            if action == "quad":
-                return "quad"
+            while True:
+                try:
+                    action = btn.poll_action()
+                except Exception:
+                    action = None
 
-            if action == "sleep":
-                return "sleep"
+                if action == "single":
+                    if not manual:
+                        return "single"
+                    self._manual_send(btn, cfg, telemetry)
 
-            if action == "double":
-                if not gps:
-                    time.sleep_ms(25)
-                    continue
+                elif action == "quad":
+                    return "quad"
 
-                self.enabled = not self.enabled
-                self._save_config()
-                self._clear_data()
+                elif action == "sleep":
+                    return "sleep"
 
-                if self.enabled:
-                    try:
-                        gps.enable()
-                    except Exception:
-                        pass
-                    self._start_animated_check(min_ms=1000)
-                    self._draw(gps_flash=True)
-                else:
-                    try:
-                        gps.disable()
-                    except Exception:
-                        pass
-                    self._check_active = False
+                elif action == "double":
+                    if manual:
+                        # "single" is the carousel's advance token, whichever
+                        # gesture produced it.
+                        return "single"
+                    self._toggle_gps(gps, btn)
+
+                elif action == "triple" and manual:
+                    self._toggle_gps(gps, btn)
+
+                # Drive the animated check
+                if self._check_active:
+                    done = self._tick_animated_check(gps)
+                    if done:
+                        self._draw()   # settle on final icon state
+                elif self._poll_send_outcome(telemetry):
                     self._draw()
+                elif self._expire_send_result():
+                    self._draw()
+                elif self.enabled and time.ticks_diff(time.ticks_ms(), self._next_read_ms) >= 0:
+                    # Keep the fix live while parked here: the position on
+                    # screen is what a stamp records, and a stale one would be
+                    # logged against the wrong spot.
+                    self._next_read_ms = time.ticks_add(time.ticks_ms(), 500)
+                    _before = (self.last_lat, self.last_lon, self.last_fix, self.last_sats)
+                    self._consume_short(gps, max_ms=40)
+                    if (self.last_lat, self.last_lon, self.last_fix, self.last_sats) != _before:
+                        self._draw()
 
-                btn.reset()
-
-            # Drive the animated check
-            if self._check_active:
-                done = self._tick_animated_check(gps)
-                if done:
-                    self._draw()   # settle on final icon state
-
-            time.sleep_ms(25)
+                time.sleep_ms(10)
+        finally:
+            if _saved_window_ms is not None:
+                try:
+                    btn.click_window_ms = _saved_window_ms
+                except Exception:
+                    pass

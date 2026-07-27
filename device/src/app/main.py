@@ -873,7 +873,8 @@ def run(
         if action == "single":
             screens.clear(); _gc()
             # If temp/co2/tvoc missing, the improved get_screen() will now PRINT WHY.
-            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg)
+            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
+                            telemetry=telemetry)
             continue
 
         if action == "double":
@@ -913,7 +914,8 @@ def run(
 
         if action == "sleep":
             screens.clear(); _gc()
-            sleep_flow(btn, oled, get_screen, tick_fn=_bg_tick)
+            sleep_flow(btn, oled, get_screen, tick_fn=_bg_tick,
+                       gps=gps, cfg=cfg, telemetry=telemetry, status=status)
             continue
 
         if action == "quint":

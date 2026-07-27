@@ -35,6 +35,14 @@ DEFAULTS = {
     "wifi_password": "",
 
     # --- Telemetry ---
+    # telemetry_mode is authoritative:
+    #   "auto"   = post automatically every telemetry_post_every_s seconds
+    #   "manual" = no automatic posting; only stamps taken by hand on the GPS screen
+    #   "off"    = never post
+    # telemetry_enabled is a derived mirror (mode != "off") kept so older readers
+    # keep working. Writers must set telemetry_mode — _normalize_types() rebuilds
+    # telemetry_enabled from it on every load.
+    "telemetry_mode": "auto",
     "telemetry_enabled": True,
     "telemetry_post_every_s": 120,
     "morse_bless": False,   # blink button LED in Morse before each send; only useful when LED is wired
@@ -96,6 +104,9 @@ LEGACY_KEYS_TO_REMOVE = (
     "api-base",
 )
 
+# Valid telemetry_mode values, in toggle-cycle order (off -> auto -> manual -> off).
+TELEMETRY_MODES = ("off", "auto", "manual")
+
 
 # ----------------------------
 # Public API
@@ -123,6 +134,16 @@ def load_config():
             except Exception:
                 pass
             changed = True
+
+    # --- Migrate legacy telemetry boolean -> telemetry_mode ---
+    # Must run before defaults are applied, while we can still tell whether the
+    # file predates telemetry_mode. A device that had telemetry off stays off.
+    if "telemetry_mode" not in cfg:
+        cfg["telemetry_mode"] = "auto" if _to_bool(
+            cfg.get("telemetry_enabled", DEFAULTS["telemetry_enabled"]),
+            DEFAULTS["telemetry_enabled"],
+        ) else "off"
+        changed = True
 
     # --- Apply defaults ---
     for k, v in DEFAULTS.items():
@@ -207,6 +228,23 @@ def _normalize_types(cfg):
         if old_val != new_val:
             cfg[key] = new_val
             changed = True
+
+    # --- Telemetry mode (tri-state; authoritative) ---
+    # Runs after the boolean loop above so the derived mirror always wins.
+    try:
+        mode = str(cfg.get("telemetry_mode", DEFAULTS["telemetry_mode"]) or "").strip().lower()
+    except Exception:
+        mode = DEFAULTS["telemetry_mode"]
+    if mode not in TELEMETRY_MODES:
+        mode = DEFAULTS["telemetry_mode"]
+    if cfg.get("telemetry_mode") != mode:
+        cfg["telemetry_mode"] = mode
+        changed = True
+
+    tel_enabled = (mode != "off")
+    if cfg.get("telemetry_enabled") != tel_enabled:
+        cfg["telemetry_enabled"] = tel_enabled
+        changed = True
 
     # --- Strings ---
     wifi_ssid = str(cfg.get("wifi_ssid", "") or "").strip()

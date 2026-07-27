@@ -2,7 +2,7 @@
 #
 # Output is a sail-angle correction in degrees around the neutral trim.
 # Gains are placeholders pending tethered water trials (see
-# docs/pending_nav_dev.md).
+# docs/navigation_roadmap.md).
 
 class PID:
     def __init__(self, kp=1.0, ki=0.0, kd=0.2,

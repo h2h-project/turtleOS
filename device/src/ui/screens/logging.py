@@ -11,16 +11,41 @@ except Exception:
     _ch = None
     GPS_NONE = 0
 
+# Double-click cycle order for the tri-state toggle. Index doubles as the
+# knob position passed to ToggleSwitch.draw(pos=...): 0=bottom, 1=mid, 2=top.
+MODE_CYCLE = ("off", "auto", "manual")
+MODE_LABELS = {"off": "Off", "auto": "Auto", "manual": "Manual"}
+
 
 class LoggingScreen:
     def __init__(self, oled):
         self.oled = oled
-        self.toggle = ToggleSwitch(x=100, y=21, w=24, h=40)
 
-        self._enabled = False
+        w = int(getattr(oled, "width", 128))
+        h = int(getattr(oled, "height", 64))
+
+        # Match the Online screen's toggle geometry exactly — same x/y/w/h,
+        # tallest the switch can be without running off the bottom edge.
+        tx = 100
+        ty = 16
+        tw = 24
+        th = 43
+        if tx + tw > w:
+            tw = max(1, w - tx)
+        if ty + th > h:
+            th = max(1, h - ty)
+
+        self.toggle = ToggleSwitch(x=tx, y=ty, w=tw, h=th)
+
+        self._mode = "auto"
         self._post_every_s = 120
         self._api_base = ""
         self._single_grace_ms = 350
+
+        # Live config dict handed in by the carousel, so a mode change takes
+        # effect on the very next background tick instead of after the carousel
+        # exits and the main loop re-reads config.json.
+        self._live_cfg = None
 
     # ----------------------------
     # Config
@@ -28,16 +53,36 @@ class LoggingScreen:
 
     def _reload_config(self):
         cfg = load_config()
-        self._enabled = bool(cfg.get("telemetry_enabled", True))
+        self._mode = self._norm_mode(cfg.get("telemetry_mode", "auto"))
         self._post_every_s = int(cfg.get("telemetry_post_every_s", 120))
         self._api_base = str(cfg.get("api_base", "") or "")
         return cfg
 
-    def _apply_toggle(self):
+    @staticmethod
+    def _norm_mode(val):
+        try:
+            m = str(val or "").strip().lower()
+        except Exception:
+            m = ""
+        return m if m in MODE_CYCLE else "auto"
+
+    def _cycle_mode(self):
+        """Advance off -> auto -> manual -> off and persist."""
         cfg = self._reload_config()
-        self._enabled = not self._enabled
-        cfg["telemetry_enabled"] = self._enabled
+        try:
+            nxt = MODE_CYCLE[(MODE_CYCLE.index(self._mode) + 1) % len(MODE_CYCLE)]
+        except Exception:
+            nxt = "auto"
+
+        self._mode = nxt
+        cfg["telemetry_mode"] = nxt
+        cfg["telemetry_enabled"] = (nxt != "off")
         save_config(cfg)
+
+        # Push into the live dict the background tick reads from.
+        if isinstance(self._live_cfg, dict):
+            self._live_cfg["telemetry_mode"] = nxt
+            self._live_cfg["telemetry_enabled"] = (nxt != "off")
 
     # ----------------------------
     # Drawing
@@ -50,6 +95,29 @@ class LoggingScreen:
             return TelemetryScheduler.queue_size()
         except Exception:
             return 0
+
+    def _fit(self, text, max_w):
+        """Truncate text (from the end) until it fits within max_w pixels."""
+        o = self.oled
+        f_small = getattr(o, "f_small", None)
+        if f_small is None or max_w <= 0:
+            return text
+        try:
+            tw, _ = o._text_size(f_small, text)
+        except Exception:
+            tw = len(text) * 5
+        if tw <= max_w:
+            return text
+        s = text
+        while len(s) > 1:
+            s = s[:-1]
+            try:
+                tw, _ = o._text_size(f_small, s)
+            except Exception:
+                tw = len(s) * 5
+            if tw <= max_w:
+                break
+        return s
 
     def _draw(self):
         o = self.oled
@@ -69,12 +137,41 @@ class LoggingScreen:
                 pass
 
         o.f_arvo20.write("Telemetry", 0, 0)
-        self.toggle.draw(fb, on=self._enabled)
+        try:
+            _pos = MODE_CYCLE.index(self._mode)
+        except Exception:
+            _pos = 1
+        self.toggle.draw(fb, pos=_pos)
 
-        api_str = (self._api_base or "---")[:18]
-        o.f_med.write(api_str, 0, 28)
-        o.f_med.write("Post: " + str(self._post_every_s) + "s", 0, 41)
-        o.f_med.write("Unsynced: " + str(self._queue_size()), 0, 53)
+        # Status line — current font (f_med), directly under the title.
+        mode_label = MODE_LABELS.get(self._mode, "Auto")
+        _, title_h = o._text_size(o.f_arvo20, "Telemetry")
+        y_status = title_h + 2
+        o.f_med.write(mode_label, 0, y_status)
+
+        # Detail lines — API base, post frequency, unsynced — shrunk to the
+        # smallest available font (f_small) to make room for the status line.
+        # Fixed probe string so row height (and therefore the layout below)
+        # does not shift as the mode label changes.
+        _, row_h = o._text_size(o.f_med, "Ag")
+        _, small_h = o._text_size(o.f_small, "Ag")
+        y1 = y_status + row_h + 3
+        y2 = y1 + small_h + 3
+        y3 = y2 + small_h + 3
+
+        # f_small is narrow enough that the API base line can run right up
+        # to the toggle switch instead of stopping at a fixed char count.
+        api_max_w = self.toggle.x - 4
+        api_str = self._fit(self._api_base or "---", api_max_w)
+        o.f_small.write(api_str, 0, y1)
+        if self._mode == "manual":
+            post_str = "Post: on demand"
+        elif self._mode == "off":
+            post_str = "Post: --"
+        else:
+            post_str = "Post: " + str(self._post_every_s) + "s"
+        o.f_small.write(post_str, 0, y2)
+        o.f_small.write("Unsynced: " + str(self._queue_size()), 0, y3)
 
         fb.show()
 
@@ -82,9 +179,10 @@ class LoggingScreen:
     # Public
     # ----------------------------
 
-    def show_live(self, btn, get_queue_size=None, get_last_sent=None, tick_fn=None):
+    def show_live(self, btn, get_queue_size=None, get_last_sent=None, tick_fn=None, cfg=None):
         btn.reset()
 
+        self._live_cfg = cfg if isinstance(cfg, dict) else None
         self._reload_config()
         self._draw()
 
@@ -112,8 +210,7 @@ class LoggingScreen:
 
             elif action == "double":
                 pending_single_deadline = None
-                self._apply_toggle()
-                self._reload_config()
+                self._cycle_mode()
                 self._draw()
                 btn.reset()
                 continue
