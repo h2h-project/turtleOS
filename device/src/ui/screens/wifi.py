@@ -5,6 +5,7 @@ import sys as _sys
 from src.ui.toggle import ToggleSwitch
 from config import load_config, save_config
 from src.net.wifi_manager import WiFiManager
+from src.ui import grace as _grace
 
 try:
     from src.ui import connection_header as _ch
@@ -50,6 +51,8 @@ class WiFiScreen:
         self._last_status = ""
         self._last_ip = ""
         self._last_refresh_ms = 0
+        self._checking = False
+        self._dots = 0
 
     # ----------------------------
     # Config
@@ -70,6 +73,7 @@ class WiFiScreen:
             return False
 
     def _live_update(self):
+        self._checking = False
         if self._is_connected():
             try:
                 self._last_ip = self.wifi.ip() or ""
@@ -120,7 +124,10 @@ class WiFiScreen:
             o.f_med.write("2x click to", 0, data_y + line_h)
             o.f_med.write("turn on.", 0, data_y + line_h * 2)
         else:
-            o.f_med.write(self._last_status[:18], 0, data_y)
+            status_text = self._last_status
+            if self._checking:
+                status_text = status_text + ("." * self._dots)
+            o.f_med.write(status_text[:18], 0, data_y)
             if connected:
                 if self.ssid:
                     o.f_med.write(self.ssid[:18], 0, data_y + line_h)
@@ -186,7 +193,9 @@ class WiFiScreen:
         flash_on = True
         last_flash_ms = time.ticks_add(start_ms, -300)
         last_log_ms   = time.ticks_add(start_ms, -1000)   # first poll log fires immediately
-        self._last_status = "Checking..."
+        self._last_status = "Checking"
+        self._checking = True
+        self._dots = 0
         found = False
         result = (False, "")
 
@@ -197,10 +206,11 @@ class WiFiScreen:
             elapsed = time.ticks_diff(now, start_ms)
             past_min = time.ticks_diff(now, min_end_ms) >= 0
 
-            # Flash every 300 ms
+            # Flash every 300 ms, and animate the "..." alongside it
             if not past_min or not found:
                 if time.ticks_diff(now, last_flash_ms) >= 300:
                     flash_on = not flash_on
+                    self._dots = (self._dots + 1) % 4
                     last_flash_ms = now
                     self._draw(wifi_flash=flash_on)
 
@@ -253,12 +263,14 @@ class WiFiScreen:
                     result = (True, ip)
                     self._last_ip = ip
                     self._last_status = "Connected"
+                    self._checking = False
                     print("[WIFI_SCR] CONNECTED ip=%r at t=%dms" % (ip, elapsed))
                 elif time.ticks_diff(now, deadline_ms) >= 0:
                     found = True
                     result = (False, "")
                     self._last_status = "Not connected"
                     self._last_ip = ""
+                    self._checking = False
                     # Final status snapshot on timeout
                     try:
                         if _IS_ESP32 and wlan:
@@ -279,6 +291,32 @@ class WiFiScreen:
                 return result
 
             time.sleep_ms(50)
+
+    # ----------------------------
+    # Enable/disable helpers
+    # ----------------------------
+    def _disable_radio(self):
+        try:
+            self.wifi.disconnect()
+        except Exception:
+            pass
+        try:
+            self.wifi.active(False)
+        except Exception:
+            pass
+        self._last_status = "WiFi disabled"
+        self._last_ip = ""
+        self._checking = False
+        self._draw()
+
+    def _toggle_enabled(self):
+        self.enabled = not self.enabled
+        self.cfg["wifi_enabled"] = self.enabled
+        save_config(self.cfg)
+        if self.enabled:
+            self._animated_connect(min_ms=1500, timeout_ms=10000)
+        else:
+            self._disable_radio()
 
     # ----------------------------
     # Public Entry
@@ -303,20 +341,31 @@ class WiFiScreen:
 
         self._reload_cfg()
 
+        # Show last-known status first — no connect attempt yet — and give
+        # the user a 2s window to single-click straight past this screen
+        # before a live connect (which can block button polling for
+        # several seconds) ever starts.
+        if self.enabled:
+            self._live_update()
+        else:
+            self._last_status = "WiFi disabled"
+            self._last_ip = ""
+            self._checking = False
+        self._draw()
+
+        while True:
+            grace_action = _grace.await_grace_window(btn, tick_fn, ms=2000)
+            if grace_action is None:
+                break
+            if grace_action == "double":
+                self._toggle_enabled()
+                continue
+            return grace_action
+
         if self.enabled:
             self._animated_connect(min_ms=1500, timeout_ms=10000)
         else:
-            try:
-                self.wifi.disconnect()
-            except Exception:
-                pass
-            try:
-                self.wifi.active(False)
-            except Exception:
-                pass
-            self._last_status = "WiFi disabled"
-            self._last_ip = ""
-            self._draw()
+            self._disable_radio()
 
         self._last_refresh_ms = time.ticks_ms()
         _tick_next = time.ticks_ms()
@@ -353,23 +402,6 @@ class WiFiScreen:
                 return "sleep"
 
             elif action == "double":
-                self.enabled = not self.enabled
-                self.cfg["wifi_enabled"] = self.enabled
-                save_config(self.cfg)
-
-                if self.enabled:
-                    self._animated_connect(min_ms=1500, timeout_ms=10000)
-                else:
-                    try:
-                        self.wifi.disconnect()
-                    except Exception:
-                        pass
-                    try:
-                        self.wifi.active(False)
-                    except Exception:
-                        pass
-                    self._last_status = "WiFi disabled"
-                    self._last_ip = ""
-                    self._draw()
+                self._toggle_enabled()
 
             time.sleep_ms(25)

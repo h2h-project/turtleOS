@@ -120,10 +120,11 @@ class TurtleWaitingScreen:
     _BATT_DY = 1
     _BATT_TEXT_GAP = 6
 
-    def __init__(self, oled, nav_get=None, mission_get=None):
+    def __init__(self, oled, nav_get=None, mission_get=None, battery_get=None):
         self.oled = oled
         self._nav_get = nav_get        # callable -> NavController or None
         self._mission_get = mission_get  # callable -> mission name str or None
+        self._battery_get = battery_get  # callable -> bus voltage (float) or None
         w, h = oled.width, oled.height
         f1_fb,  f1_buf,  f1_x,  f1_y  = _prerender(_TURTLE_1,    w, h)
         f2_fb,  f2_buf,  f2_x,  f2_y  = _prerender(_TURTLE_2,    w, h)
@@ -152,6 +153,14 @@ class TurtleWaitingScreen:
         if not name:
             return None
         return str(name).strip() or None
+
+    def _battery_volts(self):
+        if self._battery_get is None:
+            return None
+        try:
+            return self._battery_get()
+        except Exception:
+            return None
 
     def _fit(self, text, max_w):
         """Truncate text (from the end) until it fits within max_w pixels."""
@@ -193,15 +202,21 @@ class TurtleWaitingScreen:
 
         nav = self._nav()
 
-        # Bottom-right corner: empty battery outline, flush to the right edge.
+        # Bottom-right corner: battery charge-level icon, flush to the right edge.
         try:
             from src.ui.glyphs import BATT_W as _batt_w
         except Exception:
             _batt_w = 12
         batt_x = w - _batt_w
+        volts = self._battery_volts()
         try:
-            from src.ui.glyphs import draw_battery
-            draw_battery(dst, batt_x, ty + self._BATT_DY)
+            if volts is None:
+                from src.ui.glyphs import draw_battery
+                draw_battery(dst, batt_x, ty + self._BATT_DY, no_battery=True)
+            else:
+                from src.ui.glyphs import draw_battery_level, battery_display_bands
+                bands, _status = battery_display_bands(volts)
+                draw_battery_level(dst, batt_x, ty + self._BATT_DY, bands_filled=bands)
         except Exception:
             pass
 

@@ -46,12 +46,13 @@ class WaitingScreen:
     _BATT_XMARK_GAP = 3
 
     def __init__(self, flip_x=False, flip_y=True, gap=6, logo_drop_px=10,
-                 room_get=None, battery_present_get=None):
+                 room_get=None, battery_present_get=None, battery_level_get=None):
         self.flip_x = bool(flip_x)
         self.flip_y = bool(flip_y)
 
         self._room_get = room_get                    # callable -> room name str or None
         self._battery_present_get = battery_present_get  # callable -> bool or None
+        self._battery_level_get = battery_level_get      # callable -> bus voltage (float) or None
 
         self.gap = int(gap)
         self.logo_drop_px = int(logo_drop_px)
@@ -91,6 +92,12 @@ class WaitingScreen:
         self._last_api_sending = None
         self._last_heartbeat_phase = None
         self._anim_frozen = False
+
+        # battery-critical blink: set by _draw_footer after each render so
+        # the wait loop can force a redraw on the blink's 500ms phase edges
+        # without re-reading the INA219 every 25ms poll.
+        self._last_battery_status = None
+        self._last_battery_phase = None
 
         # ---- DEBUG ----
         # Keep False in normal runs; turn on temporarily if diagnosing.
@@ -287,6 +294,10 @@ class WaitingScreen:
             api_connected = bool(self._wifi_ok) and bool(self._api_ok)
             hb_phase = self._heartbeat_phase(now, api_connected, api_sending)
 
+            # Force a redraw on each 500ms blink edge while the battery is
+            # critical, so the flash is visible even with nothing else changing.
+            batt_phase = (now // 500) % 2 if self._last_battery_status == "critical" else None
+
             # Freeze animation on first press so click counting is uninterrupted
             if not self._anim_frozen:
                 try:
@@ -314,7 +325,8 @@ class WaitingScreen:
                     self._api_ok != self._last_api_ok or
                     api_sending != self._last_api_sending or
                     _ch_morse != getattr(self, '_last_ch_morse', 0) or
-                    (not self._anim_frozen and hb_phase != self._last_heartbeat_phase)):
+                    (not self._anim_frozen and hb_phase != self._last_heartbeat_phase) or
+                    (batt_phase is not None and batt_phase != self._last_battery_phase)):
                 redraw = True
 
             if redraw:
@@ -330,6 +342,7 @@ class WaitingScreen:
                 )
                 self._remember_last(api_sending, hb_phase)
                 self._last_ch_morse = _ch_morse
+                self._last_battery_phase = batt_phase
 
             # ----------------------------------------------------
             # 3) Poll button
@@ -523,6 +536,14 @@ class WaitingScreen:
         except Exception:
             return None
 
+    def _battery_volts(self):
+        if self._battery_level_get is None:
+            return None
+        try:
+            return self._battery_level_get()
+        except Exception:
+            return None
+
     def _fit(self, oled, text, max_w):
         """Truncate text (from the end) until it fits within max_w pixels."""
         if max_w <= 0:
@@ -593,9 +614,17 @@ class WaitingScreen:
         batt_y = ty + self._BATT_DY
 
         present = self._battery_present()
+        volts = self._battery_volts() if present else None
         try:
-            from src.ui.glyphs import draw_battery
-            draw_battery(fb, batt_x, batt_y)
+            if volts is None:
+                from src.ui.glyphs import draw_battery
+                draw_battery(fb, batt_x, batt_y, no_battery=(present is False))
+                self._last_battery_status = None
+            else:
+                from src.ui.glyphs import draw_battery_level, battery_display_bands
+                bands, _status = battery_display_bands(volts)
+                draw_battery_level(fb, batt_x, batt_y, bands_filled=bands)
+                self._last_battery_status = _status
         except Exception:
             pass
 

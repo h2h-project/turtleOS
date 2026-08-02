@@ -537,11 +537,6 @@ class GPSScreen:
         self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
         return True
 
-        try:
-            btn.reset()
-        except Exception:
-            pass
-
     def show_live(self, gps, btn, cfg=None, telemetry=None):
         """
         In manual telemetry mode (the field-logging layout):

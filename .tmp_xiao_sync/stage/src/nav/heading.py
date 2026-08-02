@@ -1,17 +1,17 @@
 # src/nav/heading.py — heading source abstraction
 #
-# Wraps the magnetometer behind a stable interface so the planned
-# ICM-20948 9-axis IMU (complementary filter: heading = 0.98 x (heading +
-# gyro_yaw_rate x dt) + 0.02 x magnetometer_heading) can drop in without
-# touching NavController or any screen.
+# Wraps the magnetometer behind a stable interface so a fused heading
+# (Phase S TODO: complementary filter — heading = 0.98 x (heading +
+# gyro_yaw_rate x dt) + 0.02 x magnetometer_heading, using the MPU-9250's
+# gyro) can drop in without touching NavController or any screen.
 #
-# NOTE for the ICM-20948 integration: its default I2C address 0x68
-# collides with the DS3231 RTC on the shared bus — strap AD0 high (0x69)
-# or relocate the RTC. See docs/navigation_roadmap.md.
+# As of Phase 0, the backing chip is the MPU-9250 (0x69) with its AK8963
+# magnetometer exposed via I2C bypass at 0x0C — see
+# src/drivers/mpu9250.py and docs/navigation_roadmap.md.
 
 
 class HeadingSource:
-    """Tilt-naive magnetometer heading (QMC5883L primary, HMC5883L fallback)."""
+    """Tilt-naive magnetometer heading (MPU-9250 / AK8963)."""
 
     def __init__(self, i2c=None, mag=None, offset_deg=0):
         self._i2c = i2c
@@ -26,17 +26,9 @@ class HeadingSource:
             return None
         self._probed = True
         try:
-            from src.drivers.hmc5883l_qmc5883l import QMC5883L
-            m = QMC5883L(self._i2c)
-            if m.is_present:
-                self._mag = m
-                return self._mag
-        except Exception:
-            pass
-        try:
-            from src.drivers.hmc5883l_qmc5883l import HMC5883L
-            m = HMC5883L(self._i2c)
-            if m.is_present:
+            from src.drivers.mpu9250 import MPU9250
+            m = MPU9250(self._i2c)
+            if m.is_present and m.mag is not None:
                 self._mag = m
         except Exception:
             pass

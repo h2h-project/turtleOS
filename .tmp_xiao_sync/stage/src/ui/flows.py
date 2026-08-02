@@ -391,6 +391,20 @@ def _offline_notice(oled, btn, lines, dwell_ms=1200, poll_ms=25):
         return None
 
 
+def _request_wifi_check(telemetry, force=False):
+    """Ask the telemetry background process to try associating.
+
+    Non-blocking and best-effort: no background process (or no telemetry yet)
+    simply means nothing to ask.
+    """
+    try:
+        bp = telemetry.scheduler._background_process
+        if bp is not None:
+            bp.request_wifi_check(force=force)
+    except Exception:
+        pass
+
+
 def connectivity_carousel(
         btn,
         oled,
@@ -457,6 +471,12 @@ def connectivity_carousel(
         wifi_ok = bool(status.get("wifi_ok"))
     except Exception:
         wifi_ok = False
+
+    # Opening this carousel is an explicit request for connectivity, so it
+    # bypasses the background process's retry floor. The send path itself no
+    # longer scans (see TelemetryBackgroundProcess._send) — without this, a
+    # device that dropped its AP at sea would have no user-driven way back on.
+    _request_wifi_check(telemetry, force=True)
 
     # ------------------------------------------------------------
     # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.
@@ -680,7 +700,7 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    _all_screens = (["sailpoint", "servo", "destination"] if _turtle_mode else []) \
+    _all_screens = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) \
                    + _sensor_screens \
                    + (["summary"] if _sensor_screens else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
@@ -688,7 +708,7 @@ def sensor_carousel(
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = (["sailpoint", "servo", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
+    _preload = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
     for _n in _preload:
         get_screen(_n)
         _gc()
@@ -742,7 +762,32 @@ def sensor_carousel(
             return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- DESTINATION (third in single-click carousel, turtle mode only) ----
+        # ---- COMPASS (third in single-click carousel, turtle mode only) ----
+        _gc()
+        compass_scr2 = get_screen("compass")
+        try:
+            _hdg = compass_scr2._read() if compass_scr2 else None
+            if _hdg is not None:
+                _log_screen("compass", "heading={:.1f} deg".format(_hdg))
+            else:
+                _log_screen("compass", err="IMU not connected")
+        except Exception:
+            _log_screen("compass")
+        if compass_scr2 and hasattr(compass_scr2, "show_live"):
+            try:
+                a = compass_scr2.show_live(btn, tick_fn=tick_fn)
+            except Exception:
+                a = None
+        else:
+            draw_text(oled, "Compass", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        if a not in ("single", None):
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- DESTINATION (fourth in single-click carousel, turtle mode only) ----
         _gc()
         dest_scr = get_screen("destination")
         try:

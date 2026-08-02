@@ -80,6 +80,10 @@ class TelemetryScheduler:
         # hand-taken registry stamp rather than an automatic sample.
         self._manual_flag = False
 
+        # Inline-path WiFi retry backoff — see the reconnect call in tick().
+        self._last_wifi_attempt_ms = None
+        self._wifi_fail_streak = 0
+
         # Background process — set via set_background_process() after start-up.
         # When present, tick() hands payloads off non-blocking instead of sending inline.
         self._background_process = None
@@ -321,10 +325,17 @@ class TelemetryScheduler:
     _GPS_RELOC_THRESH = 5       # clear reference after this many consecutive all-rejected ticks
 
     def _read_gps_fix(self):
-        """Non-blocking: drain UART buffer and return (lat, lon) from the first active RMC, or (None, None)."""
+        """Non-blocking: drain the UART buffer and return (lat, lon) from the
+        newest active RMC, or (None, None).
+
+        Drains to the end rather than returning on the first RMC: if the
+        buffer ever holds more than one epoch, the first sentence is the
+        oldest position in the queue, not the current one.
+        """
         if self.gps is None:
             return None, None
         delta_rejects = 0
+        newest = None
         try:
             for _ in range(30):
                 line = self.gps.read_nmea()
@@ -342,9 +353,11 @@ class TelemetryScheduler:
                     self._last_gps_lat = lat
                     self._last_gps_lon = lon
                     self._gps_reject_streak = 0
-                    return lat, lon
+                    newest = (lat, lon)
         except Exception:
             pass
+        if newest is not None:
+            return newest
         if delta_rejects > 0:
             self._gps_reject_streak += 1
             if self._gps_reject_streak >= self._GPS_RELOC_THRESH:
@@ -551,6 +564,35 @@ class TelemetryScheduler:
         except Exception:
             return None
 
+    # Mirrors TelemetryBackgroundProcess — see the rationale there.
+    WIFI_RETRY_BASE_MS = 900000      # 15 min
+    WIFI_RETRY_CAP_MS = 43200000     # 12 h
+    WIFI_FAIL_STREAK_MAX = 6
+
+    def _may_retry_wifi(self, cfg=None):
+        """True when the inline fallback path may attempt an association again.
+
+        Honours mission_connection_mode: wifi_manual / lora never bring the
+        radio up automatically. This path has no screen wiring, so there is no
+        force override here — a deliberate reconnect goes through the
+        background process.
+        """
+        try:
+            mode = str((cfg or {}).get("mission_connection_mode", "wifi_auto") or "wifi_auto")
+        except Exception:
+            mode = "wifi_auto"
+        if mode != "wifi_auto":
+            return False
+
+        last = self._last_wifi_attempt_ms
+        if last is None:
+            return True
+        streak = min(self._wifi_fail_streak, self.WIFI_FAIL_STREAK_MAX)
+        wait = self.WIFI_RETRY_BASE_MS << streak
+        if wait > self.WIFI_RETRY_CAP_MS:
+            wait = self.WIFI_RETRY_CAP_MS
+        return time.ticks_diff(time.ticks_ms(), last) >= wait
+
     def _build_full_payload(self, cfg, rtc_dict, do_print=False):
         """Build a complete telemetry payload dict from all local sensors.
         Returns the payload dict, or None if any blocking condition is unmet.
@@ -745,14 +787,26 @@ class TelemetryScheduler:
                 if not self.wifi.is_connected():
                     ssid = str(cfg.get("wifi_ssid") or "")
                     pw = str(cfg.get("wifi_password") or "")
-                    if cfg.get("wifi_enabled", False) and ssid:
+                    # Rate-limited: reconnect() runs a full-power wlan.scan(),
+                    # so retrying it on every send drains the battery for
+                    # nothing when no AP is in range. The background path gates
+                    # this on an explicit request instead (see
+                    # TelemetryBackgroundProcess.request_wifi_check); this
+                    # inline fallback has no screen wiring, so it uses a plain
+                    # time floor to stay self-recovering.
+                    if cfg.get("wifi_enabled", False) and ssid and self._may_retry_wifi(cfg):
                         if do_print:
                             self._dbg_print("telemetry: wifi down, reconnecting")
+                        self._last_wifi_attempt_ms = time.ticks_ms()
                         try:
                             self.wifi.reconnect(ssid, pw, timeout_s=6)
                         except Exception as _re:
                             if do_print:
                                 self._dbg_print("telemetry: reconnect err", repr(_re))
+                        if self.wifi.is_connected():
+                            self._wifi_fail_streak = 0
+                        elif self._wifi_fail_streak < self.WIFI_FAIL_STREAK_MAX:
+                            self._wifi_fail_streak += 1
                 wifi_ok = self.wifi.is_connected()
             except Exception:
                 wifi_ok = False

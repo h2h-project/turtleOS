@@ -6,6 +6,7 @@ import time
 
 from config import load_config, save_config
 from src.ui.toggle import ToggleSwitch
+from src.ui import grace as _grace
 
 try:
     from src.ui import connection_header as _ch
@@ -39,6 +40,8 @@ class OnlineScreen:
         self._api_flash_on = False
         self._wifi_ok = False
         self._gps_state = GPS_NONE
+        self._checking = False
+        self._dots = 0
 
         self._load_cfg()
 
@@ -94,7 +97,10 @@ class OnlineScreen:
         line_h = 13
         status_y = self._top_pad + title_h + 2
 
-        o.f_med.write(self._status[:18], 0, status_y)
+        status_text = self._status
+        if self._checking:
+            status_text = status_text + ("." * self._dots)
+        o.f_med.write(status_text[:18], 0, status_y)
 
         # Second line: last sent elapsed, or device ID
         if api_state is not None:
@@ -133,13 +139,31 @@ class OnlineScreen:
         if api_state is None:
             return "Waiting..."
         if api_state.get("sending"):
-            return "Connecting..."
+            return "Connecting"
         ok = api_state.get("ok")
         if ok is True:
             return "Connected"
         if ok is False:
             return "Offline"
         return "Waiting..."
+
+    def _set_status_from_api_state(self, api_state):
+        self._status = self._status_from_api_state(api_state)
+        self._checking = (self._status == "Connecting")
+
+    def _toggle_enabled(self):
+        # Toggle telemetry on/off. telemetry_mode is authoritative —
+        # telemetry_enabled alone would be rebuilt from it on the next
+        # load_config(). Turning back on always lands in "auto"; pick
+        # "manual" explicitly on the Telemetry screen.
+        self._load_cfg()
+        self._enabled = not self._enabled
+        try:
+            self.cfg["telemetry_mode"] = "auto" if self._enabled else "off"
+            self.cfg["telemetry_enabled"] = self._enabled
+            save_config(self.cfg)
+        except Exception:
+            pass
 
     # ----------------------------------------
     # Public
@@ -163,6 +187,26 @@ class OnlineScreen:
             except Exception:
                 self._gps_state = GPS_NONE
 
+        # Show last-known status first — no live check yet — and give the
+        # user a 2s window to single-click straight past this screen before
+        # a live send (which can block button polling for several seconds)
+        # ever starts.
+        api_state = telemetry.api_state if telemetry is not None else None
+        self._set_status_from_api_state(api_state)
+        self._draw(api_state)
+
+        while True:
+            grace_action = _grace.await_grace_window(btn, tick_fn, ms=2000)
+            if grace_action is None:
+                break
+            if grace_action == "double":
+                self._toggle_enabled()
+                api_state = telemetry.api_state if telemetry is not None else None
+                self._set_status_from_api_state(api_state)
+                self._draw(api_state)
+                continue
+            return grace_action
+
         # Ask scheduler to send immediately so user sees a live result.
         # Show "Connecting..." right away — the tick will update to Connected/Offline
         # after the send completes (within the next 500ms tick window).
@@ -176,9 +220,11 @@ class OnlineScreen:
 
         api_state = telemetry.api_state if telemetry is not None else None
         if _requested:
-            self._status = "Connecting..."
+            self._status = "Connecting"
+            self._checking = True
+            self._dots = 0
         else:
-            self._status = self._status_from_api_state(api_state)
+            self._set_status_from_api_state(api_state)
         self._draw(api_state)
 
         _tick_next = time.ticks_ms()
@@ -197,14 +243,15 @@ class OnlineScreen:
 
                 # Refresh display after background tick (scheduler may have updated api_state)
                 api_state = telemetry.api_state if telemetry is not None else None
-                self._status = self._status_from_api_state(api_state)
+                self._set_status_from_api_state(api_state)
                 self._draw(api_state)
 
-            # Flash icon while sending
+            # Flash icon + animate "..." while sending
             if telemetry is not None:
                 sending = bool((telemetry.api_state or {}).get("sending"))
                 if sending and time.ticks_diff(now, _flash_next) >= 0:
                     self._api_flash_on = not self._api_flash_on
+                    self._dots = (self._dots + 1) % 4
                     _flash_next = time.ticks_add(now, 250)
                     self._draw(telemetry.api_state)
 
@@ -223,20 +270,9 @@ class OnlineScreen:
                 return "sleep"
 
             if action == "double":
-                # Toggle telemetry on/off. telemetry_mode is authoritative —
-                # telemetry_enabled alone would be rebuilt from it on the next
-                # load_config(). Turning back on always lands in "auto"; pick
-                # "manual" explicitly on the Telemetry screen.
-                self._load_cfg()
-                self._enabled = not self._enabled
-                try:
-                    self.cfg["telemetry_mode"] = "auto" if self._enabled else "off"
-                    self.cfg["telemetry_enabled"] = self._enabled
-                    save_config(self.cfg)
-                except Exception:
-                    pass
+                self._toggle_enabled()
                 api_state = telemetry.api_state if telemetry is not None else None
-                self._status = self._status_from_api_state(api_state)
+                self._set_status_from_api_state(api_state)
                 self._draw(api_state)
 
             time.sleep_ms(25)

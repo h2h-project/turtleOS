@@ -3,6 +3,7 @@
 import time
 from config import load_config, save_config
 from src.ui.toggle import ToggleSwitch
+from src.ui import grace as _grace
 
 try:
     from src.ui import connection_header as _ch
@@ -185,6 +186,21 @@ class LoggingScreen:
         self._live_cfg = cfg if isinstance(cfg, dict) else None
         self._reload_config()
         self._draw()
+
+        # Give the user a 2s window to single-click straight past this
+        # screen before anything else runs — matches Online/WiFi so the
+        # carousel feels consistent even though this screen has nothing to
+        # check (queue size is read locally, not over the network).
+        while True:
+            grace_action = _grace.await_grace_window(btn, tick_fn, ms=2000)
+            if grace_action is None:
+                break
+            if grace_action == "double":
+                self._cycle_mode()
+                self._draw()
+                btn.reset()
+                continue
+            return grace_action
 
         pending_single_deadline = None
         _tick_next = time.ticks_ms()

@@ -230,6 +230,7 @@ def run(
     waiting = WaitingScreen(
         room_get=_room_name,
         battery_present_get=lambda: _ina_dev is not None,
+        battery_level_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
     )
 
     def _mission_name():
@@ -259,6 +260,7 @@ def run(
                 oled,
                 nav_get=lambda: _nav_cell[0],
                 mission_get=_mission_name,
+                battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
             )
             _gc()
         except Exception as e:
@@ -630,6 +632,7 @@ def run(
                     oled,
                     nav_get=lambda: _nav_cell[0],
                     mission_get=_mission_name,
+                    battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
                 )
 
             elif name == "state":
@@ -816,6 +819,16 @@ def run(
 
         # --- Waiting screen ---
         print("[SCREEN] waiting")
+        # The send path no longer scans for WiFi on its own (that cost a
+        # full-power scan per telemetry send with no AP in range). Returning to
+        # idle is one of the few places allowed to ask for an association
+        # attempt; the background process enforces its own retry floor, so this
+        # is safe to call on every pass.
+        if _background_process is not None:
+            try:
+                _background_process.request_wifi_check()
+            except Exception:
+                pass
         if turtle_waiting_scr is not None:
             # tick_fn keeps the nav autopilot + telemetry cycling (~500 ms)
             # while idle — the 4 s on_idle cadence is far too slow for

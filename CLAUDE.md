@@ -20,9 +20,10 @@ The mode is read from `config.json` at boot and again at the top of every main-l
 **What changes between modes:**
 - Idle / waiting screen (`TurtleWaitingScreen` vs `WaitingScreen`)
 - Single-click carousel content (turtle navigation screens vs air quality screens)
-- GPS configure_mode call (turtle tracking vs air-quality logging)
 
-Everything else — WiFi, telemetry, connectivity carousel, time screen, button gestures, HAL — is shared by both modes.
+Everything else — WiFi, telemetry, connectivity carousel, time screen, button gestures, GPS, HAL — is shared by both modes.
+
+**GPS is 1 Hz, RMC + GGA, in both modes.** `configure_mode()` still takes `turtle_mode` but ignores it. At 9600 baud the link carries 960 bytes/s; RMC + GGA is ~142 bytes per epoch. The former turtle-mode setting (5 Hz with GSA + GSV + VTG, ~700-830 bytes/epoch) needed ~4x that, so the module's TX FIFO never drained and every sentence read was the oldest one queued — manual GPS stamps lagged multiple seconds. Nothing in the tree parses GSA, GSV, VTG or GLL. Do not raise the rate without first raising the baud (`PMTK251`); see the docstring in `src/sensors/xiao_gnss.py`.
 
 ---
 
@@ -238,8 +239,15 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 
 Single-click enters `sensor_carousel()` configured for navigation screens:
 1. **Sailpoint** screen — sail-angle overlay on heading.
-2. **Servo** screen — sail servo status; double-click triggers a gentle, low-power 90°→80°→100°→90° test sweep (small ±10° range + slow ramp to avoid a battery rail sag that makes the servo stutter).
-3. **Destination** screen — active waypoint.
+2. **Servo** screen — sail servo status; double-click runs a raw-PWM test selected by `SERVO_TEST_MODE` in `screens/servo.py`:
+   - `"endpoints"` (default) — bang-bang: jump to 0°, hold 1.5 s, jump to 180°, hold, ×3 cycles. Each move is a single pulse-width change so the servo slews at its own max rate. This is the most aggressive command a servo can be given and is therefore the **decisive diagnostic**: if the horn doesn't reach its stops under this, no command shape will and the fault is mechanical or electrical, not in this file.
+   - `"ramp"` — timed 45°→135° over `SERVO_LEG_MS` (4 s) and back. Increments are sized by `SERVO_STEP_DEG` (3°, ~17 µs), deliberately above the MG996R's ~5-10 µs analogue deadband; a finer ramp makes the motor hunt in place, which at the ~250:1-reduced horn reads as "the servo isn't moving" even though the pinion is clearly spinning. Use once the servo is known good.
+
+   **Nothing else runs during a move** — no OLED writes, no I2C, no button poll — so timing is exact; the screen draws between moves only, and every commanded position is `print()`ed as `[SERVO]` for REPL diagnosis. `_make_pwm()` sets the frequency in the `PWM()` constructor: a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz, 50 % duty) until `.freq()` lands, which is garbage to a servo. The INA219 rail-voltage/current/peak readout was removed from this screen entirely; note the sweep is a far larger excursion than the old ±10° one, so a sagging battery rail will show up as stutter — reduce `SERVO_BANG_HI_DEG`/`SERVO_SWEEP_DEG` if so.
+
+   The idle loop polls the button every 2 ms with **no periodic redraw** (the screen is static once probed). A refresh tick costs a 50-100 ms font render plus I2C flush during which the button isn't sampled — landing one in the gap between two clicks broke doubles into two singles. See the sampling note under [the button](#user-interaction--the-button).
+3. **Compass** screen — live heading from the MPU-9250 (via its AK8963 magnetometer, I2C bypass at 0x0C). Registered in `get_screen()` and preloaded since early on, but only wired into this carousel slot as of Phase 0 — see `docs/navigation_roadmap.md`.
+4. **Destination** screen — active waypoint.
 
 The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
 leads the hold flow instead, so hand-taken position stamps are one hold away from
@@ -381,6 +389,7 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 | `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
 | `device_id` | str | `""` | |
 | `device_key` | str | `""` | |
+| `mission_connection_mode` | str | `"wifi_auto"` | how records are **shipped**: `"wifi_auto"` = association attempts on exponential backoff (15 min → 12 h cap); `"wifi_manual"` = only a triple-click ever connects; `"lora"` reserved. Orthogonal to `telemetry_mode`, which governs when records are **created**. |
 | `gps_enabled` | bool | `false` | |
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
 | `compass_offset_deg` | int | `0` | magnetic declination correction |

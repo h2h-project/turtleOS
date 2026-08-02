@@ -170,29 +170,13 @@
     94%  { transform: rotate(-70deg); }
     100% { transform: rotate(-70deg); }
   }
-  .sail-arm { transform-origin: 150px 150px; animation: sailSweep 10s ease-in-out infinite; }
+  .sail-arm { transform-origin: 320px 260px; animation: sailSweep 10s ease-in-out infinite; }
   @keyframes flashA { 0%,26%,40%,100% {opacity:0;} 30%,37% {opacity:1;} }
   @keyframes flashB { 0%,70%,84%,100% {opacity:0;} 74%,81% {opacity:1;} }
   @keyframes flashWind { 0%,84% {opacity:0;} 90%,100% {opacity:1;} }
   .luff-a { animation: flashA 10s infinite; }
   .luff-b { animation: flashB 10s infinite; }
   .luff-solved { animation: flashWind 10s infinite; }
-
-  /* address clash: brief shake, then clean swap to 0x69 */
-  @keyframes clashShake {
-    0%, 34%, 46%, 100% { transform: translateX(0); }
-    36% { transform: translateX(-3px); } 39% { transform: translateX(3px); }
-    42% { transform: translateX(-2px); }
-  }
-  .clash-chip { animation: clashShake 6s ease-in-out infinite; }
-  @keyframes addrFix { 0%, 50% { opacity: 0; } 60%, 100% { opacity: 1; } }
-  @keyframes addrOld { 0%, 50% { opacity: 1; } 60%, 100% { opacity: 0.12; } }
-  .addr-new { animation: addrFix 6s infinite; }
-  .addr-old { animation: addrOld 6s infinite; }
-
-  /* jumper wire pulse */
-  @keyframes wirePulse { 0%,100% { stroke-opacity: 0.55; } 50% { stroke-opacity: 1; } }
-  .wire-hot { animation: wirePulse 1.4s ease-in-out infinite; }
 
   /* heading fusion: jittery vs fused needle */
   @keyframes jitterNeedle {
@@ -208,13 +192,6 @@
   .needle-raw { transform-origin: 90px 105px; animation: jitterNeedle 1.8s linear infinite; }
   .needle-fused { transform-origin: 380px 105px; animation: smoothNeedle 4s ease-in-out infinite; }
 
-  /* cadence ladder: rows highlight top-to-bottom, fast to slow */
-  @keyframes rowGlow { 0%, 40%, 100% { opacity: 0.55; } 8%, 30% { opacity: 1; } }
-  .cad-row { animation: rowGlow 6s ease-in-out infinite; }
-  .cad-r1 { animation-delay: 0s; }
-  .cad-r2 { animation-delay: 1.5s; }
-  .cad-r3 { animation-delay: 3s; }
-
   /* AOELL loop: nine nodes light in sequence around the double loop */
   @keyframes aoellPulse {
     0%, 14%, 100% { opacity: 0.4; }
@@ -226,38 +203,51 @@
   .ao-5 { animation-delay: 4.8s; }  .ao-6 { animation-delay: 6s; }
   .ao-7 { animation-delay: 7.2s; }  .ao-8 { animation-delay: 8.4s; }
   .ao-9 { animation-delay: 9.6s; }
-  /* two streams: packets travel up (records) and down (policies) the joint links */
+  /* stream joints: packets travel up (records) and down (policies) the links */
   @keyframes packetUp { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(-52px); opacity: 0; } }
   @keyframes packetDown { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(52px); opacity: 0; } }
   .pkt-up { animation: packetUp 2.6s linear infinite; }
   .pkt-down { animation: packetDown 2.6s linear infinite; }
   .pkt-d2 { animation-delay: 1.3s; }
 
-  /* ---------- mediterranean voyage (concept animation, 26 s timeline) ---------- */
-  /* current arrows: dashes drift along the stroke to show flow */
-  @keyframes currentFlow { to { stroke-dashoffset: -36; } }
-  .current-flow { animation: currentFlow 2.4s linear infinite; }
-  /* wind arrows: drift down-and-right, fading in and out */
-  @keyframes windDrift {
-    0% { transform: translate(0,0); opacity: 0; }
-    18% { opacity: 0.75; }
-    82% { opacity: 0.75; }
-    100% { transform: translate(14px,30px); opacity: 0; }
+  /* ---------- bale mesh: radio rings, record hops, gateway uplink ---------- */
+  /* the expanding radio rings use SMIL <animate> so the r attribute animates
+     everywhere; only the record hops and the lost-hull fade are CSS */
+  /* a record travelling along a mesh link, then on to shore */
+  /* the lost hull: fades away while its records live on elsewhere */
+  @keyframes hullLost { 0%, 55% { opacity: 1; } 78%, 100% { opacity: 0.12; } }
+  @keyframes survives { 0%, 60% { opacity: 0; } 75%, 100% { opacity: 1; } }
+  .hull-lost { animation: hullLost 8s ease-in-out infinite; }
+  .hull-survives { animation: survives 8s ease-in-out infinite; }
+
+  /* ---------- bale: turtles drifting upward together, bottom to top ---------- */
+  @keyframes baleDrift {
+    0% { transform: translateY(0); }
+    50% { transform: translateY(-18px); }
+    100% { transform: translateY(0); }
   }
-  .wind-drift { animation: windDrift 3.2s linear infinite; }
-  .wind-d2 { animation-delay: 1.1s; }
-  .wind-d3 { animation-delay: 2.2s; }
-  /* stage annotations fade in and out in sync with the turtle's progress */
-  @keyframes vStage1 { 0%,1% {opacity:0;} 4%,15% {opacity:1;} 20%,100% {opacity:0;} }
-  @keyframes vStage2 { 0%,16% {opacity:0;} 20%,37% {opacity:1;} 42%,100% {opacity:0;} }
-  @keyframes vStage3 { 0%,38% {opacity:0;} 43%,60% {opacity:1;} 65%,100% {opacity:0;} }
-  @keyframes vStage4 { 0%,58% {opacity:0;} 63%,75% {opacity:1;} 80%,100% {opacity:0;} }
-  @keyframes vStage5 { 0%,80% {opacity:0;} 85%,99% {opacity:1;} 100% {opacity:0;} }
-  .v-s1 { animation: vStage1 26s linear infinite; }
-  .v-s2 { animation: vStage2 26s linear infinite; }
-  .v-s3 { animation: vStage3 26s linear infinite; }
-  .v-s4 { animation: vStage4 26s linear infinite; }
-  .v-s5 { animation: vStage5 26s linear infinite; }
+  .bale-turtle { animation: baleDrift 6s ease-in-out infinite; }
+  .bale-t2 { animation-delay: 0.5s; }
+  .bale-t3 { animation-delay: 1s; }
+  .bale-t4 { animation-delay: 1.5s; }
+  .bale-t5 { animation-delay: 2s; }
+  .bale-t6 { animation-delay: 2.5s; }
+  .bale-t7 { animation-delay: 0.8s; }
+  .bale-t8 { animation-delay: 1.8s; }
+  /* a relayed message climbing the bale toward shore, link by intermittent link */
+  @keyframes relayClimb {
+    0% { transform: translateY(0); opacity: 0; }
+    8% { opacity: 1; }
+    45% { opacity: 1; }
+    55% { opacity: 0; }
+    100% { transform: translateY(0); opacity: 0; }
+  }
+  .relay-hop { animation: relayClimb 5s linear infinite; }
+  .relay-h2 { animation-delay: 1.6s; }
+  .relay-h3 { animation-delay: 3.2s; }
+  /* an intermittent link: fades in and out to show it isn't always up */
+  @keyframes linkFlicker { 0%, 100% { opacity: 0.08; } 45%, 65% { opacity: 0.75; } }
+  .link-intermittent { animation: linkFlicker 5s ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -265,9 +255,9 @@
 <header class="hero">
   <h1>🐢 How a Hope Turtle Finds Its Way</h1>
   <p class="sub">The turtleOS navigation system — what our solar sailboats can do today,
-  what we still have to prove, and the two-stream roadmap (turtle + shore) to full
-  learning autonomy. Written for the whole team: no engineering background required.</p>
-  <span class="date-chip">July 2026 · Revised: design review + AOELL learning architecture · Only "Today" items are built</span>
+  what we still have to prove, and the three-stream roadmap (turtle · shore · bale) to
+  full learning autonomy. Written for the whole team: no engineering background required.</p>
+  <span class="date-chip">July 2026 · Aboard · Ashore · Bale mesh · Only "Today" items are built</span>
 </header>
 
 <main>
@@ -316,11 +306,11 @@ About three times every second, the computer runs one loop of the same routine:<
 </figure>
 
 <h3>How a sail-only boat actually steers — the honest version</h3>
-<p>This is the single most important correction from our design review. The turtle
-has <strong>no movable rudder</strong>. Trimming the sail does not point the boat
-the way a steering wheel points a car. It changes the <em>force</em> the wind puts
-on the boat; the fixed rudder, hull, and keel then convert that force into some
-mix of forward motion and turning:</p>
+<p>This is the fact everything else follows from. The turtle has <strong>no movable
+rudder</strong>. Trimming the sail does not point the boat the way a steering wheel
+points a car. It changes the <em>force</em> the wind puts on the boat; the fixed
+rudder, hull, and keel then convert that force into some mix of forward motion and
+turning:</p>
 
 <figure>
   <div class="frame">
@@ -359,12 +349,11 @@ mix of forward motion and turning:</p>
 </figure>
 
 <div class="callout warn">
-<p><strong>Why this matters:</strong> our earlier plan assumed sail moves translate
-into predictable steering, and stacked automatic controllers on top of that
-assumption. The revised roadmap flips the order — first <em>measure</em> whether a
-10° sail change produces a repeatable heading response, and only then automate.
-Until measured, an automatic controller wrapped around an unknown relationship is,
-as the review put it, "an elegant way to automate confusion."</p>
+<p><strong>Why this matters:</strong> it sets the order of all the work that follows.
+First <em>measure</em> whether a 10° sail change produces a repeatable heading
+response, and only then automate. An automatic controller wrapped around an unknown
+relationship is an elegant way to automate confusion — so every rung of the ladder in
+Part Three earns the next one with evidence.</p>
 </div>
 
 <!-- ================================================================ -->
@@ -451,54 +440,56 @@ sensor on the sail (the AS5600) feels that flapping as jitter.</p>
 
 <figure>
   <div class="frame">
-  <svg viewBox="0 0 640 270" role="img" aria-label="Animated luff sweep: the double sail arm sweeps on the central axle of the cruciform hull and flutters at the wind line">
-    <g stroke="#0e7490" stroke-width="2" opacity="0.7">
-      <line x1="55" y1="18" x2="55" y2="52"/><polygon points="55,60 49,48 61,48" fill="#0e7490"/>
-      <line x1="75" y1="10" x2="75" y2="44"/><polygon points="75,52 69,40 81,40" fill="#0e7490"/>
-      <line x1="95" y1="18" x2="95" y2="52"/><polygon points="95,60 89,48 101,48" fill="#0e7490"/>
+  <svg viewBox="0 0 640 500" role="img" aria-label="Animated luff sweep: wind falls straight down from directly above the turtle; the double sail arm sweeps on the central axle and flutters at the wind line">
+    <!-- wind arrives dead-on from directly overhead, aimed straight at the hull -->
+    <g stroke="#0e7490" stroke-width="2.5" opacity="0.75">
+      <line x1="290" y1="18" x2="290" y2="82"/><polygon points="290,92 283,78 297,78" fill="#0e7490"/>
+      <line x1="320" y1="8" x2="320" y2="72"/><polygon points="320,82 313,68 327,68" fill="#0e7490"/>
+      <line x1="350" y1="18" x2="350" y2="82"/><polygon points="350,92 343,78 357,78" fill="#0e7490"/>
     </g>
-    <text x="75" y="80" text-anchor="middle" class="svg-label" fill="#0e7490" font-weight="700">wind</text>
-    <!-- cruciform hull (swiss cross, top view), axle at the center -->
+    <text x="320" y="120" text-anchor="middle" class="svg-label" fill="#0e7490" font-weight="700">wind — straight down onto the turtle</text>
+    <!-- cruciform hull (swiss cross, top view), axle at the center, wind hits it head-on -->
     <g fill="#e3f2ea" stroke="#2e7d52" stroke-width="2">
-      <rect x="132" y="85" width="36" height="130" rx="8"/>
-      <rect x="85" y="132" width="130" height="36" rx="8"/>
-      <rect x="133.5" y="133.5" width="33" height="33" fill="#e3f2ea" stroke="none"/>
+      <rect x="302" y="195" width="36" height="130" rx="8"/>
+      <rect x="255" y="242" width="130" height="36" rx="8"/>
+      <rect x="303.5" y="243.5" width="33" height="33" fill="#e3f2ea" stroke="none"/>
     </g>
     <!-- double sail arm: equal arms both sides of the axle -->
     <g class="sail-arm">
-      <line x1="150" y1="75" x2="150" y2="225" stroke="#b45309" stroke-width="5" stroke-linecap="round"/>
+      <line x1="320" y1="185" x2="320" y2="335" stroke="#b45309" stroke-width="5" stroke-linecap="round"/>
     </g>
-    <circle cx="150" cy="150" r="6" fill="#2e7d52"/>
-    <text x="228" y="228" class="svg-label-soft">central axle · AS5600 underneath</text>
-    <line x1="224" y1="223" x2="160" y2="156" stroke="#9fb4bd" stroke-width="1"/>
+    <circle cx="320" cy="260" r="6" fill="#2e7d52"/>
+    <text x="320" y="352" text-anchor="middle" class="svg-label-soft">central axle · AS5600 underneath</text>
     <g class="luff-a">
-      <text x="120" y="110" text-anchor="end" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset A</text>
+      <text x="255" y="222" text-anchor="end" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset A</text>
     </g>
     <g class="luff-b">
-      <text x="182" y="110" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset B</text>
+      <text x="385" y="222" class="svg-label" fill="#b3403a" font-weight="700">flutter! → onset B</text>
     </g>
     <g class="luff-solved">
-      <rect x="330" y="95" width="280" height="120" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
-      <text x="470" y="127" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">Wind solved ✓</text>
-      <text x="470" y="152" text-anchor="middle" class="svg-label-soft">wind direction = the midpoint</text>
-      <text x="470" y="170" text-anchor="middle" class="svg-label-soft">between flutter A and flutter B</text>
-      <text x="470" y="196" text-anchor="middle" class="svg-label-soft">(accuracy: to be measured at sea)</text>
+      <rect x="160" y="378" width="320" height="100" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <text x="320" y="405" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">Wind solved ✓</text>
+      <text x="320" y="428" text-anchor="middle" class="svg-label-soft">wind direction = the midpoint</text>
+      <text x="320" y="445" text-anchor="middle" class="svg-label-soft">between flutter A and flutter B</text>
+      <text x="320" y="464" text-anchor="middle" class="svg-label-soft">(accuracy: to be measured at sea)</text>
     </g>
-    <text x="150" y="258" text-anchor="middle" class="svg-label-soft">top view · cruciform hull · the sweep takes ~20–25 seconds</text>
+    <text x="320" y="495" text-anchor="middle" class="svg-label-soft">top view · cruciform hull · the sweep takes ~20–25 seconds</text>
   </svg>
   </div>
-  <figcaption>The luff sweep. The hull is a cruciform (like the cross in the Swiss
-  flag) with the sail on a central axle at its center point — two equal arms that
+  <figcaption>The luff sweep, wind coming from directly overhead — the sail arm
+  sweeps beneath it. The hull is a cruciform (like the cross in the Swiss flag)
+  with the sail on a central axle at its center point — two equal arms that
   rotate together as one rigid piece. Both arms flutter as they cross the wind
   going out (A) and coming back (B); the midpoint of A and B <em>is</em> the wind
   direction. It works beautifully in simulation — but a simulation cannot flutter,
   so its real accuracy is one of the first things the roadmap measures.</figcaption>
 </figure>
 
-<p>The turtle re-runs this sweep every 10 minutes while sailing. The revised plan
-makes re-sweeps <strong>event-driven</strong> — sweep when confidence in the wind
-estimate drops, or after a big turn — with the fixed timer relaxing to a 30–60
-minute backup.</p>
+<p>The turtle re-runs this sweep every 10 minutes while sailing. The plan makes
+re-sweeps <strong>event-driven</strong> — sweep when confidence in the wind estimate
+drops, or after a big turn — with the fixed timer relaxing to a 30–60 minute backup.
+Later, once turtles can talk to each other (Part Five), a neighbour's fresh wind
+solution can save a sweep entirely.</p>
 
 <h3>What else is already working</h3>
 <div class="two-col">
@@ -540,15 +531,26 @@ heel (tilt), turn rate, and a feel for wave disturbance — the senses everythin
 in Part Three builds on.</p>
 
 <div class="callout good">
-<p><strong>A naming heads-up before anything else.</strong> The module we sourced is
-sold as an "MPU6050 module", but the supplier's spec sheet says the chip on the
-board is actually an <strong>MPU-9250</strong> — a better chip. An MPU6050 senses
-rotation and tilt (6 measurements). The MPU-9250 adds a built-in compass, for
-9 measurements in total — which is exactly what a sailboat wants. The catch:
-software written for one won't run on the other, so our driver must target the
-MPU-9250, and the first thing we do on the bench is ask the chip its identity
-(it answers with a code: <code>0x71</code> means MPU-9250). Cheap modules are
-sometimes mislabeled in both directions, so we check every batch.</p>
+<p><strong>Phase 0 — do this before anything else.</strong> The IMU is sourced,
+wired, and already sitting at a free address (0x69) — the only thing left is
+code, so it jumps the queue ahead of AOELL, ahead of the sailing experiments,
+ahead of everything. Four concrete steps:</p>
+<ol style="margin:8px 0 0; padding-left:20px;">
+<li>Confirm the chip on the bench (it answers <code>0x71</code> to a
+"who are you?" register read) and write the MPU-9250 driver — its register map
+is different from the plainer MPU6050 some listings confuse it with.</li>
+<li>Pick it up automatically at boot: scan for it alongside the other sensors,
+log <code>[BOOT] MPU-9250 found</code>, and confirm whether it needs any
+settle time before its first reading can be trusted (to be measured, not
+assumed).</li>
+<li><strong>Ditch the old parts, don't run two in parallel.</strong> The
+old GY-271 compass board and the old 6-degree-of-freedom sensing path get
+retired in favor of this one integrated 9-measurement chip — gyroscope,
+accelerometer, and compass together.</li>
+<li>Wire the new driver straight into the screens that already exist —
+the compass and sailpoint screens — so the swap is visible and testable on
+the bench immediately, before any of the fancier fusion math is written.</li>
+</ol>
 </div>
 
 <h3>What the IMU senses</h3>
@@ -569,120 +571,30 @@ sometimes mislabeled in both directions, so we check every batch.</p>
   tilt-proof.</p></div>
 </div>
 
-<h3>The address clash — and the one-jumper fix</h3>
+<h3>Wiring — already resolved</h3>
 <p>All our sensors share a single two-wire party line called the I2C bus, and each
-device on it needs a unique address, like houses on a street. Problem: the IMU's
-factory address is <strong>0x68 — the exact same number our clock chip (the
-DS3231) already uses</strong>. Two houses, one street number: the mail goes to the
-wrong place and the bus can't work.</p>
-
-<figure>
-  <div class="frame">
-  <svg viewBox="0 0 660 240" role="img" aria-label="Address clash animation: IMU moves from 0x68 to 0x69 via the AD0 pin">
-    <line x1="40" y1="120" x2="620" y2="120" stroke="#4a5a64" stroke-width="3"/>
-    <text x="330" y="108" text-anchor="middle" class="svg-label-soft">the shared I2C bus (two wires, drawn as one)</text>
-    <g>
-      <line x1="150" y1="120" x2="150" y2="150" stroke="#4a5a64" stroke-width="2"/>
-      <rect x="90" y="150" width="120" height="60" rx="10" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
-      <text x="150" y="176" text-anchor="middle" class="svg-label" font-weight="700">Clock (DS3231)</text>
-      <text x="150" y="197" text-anchor="middle" class="svg-mono" fill="#155e75">address 0x68</text>
-    </g>
-    <g class="clash-chip">
-      <line x1="450" y1="120" x2="450" y2="150" stroke="#4a5a64" stroke-width="2"/>
-      <rect x="380" y="150" width="140" height="60" rx="10" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
-      <text x="450" y="176" text-anchor="middle" class="svg-label" font-weight="700">IMU (MPU-9250)</text>
-      <g class="addr-old"><text x="450" y="197" text-anchor="middle" class="svg-mono" fill="#b3403a">address 0x68 ⚠ clash!</text></g>
-      <g class="addr-new"><text x="450" y="197" text-anchor="middle" class="svg-mono" fill="#2e7d52">address 0x69 ✓</text></g>
-    </g>
-    <g class="addr-new">
-      <path d="M 520 180 C 570 180, 590 150, 590 120" fill="none" stroke="#2e7d52" stroke-width="2.5" class="wire-hot"/>
-      <text x="540" y="230" text-anchor="middle" class="svg-label" fill="#2e7d52" font-weight="700">AD0 pin wired to 3.3 V</text>
-    </g>
-    <g class="addr-old">
-      <text x="300" y="60" text-anchor="middle" class="svg-label" fill="#b3403a" font-weight="700">💥 two devices, one address</text>
-    </g>
-    <g class="addr-new">
-      <text x="300" y="60" text-anchor="middle" class="svg-label" fill="#2e7d52" font-weight="700">✓ every device unique — bus happy</text>
-    </g>
-  </svg>
-  </div>
-  <figcaption>The IMU ships at address 0x68, colliding with the clock chip. Wiring
-  its AD0 pin to 3.3&nbsp;V flips it to 0x69 and the collision disappears.</figcaption>
-</figure>
-
-<p>The chip designers anticipated this: the module has a pin labeled
-<strong>AD0</strong> (sometimes printed "ADO") that works like an address-select
-switch. Leave it low → 0x68. Connect it to 3.3&nbsp;V → <strong>0x69</strong>,
-which is free on our bus.</p>
-
-<div class="callout">
-<p><strong>The question everyone asks: wire AD0 to the VCC pin on the IMU board, or
-to the XIAO's 3V3 pin?</strong> Either — they're the same wire! The IMU's VCC pin
-is fed <em>from</em> the XIAO's 3V3 pin, so both points carry the identical
-3.3&nbsp;V. Our standard: put a short jumper (or solder bridge) <strong>right on
-the IMU board, from AD0 to its own VCC pin</strong>. That way the fix travels with
-the module — any board strapped like this is plug-in-safe forever, no matter who
-wires it up later.</p>
-<p><strong>One hard rule: power the module from the XIAO's 3V3 pin, never from
-5&nbsp;V.</strong> The spec sheet's "3–5&nbsp;V" tolerance applies to the VCC pin
-only. The AD0 pin connects straight to the sensor chip, which is a 3.3&nbsp;V
-part — 5&nbsp;V on AD0 can damage it. Powering everything at 3.3&nbsp;V makes
-this a non-issue.</p>
-</div>
-
-<h3>The full hookup</h3>
-<figure>
-  <div class="frame">
-  <svg viewBox="0 0 680 300" role="img" aria-label="Wiring diagram from XIAO to IMU module">
-    <rect x="40" y="40" width="170" height="220" rx="14" fill="#e0f2f7" stroke="#0e7490" stroke-width="2.5"/>
-    <text x="125" y="70" text-anchor="middle" class="svg-label" font-weight="700">XIAO ESP32-S3</text>
-    <text x="125" y="88" text-anchor="middle" class="svg-label-soft">(the turtle's brain)</text>
-    <g class="svg-mono">
-      <circle cx="210" cy="120" r="5" fill="#b3403a"/><text x="200" y="124" text-anchor="end" fill="#1e2a32">3V3</text>
-      <circle cx="210" cy="155" r="5" fill="#1e2a32"/><text x="200" y="159" text-anchor="end" fill="#1e2a32">GND</text>
-      <circle cx="210" cy="190" r="5" fill="#b45309"/><text x="200" y="194" text-anchor="end" fill="#1e2a32">D5 (SCL)</text>
-      <circle cx="210" cy="225" r="5" fill="#2e7d52"/><text x="200" y="229" text-anchor="end" fill="#1e2a32">D4 (SDA)</text>
-    </g>
-    <rect x="470" y="40" width="170" height="220" rx="14" fill="#fdf0e0" stroke="#b45309" stroke-width="2.5"/>
-    <text x="555" y="70" text-anchor="middle" class="svg-label" font-weight="700">IMU module</text>
-    <text x="555" y="88" text-anchor="middle" class="svg-label-soft">(MPU-9250)</text>
-    <g class="svg-mono">
-      <circle cx="470" cy="120" r="5" fill="#b3403a"/><text x="482" y="124" fill="#1e2a32">VCC</text>
-      <circle cx="470" cy="155" r="5" fill="#1e2a32"/><text x="482" y="159" fill="#1e2a32">GND</text>
-      <circle cx="470" cy="190" r="5" fill="#b45309"/><text x="482" y="194" fill="#1e2a32">SCL</text>
-      <circle cx="470" cy="225" r="5" fill="#2e7d52"/><text x="482" y="229" fill="#1e2a32">SDA</text>
-      <circle cx="470" cy="252" r="5" fill="#2e7d52"/><text x="482" y="256" fill="#1e2a32">AD0</text>
-    </g>
-    <line x1="215" y1="120" x2="465" y2="120" stroke="#b3403a" stroke-width="3"/>
-    <line x1="215" y1="155" x2="465" y2="155" stroke="#1e2a32" stroke-width="3"/>
-    <line x1="215" y1="190" x2="465" y2="190" stroke="#b45309" stroke-width="3"/>
-    <line x1="215" y1="225" x2="465" y2="225" stroke="#2e7d52" stroke-width="3"/>
-    <path d="M 470 252 C 445 252, 445 120, 468 120" fill="none" stroke="#b3403a" stroke-width="2.5" class="wire-hot"/>
-    <text x="415" y="285" class="svg-label" fill="#b3403a" font-weight="700">← AD0→VCC jumper (on the module): sets address 0x69</text>
-    <text x="340" y="112" text-anchor="middle" class="svg-label-soft">power (3.3 V only!)</text>
-    <text x="340" y="182" text-anchor="middle" class="svg-label-soft">shared I2C clock</text>
-    <text x="340" y="247" text-anchor="middle" class="svg-label-soft">shared I2C data</text>
-  </svg>
-  </div>
-  <figcaption>Four wires to the XIAO plus one tiny jumper on the module itself.
-  The INT and FSYNC pins stay unconnected.</figcaption>
-</figure>
+device on it needs a unique address, like houses on a street. The IMU's factory
+address (0x68) collided with the clock chip, which already lived there — so the
+module is strapped, on its own board, from its address-select pin (AD0) to its own
+3.3&nbsp;V supply. That moves it to <strong>0x69</strong>, which is free. This is
+done and wired; nothing here is an open question anymore, and Phase 0 above is
+where the remaining work — the code side — actually lives.</p>
 
 <p>Bonus: the MPU-9250's built-in compass appears on the bus at its own address
-(0x0C), which doesn't clash with anything — including our current GY-271 compass
-at 0x0D. So during the changeover we can run <em>both</em> compasses side by side
-and compare them before deciding whether to retire the GY-271.</p>
+(0x0C), which doesn't clash with anything — including the old GY-271 compass at
+0x0D. That lets us run both side by side on the bench for one last comparison
+before the GY-271 is retired for good, per Phase 0.</p>
 
 <!-- ================================================================ -->
-<h2><span class="kicker">Part Three</span>The proposed nav system — measure first, automate second <span class="badge next">For review</span></h2>
+<h2><span class="kicker">Part Three</span>The genuine upgrade: a heading you can trust <span class="badge next">For review</span></h2>
 
-<p class="lede">With the IMU aboard, here is the plan. It is now an
-<strong>experimental ladder</strong>: each rung must be demonstrated on real water
-before the next is attempted, and every measured quantity carries a
-<strong>confidence score</strong> that decides what the turtle is allowed to do
-with it.</p>
+<p class="lede">With the IMU aboard, the single concrete win over today's system is
+fusing three senses into one honest heading. The rest of the plan — the
+experimental ladder, the cadence rules, tacking, the safety net — is covered in
+full in <strong>Part Four</strong> (the AOELL learning loop) and <strong>Part
+Six</strong> (the phase-by-phase ladder), so it isn't repeated here.</p>
 
-<h3>1 · A heading you can trust: sensor fusion</h3>
+<h3>A heading you can trust: sensor fusion</h3>
 <p>Today's compass-only heading is like a nervous witness — right on average,
 jittery in the moment, and unreliable when the boat heels. The fusion recipe
 (a "complementary filter") blends 98% gyro smoothness with 2% compass truth on
@@ -736,277 +648,19 @@ movement reliably arrests a spin, or accidentally worsens one.</strong> So spin
 events are flagged and reported home, and the "what should the sail do about it?"
 question is answered by experiment, not assumption.</p>
 
-<h3>2 · Sense fast, decide slowly, move rarely</h3>
-<p>The system's rhythm is deliberately layered. Sensors sample fast; decisions
-happen at boat speed; the servo — our biggest power drain — moves only when a
-change is worth making:</p>
-
-<figure>
-  <div class="frame">
-  <svg viewBox="0 0 660 210" role="img" aria-label="Three-layer cadence: sense at tens of hertz, decide at a few hertz, act every few seconds">
-    <g class="cad-row cad-r1">
-      <rect x="20" y="20" width="620" height="50" rx="10" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
-      <text x="40" y="42" class="svg-label" font-weight="700" fill="#155e75">SENSE · 20–50× per second</text>
-      <text x="40" y="60" class="svg-label-soft">IMU sampling, heading fusion, spin detection — no physical action, ever</text>
-    </g>
-    <g class="cad-row cad-r2">
-      <rect x="20" y="80" width="620" height="50" rx="10" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
-      <text x="40" y="102" class="svg-label" font-weight="700" fill="#8a4207">DECIDE · 2–5× per second</text>
-      <text x="40" y="120" class="svg-label-soft">heading controller computes the sail change it would like</text>
-    </g>
-    <g class="cad-row cad-r3">
-      <rect x="20" y="140" width="620" height="50" rx="10" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
-      <text x="40" y="162" class="svg-label" font-weight="700" fill="#2e7d52">ACT · at most every 1–3 seconds</text>
-      <text x="40" y="180" class="svg-label-soft">servo moves only when the change exceeds a deadband — sailing is patient</text>
-    </g>
-  </svg>
-  </div>
-  <figcaption>The cadence ladder. Note there is no path where a fast sensing loop
-  drives the servo directly — the earlier idea of a 50&nbsp;Hz "spin guard that
-  counters immediately" has been removed.</figcaption>
-</figure>
-
-<div class="table-scroll">
-<table>
-  <tr><th>Function</th><th>Suggested active cadence</th><th>Physical action</th></tr>
-  <tr><td>IMU sampling and heading fusion</td><td>20–50 Hz</td><td>None</td></tr>
-  <tr><td>Rotation/spin detection</td><td>10–25 Hz</td><td>Trigger only after persistent excessive turn rate</td></tr>
-  <tr><td>Heading controller</td><td>2–5 Hz</td><td>Compute a desired sail change</td></tr>
-  <tr><td>Servo command</td><td>At most every 1–3 s, when needed</td><td>Move only beyond a deadband</td></tr>
-  <tr><td>GPS position acquisition</td><td>0.2–1 Hz</td><td>None</td></tr>
-  <tr><td>Route, bearing and cross-track calculation</td><td>Every 5–30 s</td><td>Update desired heading</td></tr>
-  <tr><td>Waypoint/geofence evaluation</td><td>Every 10–60 s</td><td>Change navigation mode if necessary</td></tr>
-  <tr><td>Wind re-acquisition sweep</td><td>Event-driven; every 30–60 min as backup</td><td>Full sweep only when confidence is low</td></tr>
-  <tr><td>Battery and hull health</td><td>Every 10–60 s</td><td>Immediate response to serious fault</td></tr>
-  <tr><td>Routine telemetry</td><td>Every 5–30 min</td><td>Transmit summary</td></tr>
-  <tr><td>Emergency telemetry</td><td>Immediate</td><td>Transmit fault/event</td></tr>
-</table>
-</div>
-
-<h3>3 · The make-or-break experiments: does sail trim steer at all?</h3>
-<p>Before any autopilot is tuned, we run structured experiments and judge them
-against the GPS track:</p>
-<div class="two-col">
-  <div class="mini-card"><h4>🍃 Can we sense? (luff validation)</h4>
-  <p>Repeated sweeps against a known reference wind, on real water and real chop.
-  Output: a measured accuracy figure and a confidence score on every wind solve.</p></div>
-  <div class="mini-card"><h4>⛵ Can we go? (propulsion)</h4>
-  <p>Hold a series of sail trims at each wind angle; log GPS speed and course per
-  trim. Output: demonstrated trims that actually move the boat toward a goal.</p></div>
-  <div class="mini-card"><h4>🔄 Can we turn? (turning influence)</h4>
-  <p>From steady sailing, step the sail ±10°, ±20° and record the heading response.
-  Same input, same conditions — same result? The repeatability number is the
-  go/no-go for any automatic steering.</p></div>
-  <div class="mini-card"><h4>🌪️ Can we stop a spin?</h4>
-  <p>When the gyro flags a spin: does feathering help? Sheeting in? Nothing?
-  Until measured, spin detection stays report-only.</p></div>
-</div>
-
 <div class="callout">
-<p><strong>Confidence scoring sits at the heart of all of this</strong>, not off in
-a diagnostics corner. The wind estimate, the heading, the position, and the
-sail→turn model each carry a confidence value, reported home in
-<code>confidence_json</code>. Low confidence narrows what the turtle may attempt:
-an uncertain wind solve blocks tack attempts; an uncertain steering model widens
-the deadband. The turtle acts boldly only on what it has proven.</p>
-</div>
-
-<h3>4 · Sailing upwind: the tack sequence <span class="badge later">Much later</span></h3>
-<p>No sailboat can point straight into the wind — there's a roughly 90°-wide
-"no-go zone" where the sail just flaps. Sailors beat this by zig-zagging
-("tacking"). A tack presumes <em>everything</em> above it on the ladder: a trusted
-wind solve, demonstrated propulsion, and repeatable turning authority. That is why
-it now sits deliberately near the end of the roadmap — attempting it earlier would
-be testing three unproven systems at once.</p>
-
-<figure>
-  <div class="frame">
-  <svg viewBox="0 0 640 300" role="img" aria-label="Animated tacking: boat zig-zags upwind toward the waypoint inside the no-go zone">
-    <g stroke="#0e7490" stroke-width="2" opacity="0.7">
-      <line x1="300" y1="14" x2="300" y2="40"/><polygon points="300,48 294,36 306,36" fill="#0e7490"/>
-      <line x1="330" y1="14" x2="330" y2="40"/><polygon points="330,48 324,36 336,36" fill="#0e7490"/>
-      <line x1="360" y1="14" x2="360" y2="40"/><polygon points="360,48 354,36 366,36" fill="#0e7490"/>
-    </g>
-    <text x="410" y="34" class="svg-label" fill="#0e7490" font-weight="700">wind</text>
-    <path d="M 330 250 L 240 60 L 420 60 Z" fill="#fbe9e7" opacity="0.75"/>
-    <text x="330" y="150" text-anchor="middle" class="svg-label-soft" fill="#b3403a">no-go zone</text>
-    <text x="330" y="168" text-anchor="middle" class="svg-label-soft" fill="#b3403a">(can't sail here)</text>
-    <circle cx="330" cy="72" r="9" fill="none" stroke="#5e548e" stroke-width="3"/>
-    <circle cx="330" cy="72" r="3" fill="#5e548e"/>
-    <text x="352" y="77" class="svg-label" fill="#5e548e" font-weight="700">waypoint</text>
-    <path id="tackPath" d="M 330 262 L 430 210 L 245 140 L 395 96 L 330 74" fill="none" stroke="#2e7d52" stroke-width="2" stroke-dasharray="6 5"/>
-    <g>
-      <circle r="8" fill="#2e7d52">
-        <animateMotion dur="9s" repeatCount="indefinite" rotate="auto">
-          <mpath href="#tackPath"/>
-        </animateMotion>
-      </circle>
-    </g>
-    <text x="120" y="272" class="svg-label-soft">zig-zag legs stay just outside</text>
-    <text x="120" y="290" class="svg-label-soft">the zone — net progress upwind</text>
-  </svg>
-  </div>
-  <figcaption>Tacking — the goal, once the ladder beneath it is proven. The waypoint
-  sits inside the no-go zone, so the turtle sails angled legs on alternating sides;
-  each leg makes real progress, and the zig-zag converges on the goal.</figcaption>
-</figure>
-
-<h3>5 · Putting it all together: a voyage to Gaza <span class="badge later">Concept</span></h3>
-<p>Here is what the whole system adds up to — a concept animation of a turtle
-released in the middle of the Mediterranean working its way to the Gaza
-shoreline. It doesn't fight the sea; it enlists it. The summer winds over the
-eastern Mediterranean blow steadily from the north-west, and the Levantine
-surface current sweeps counter-clockwise — east along the Egyptian coast, then
-north up the Levant coast. Waypoints are chosen ashore to ride both:</p>
-
-<figure>
-  <div class="frame">
-  <svg viewBox="0 0 680 360" role="img" aria-label="Concept voyage: a turtle released mid-Mediterranean rides wind and current to the Gaza shoreline, with annotated stages">
-    <!-- sea -->
-    <rect x="0" y="0" width="680" height="360" fill="#e0f2f7"/>
-    <!-- land: North Africa → Nile delta → Sinai → Gaza → Levant coast (one shoreline) -->
-    <path d="M 0 306
-             C 100 302, 250 301, 376 306
-             C 392 296, 404 280, 420 274
-             C 436 270, 452 276, 462 292
-             C 468 302, 470 306, 478 308
-             C 505 312, 530 312, 556 308
-             C 566 304, 572 296, 578 288
-             C 590 268, 595 261, 599 252
-             C 606 232, 608 218, 611 204
-             C 616 176, 622 148, 630 120
-             C 638 90, 646 58, 650 30
-             L 656 0 L 680 0 L 680 360 L 0 360 Z"
-          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
-    <!-- the Nile, threading south from the delta -->
-    <path d="M 428 285 C 431 308, 426 334, 429 360" fill="none" stroke="#7fb8c9" stroke-width="3" opacity="0.85"/>
-    <path d="M 428 288 C 416 300, 404 304, 396 305 M 428 288 C 440 299, 452 302, 460 303"
-          fill="none" stroke="#7fb8c9" stroke-width="2" opacity="0.7"/>
-    <!-- Crete: long, narrow, east-west -->
-    <path d="M 70 55 C 90 39, 132 34, 162 40 C 182 44, 196 50, 202 58 C 190 68, 150 72, 120 68 C 98 65, 78 62, 70 55 Z"
-          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
-    <!-- Cyprus, with the Karpas peninsula pointing north-east -->
-    <path d="M 484 78 C 490 60, 510 50, 535 52 C 552 54, 560 60, 566 58 L 592 42 L 588 53 C 575 63, 560 67, 548 71 C 525 81, 500 87, 484 78 Z"
-          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
-    <text x="530" y="40" text-anchor="middle" class="svg-label-soft">Cyprus</text>
-    <text x="136" y="27" text-anchor="middle" class="svg-label-soft">Crete</text>
-    <text x="250" y="344" text-anchor="middle" class="svg-label-soft">Egypt</text>
-    <text x="424" y="258" text-anchor="middle" class="svg-label-soft">Nile Delta</text>
-    <text x="530" y="344" text-anchor="middle" class="svg-label-soft">Sinai</text>
-
-    <!-- prevailing NW wind (drifting arrows, upper left) -->
-    <g stroke="#0e7490" stroke-width="2" fill="#0e7490">
-      <g class="wind-drift"><line x1="215" y1="95" x2="229" y2="123"/><polygon points="233,131 222,125 234,119"/></g>
-      <g class="wind-drift wind-d2"><line x1="255" y1="80" x2="269" y2="108"/><polygon points="273,116 262,110 274,104"/></g>
-      <g class="wind-drift wind-d3"><line x1="295" y1="95" x2="309" y2="123"/><polygon points="313,131 302,125 314,119"/></g>
-    </g>
-    <text x="262" y="68" text-anchor="middle" class="svg-label" fill="#0e7490" font-weight="700">summer wind (from NW)</text>
-
-    <!-- Levantine current: counter-clockwise — east past the delta, then north up the Levant coast -->
-    <path class="current-flow" d="M 40 292 C 140 286, 260 284, 360 288 C 396 264, 448 260, 492 278 C 526 291, 552 288, 572 270"
-          fill="none" stroke="#0e7490" stroke-width="3" stroke-dasharray="9 9" opacity="0.55"/>
-    <path class="current-flow" d="M 578 258 C 588 216, 596 165, 607 108"
-          fill="none" stroke="#0e7490" stroke-width="3" stroke-dasharray="9 9" opacity="0.55"/>
-    <text x="255" y="270" class="svg-label-soft" fill="#155e75">surface current →</text>
-
-    <!-- release point: mid-Med, between Crete and the Egyptian coast -->
-    <circle cx="200" cy="170" r="10" fill="none" stroke="#5e548e" stroke-width="2" stroke-dasharray="3 3"/>
-    <text x="200" y="156" text-anchor="middle" class="svg-label" fill="#5e548e" font-weight="700">release</text>
-
-    <!-- Gaza target: where the coast turns north -->
-    <circle cx="580" cy="285" r="5" fill="#b3403a"/>
-    <circle cx="580" cy="285" r="5" fill="none" stroke="#b3403a" stroke-width="2">
-      <animate attributeName="r" values="5;14;5" dur="2.5s" repeatCount="indefinite"/>
-      <animate attributeName="opacity" values="0.9;0;0.9" dur="2.5s" repeatCount="indefinite"/>
-    </circle>
-    <text x="613" y="282" text-anchor="middle" class="svg-label" fill="#b3403a" font-weight="700">Gaza</text>
-
-    <!-- the voyage -->
-    <path id="voyagePath" d="M 200 170 L 265 205 L 235 240 L 310 264 L 292 284 C 370 292, 408 258, 455 260 C 500 262, 535 298, 561 292 C 570 289, 575 287, 578 286"
-          fill="none" stroke="#2e7d52" stroke-width="2" stroke-dasharray="5 5" opacity="0.7"/>
-    <!-- travelling turtle: cruciform hull + double sail arm -->
-    <g>
-      <g>
-        <animateMotion dur="26s" repeatCount="indefinite" rotate="auto">
-          <mpath href="#voyagePath"/>
-        </animateMotion>
-        <rect x="-3" y="-10" width="6" height="20" rx="2" fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.5"/>
-        <rect x="-10" y="-3" width="20" height="6" rx="2" fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.5"/>
-        <line x1="0" y1="-13" x2="0" y2="13" stroke="#b45309" stroke-width="2.5" stroke-linecap="round" transform="rotate(38)"/>
-        <circle r="1.8" fill="#2e7d52"/>
-      </g>
-    </g>
-
-    <!-- staged annotations, synced to the turtle's progress -->
-    <g class="v-s1">
-      <rect x="24" y="100" width="196" height="40" rx="9" fill="#ffffff" stroke="#0e7490" stroke-width="1.5"/>
-      <text x="122" y="117" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">1 · ACQUIRE</text>
-      <text x="122" y="133" text-anchor="middle" class="svg-label-soft">luff sweep finds the wind + GPS fix</text>
-    </g>
-    <g class="v-s2">
-      <rect x="40" y="205" width="212" height="40" rx="9" fill="#ffffff" stroke="#b45309" stroke-width="1.5"/>
-      <text x="146" y="222" text-anchor="middle" class="svg-label" font-weight="700" fill="#8a4207">2 · SAIL-NAV</text>
-      <text x="146" y="238" text-anchor="middle" class="svg-label-soft">broad downwind legs, waypoint by waypoint</text>
-    </g>
-    <g class="v-s3">
-      <rect x="290" y="196" width="220" height="40" rx="9" fill="#ffffff" stroke="#0e7490" stroke-width="1.5"/>
-      <text x="400" y="213" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">3 · RIDE THE CURRENT</text>
-      <text x="400" y="229" text-anchor="middle" class="svg-label-soft">waypoints track the eastward drift for free miles</text>
-    </g>
-    <g class="v-s4">
-      <rect x="400" y="118" width="212" height="40" rx="9" fill="#ffffff" stroke="#2e7d52" stroke-width="1.5"/>
-      <text x="506" y="135" text-anchor="middle" class="svg-label" font-weight="700" fill="#2e7d52">4 · RE-SWEEP</text>
-      <text x="506" y="151" text-anchor="middle" class="svg-label-soft">wind re-found after each turn; geofence watching</text>
-    </g>
-    <g class="v-s5">
-      <rect x="404" y="312" width="216" height="40" rx="9" fill="#ffffff" stroke="#b3403a" stroke-width="1.5"/>
-      <text x="512" y="329" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">5 · ARRIVAL</text>
-      <text x="512" y="345" text-anchor="middle" class="svg-label-soft">feather the sail; wind + current drift it ashore</text>
-    </g>
-  </svg>
-  </div>
-  <figcaption>Concept voyage (stylized but geographically oriented: Crete, Cyprus,
-  the Nile Delta, Sinai, and the coast's turn north at Gaza). The turtle never
-  sails hard upwind: its waypoints are laid out ashore so the north-west summer
-  wind and the counter-clockwise Levantine current — which sweeps east past the
-  delta and then north up the Levant coast — both push toward the destination,
-  with the sail doing course-keeping rather than brute force. ARRIVAL is honest — the last
-  miles to the shoreline are a feathered drift, delivered by the same wind and
-  current that carried it there. Everything shown assumes the experimental ladder
-  in Part Five has been climbed and the AOELL learning loop of Part Four has been
-  refining the turtle's policies voyage after voyage.</figcaption>
-</figure>
-
-<h3>6 · A deeper safety net</h3>
-<div class="two-col">
-  <div class="mini-card"><h4>🧮 Dead reckoning</h4>
-  <p>If GPS drops out, the fused heading plus the last known speed keeps a
-  short-term position estimate going — buying minutes of graceful sailing before
-  the SAFE timer fires. <em>Unlocked by the IMU.</em></p></div>
-  <div class="mini-card"><h4>🕵️ GPS sanity check</h4>
-  <p>If GPS claims we're moving north but the compass insists we point south for
-  minutes on end, something is lying (glitch, or spoofing). Sustained disagreement
-  → SAFE.</p></div>
-  <div class="mini-card"><h4>🗺️ Geofence</h4>
-  <p>A boundary drawn around the mission area. A turtle that drifts outside it
-  goes SAFE and calls home, instead of wandering into a shipping lane.</p></div>
-  <div class="mini-card"><h4>💧 Hull watch</h4>
-  <p>Moisture and temperature sensors inside the hull → SAFE plus an immediate
-  distress telemetry packet the moment water shows up where it shouldn't.</p></div>
-  <div class="mini-card"><h4>🐕 Watchdog</h4>
-  <p>A hardware timer that reboots the computer if the software ever hangs. Paired
-  with mission persistence, a rebooted turtle resumes its voyage on its own.</p></div>
-  <div class="mini-card"><h4>📡 Nav telemetry</h4>
-  <p>Heading error, wind solution + confidence, commanded <em>and actual</em> sail
-  angle, and progress-made-good in every packet home — so we can replay and tune a
-  turtle's decisions from shore.</p></div>
+<p>Everything downstream of this — the sense/decide/act cadence, the make-or-break
+sail experiments, tacking, and the wider safety net — lives in <strong>Part
+Four</strong> (the AOELL learning loop that judges every experiment) and
+<strong>Part Six</strong> (the phase-by-phase ladder with its gates), so it's
+covered there rather than twice.</p>
 </div>
 
 <!-- ================================================================ -->
-<h2><span class="kicker">Part Four</span>Learning twice: AOELL and hopeturtles.org <span class="badge next">New dimension</span></h2>
+<h2><span class="kicker">Part Four</span>Learning twice: AOELL and hopeturtles.org <span class="badge next">For review</span></h2>
 
-<p class="lede">The July revision added the piece the plan was missing. turtleOS is
-not a finished navigation controller — it is an <strong>instrumented sailing
+<p class="lede">This is what the whole system is <em>for</em>. turtleOS is not a
+finished navigation controller — it is an <strong>instrumented sailing
 experiment</strong> that acts, observes the consequences, evaluates honestly,
 records enough context to explain itself, and learns. And it must learn
 <strong>twice</strong>: once aboard for the next decision, and again ashore —
@@ -1118,18 +772,21 @@ models interpret them and send back improved, versioned instructions:</p>
   turtle keeps a one-step rollback.</p></div>
 </div>
 
-<h3>Two development streams that must rejoin</h3>
-<p>This gives our work two parallel streams. <strong>Stream A</strong> is the
+<h3>Three development streams that must rejoin</h3>
+<p>This gives our work three parallel streams. <strong>Stream A</strong> is the
 turtleOS firmware — the sailing ladder from Part Three plus the AOELL recording
 machinery. <strong>Stream B</strong> is hopeturtles.org — the mission database,
 the batch ingestion, and above all the <strong>mission_review panel</strong>, the
 major later-phase destination everything aboard is working toward connecting to.
-Neither stream is useful alone: perfect logs nobody can interpret teach nothing,
-and a beautiful dashboard with no causal records explains nothing.</p>
+<strong>Stream C</strong> is the bale mesh of Part Five — the turtle-to-turtle
+radio network that decides how much of the evidence ever reaches either of the
+other two. No stream is useful alone: perfect logs nobody can interpret teach
+nothing, a beautiful dashboard with no causal records explains nothing, and both
+are limited by what survives the sea.</p>
 
 <figure>
   <div class="frame">
-  <svg viewBox="0 0 680 300" role="img" aria-label="Two development streams, aboard and ashore, joined by four integration milestones J1 to J4">
+  <svg viewBox="0 0 680 440" role="img" aria-label="Three development streams — aboard, ashore, and the bale mesh — joined by five integration milestones J1 to J5">
     <!-- stream A lane -->
     <rect x="20" y="30" width="640" height="72" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
     <text x="36" y="56" class="svg-label" font-weight="700" fill="#2e7d52">STREAM A · aboard (turtleOS)</text>
@@ -1138,6 +795,10 @@ and a beautiful dashboard with no causal records explains nothing.</p>
     <rect x="20" y="198" width="640" height="72" rx="12" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
     <text x="36" y="224" class="svg-label" font-weight="700" fill="#155e75">STREAM B · ashore (hopeturtles.org)</text>
     <text x="36" y="246" class="svg-label-soft">mission + AOELL tables → batch ingestion → mission_review replay → annotation → models → policy lifecycle</text>
+    <!-- stream C lane -->
+    <rect x="20" y="356" width="640" height="72" rx="12" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+    <text x="36" y="382" class="svg-label" font-weight="700" fill="#5e548e">STREAM C · bale mesh (turtle ↔ turtle)</text>
+    <text x="36" y="404" class="svg-label-soft">wire format → transport → point-to-point link → store-and-forward mesh → bale view → shared wind &amp; hazards</text>
     <!-- joint links J1..J4 -->
     <g>
       <line x1="150" y1="102" x2="150" y2="198" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
@@ -1167,19 +828,33 @@ and a beautiful dashboard with no causal records explains nothing.</p>
       <circle r="3" fill="#2e7d52" class="pkt-down" cx="609" cy="112"/>
       <circle r="3" fill="#2e7d52" class="pkt-down pkt-d2" cx="609" cy="112"/>
     </g>
+    <!-- J5: bale mesh joins, carrying records that would otherwise be lost -->
+    <g>
+      <line x1="450" y1="270" x2="450" y2="356" stroke="#5e548e" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="450" cy="313" r="17" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <text x="450" y="318" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">J5</text>
+      <circle r="3" fill="#155e75" class="pkt-up" cx="441" cy="348"/>
+      <circle r="3" fill="#155e75" class="pkt-up pkt-d2" cx="441" cy="348"/>
+    </g>
+    <!-- turtle-to-turtle hop inside the bale lane -->
+    <path d="M 150 392 C 200 356, 250 356, 300 392" fill="none" stroke="#5e548e" stroke-width="1.6" stroke-dasharray="3 4" opacity="0.8"/>
+    <circle r="3.5" fill="#5e548e" class="pkt-up" cx="225" cy="372"/>
     <!-- milestone labels -->
     <text x="150" y="129" text-anchor="middle" class="svg-label-soft">first replayed voyage</text>
     <text x="300" y="129" text-anchor="middle" class="svg-label-soft">trustworthy training data</text>
     <text x="450" y="129" text-anchor="middle" class="svg-label-soft">shadow mode at sea</text>
     <text x="600" y="129" text-anchor="middle" class="svg-label-soft">closed learning loop</text>
+    <text x="450" y="345" text-anchor="middle" class="svg-label-soft">evidence outlives the hull</text>
     <text x="340" y="290" text-anchor="middle" class="svg-label-soft">dots rising = voyage records going ashore · dots falling = approved policies coming aboard (from J3)</text>
   </svg>
   </div>
-  <figcaption>The two streams and where they rejoin. J1: a real voyage can be
+  <figcaption>The three streams and where they rejoin. J1: a real voyage can be
   replayed end to end. J2: reviewed experiments become a trustworthy training
   dataset. J3: a candidate model "shadows" the real policy at sea without touching
   the sail. J4: a signed improvement deploys — and can roll back — completing the
-  loop: fail, learn, fail, learn, knot by knot, inch by inch.</figcaption>
+  loop. J5: a record taken by one turtle, carried by another, arrives ashore even
+  though the turtle that took it never did. Fail, learn, fail, learn, knot by knot,
+  inch by inch.</figcaption>
 </figure>
 
 <h3>Inside mission_review: the shore-side half</h3>
@@ -1222,14 +897,278 @@ step from rollback. No turtle silently rewrites its own brain at sea.</p>
 </div>
 
 <div class="callout good">
-<p><strong>The revised governing principle:</strong> act deliberately, observe
+<p><strong>The governing principle:</strong> act deliberately, observe
 carefully, evaluate honestly, log completely — and learn twice: once aboard for
 the next decision, and again ashore so the whole team, and eventually the whole
 turtle fleet, can improve.</p>
 </div>
 
 <!-- ================================================================ -->
-<h2><span class="kicker">Part Five</span>The experimental ladder — phases for review</h2>
+<h2><span class="kicker">Part Five</span>The bale: turtles that talk to each other <span class="badge later">Planning only</span></h2>
+
+<p class="lede">Everything in Part Four assumes the evidence gets home. Today it
+only does if the <em>hull</em> gets home. A turtle records to its own memory and
+waits for a shore connection that, on a real mission, most likely never comes until
+it arrives — and a turtle lost at sea takes every reading it ever took down with
+it. That is a learning system with a single point of failure per turtle.</p>
+
+<p>But turtles are cheap: open source, built from wood and locally available
+materials, carrying perhaps forty dollars of electronics. They will be deployed in
+numbers, and they will drift in loose company. There are flocks of sheep and swarms
+of wasps — and there are <strong>bales of turtles</strong>. Real sea turtles
+coordinate migrations and mass arrivals through the ocean. If ours can talk to each
+other over long-range radio, the unit of survival stops being the turtle and
+becomes the fleet.</p>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 600 600" role="img" aria-label="A square bale of many turtles drifting together up the page toward shore, relaying a message hop by hop over intermittent links">
+    <!-- sea fills the square; shore is a strip along the top, the direction the whole bale drifts -->
+    <rect x="0" y="0" width="600" height="600" fill="#e0f2f7"/>
+    <path d="M 0 0 L 600 0 L 600 66 C 470 82, 300 60, 150 78 C 90 85, 40 74, 0 80 Z"
+          fill="#fdf0e0" stroke="#d9b98c" stroke-width="2"/>
+    <text x="40" y="30" class="svg-label-soft">shore</text>
+    <rect x="452" y="14" width="120" height="46" rx="8" fill="#fff" stroke="#0e7490" stroke-width="2"/>
+    <text x="512" y="33" text-anchor="middle" class="svg-label-soft" fill="#155e75">hope</text>
+    <text x="512" y="49" text-anchor="middle" class="svg-label-soft" fill="#155e75">turtles.org</text>
+    <text x="300" y="580" text-anchor="middle" class="svg-label-soft" fill="#4a5a64">the whole bale drifts this way ↑ — slowly, together</text>
+
+    <!-- mesh links: the spine that carries one record from the bottom turtle up to shore -->
+    <g stroke="#5e548e" stroke-width="1.6" stroke-dasharray="4 5">
+      <line class="link-intermittent" x1="110" y1="530" x2="205" y2="470"/>
+      <line x1="205" y1="470" x2="270" y2="400" opacity="0.55"/>
+      <line class="link-intermittent" x1="270" y1="400" x2="300" y2="320"/>
+      <line x1="300" y1="320" x2="380" y2="360" opacity="0.55"/>
+      <line class="link-intermittent" x1="380" y1="360" x2="430" y2="270"/>
+      <line x1="430" y1="270" x2="470" y2="180" opacity="0.55"/>
+      <line class="link-intermittent" x1="470" y1="180" x2="512" y2="90"/>
+    </g>
+    <!-- ambient links between the other turtles in the water — the bale is denser than one relay chain -->
+    <g stroke="#5e548e" stroke-width="1.2" stroke-dasharray="3 5" opacity="0.35">
+      <line x1="160" y1="380" x2="205" y2="470"/>
+      <line x1="160" y1="380" x2="270" y2="400"/>
+      <line x1="380" y1="360" x2="520" y2="420"/>
+      <line x1="300" y1="320" x2="160" y2="380"/>
+      <line x1="430" y1="270" x2="520" y2="420"/>
+    </g>
+    <!-- final uplink into shore -->
+    <line x1="512" y1="90" x2="512" y2="60" stroke="#0e7490" stroke-width="2.5"/>
+
+    <!-- turtles: an ordinary member of the bale, drawn once and reused -->
+    <g fill="#e3f2ea" stroke="#2e7d52" stroke-width="1.6">
+      <g transform="translate(110,530)"><g class="bale-turtle bale-t2"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(205,470)"><g class="bale-turtle bale-t3"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(160,380)"><g class="bale-turtle bale-t4"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(380,360)"><g class="bale-turtle bale-t5"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(430,270)"><g class="bale-turtle bale-t6"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(520,420)"><g class="bale-turtle bale-t7"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+      <g transform="translate(270,400)"><g class="bale-turtle bale-t8"><rect x="-4" y="-13" width="8" height="26" rx="3"/><rect x="-13" y="-4" width="26" height="8" rx="3"/></g></g>
+    </g>
+    <!-- the gateway turtle, nearest shore right now -->
+    <g transform="translate(470,180)"><g class="bale-turtle">
+      <rect x="-4" y="-13" width="8" height="26" rx="3" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+      <rect x="-13" y="-4" width="26" height="8" rx="3" fill="#e0f2f7" stroke="#0e7490" stroke-width="2"/>
+    </g></g>
+    <!-- the mother turtle, at the heart of the bale -->
+    <g transform="translate(300,320)"><g class="bale-turtle">
+      <circle r="21" fill="#ede7f6" opacity="0.85"/>
+      <rect x="-5" y="-16" width="10" height="32" rx="3" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+      <rect x="-16" y="-5" width="32" height="10" rx="3" fill="#ede7f6" stroke="#5e548e" stroke-width="2"/>
+    </g></g>
+    <!-- the originating turtle, bottom of the diagram, furthest from shore -->
+    <g transform="translate(110,530)"><g class="bale-turtle bale-t2">
+      <rect x="-4" y="-13" width="8" height="26" rx="3" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+      <rect x="-13" y="-4" width="26" height="8" rx="3" fill="#fdf0e0" stroke="#b45309" stroke-width="2"/>
+    </g></g>
+
+    <!-- one record relayed hop by hop up the spine, only when each link happens to be up -->
+    <g class="relay-hop">
+      <circle r="5" fill="#b45309">
+        <animateMotion dur="5s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.05;0.45;1" calcMode="linear"
+          path="M 110 530 L 205 470 L 270 400 L 300 320 L 380 360 L 430 270 L 470 180 L 512 90 L 512 60"/>
+      </circle>
+    </g>
+    <g class="relay-hop relay-h2">
+      <circle r="5" fill="#b45309">
+        <animateMotion dur="5s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.05;0.45;1" calcMode="linear"
+          path="M 110 530 L 205 470 L 270 400 L 300 320 L 380 360 L 430 270 L 470 180 L 512 90 L 512 60"/>
+      </circle>
+    </g>
+
+    <!-- labels -->
+    <text x="110" y="500" text-anchor="middle" class="svg-label-soft">reading taken here</text>
+    <text x="300" y="298" text-anchor="middle" class="svg-label" font-weight="700" fill="#5e548e">mother turtle</text>
+    <text x="300" y="345" text-anchor="middle" class="svg-label-soft">no mission · just listens and stores</text>
+    <text x="470" y="152" text-anchor="middle" class="svg-label" font-weight="700" fill="#155e75">gateway</text>
+    <text x="470" y="212" text-anchor="middle" class="svg-label-soft">whichever turtle finds a connection</text>
+    <text x="470" y="228" text-anchor="middle" class="svg-label-soft">uplinks for the whole bale</text>
+  </svg>
+  </div>
+  <figcaption>A square bale, drifting slowly up the page toward shore together — the
+  same current and wind push every hull, so neighbours stay neighbours for days.
+  Dashed violet lines are radio links; the fainter, flickering ones show links
+  that come and go with the swell rather than holding steady. The orange dot is
+  one reading, taken at the bottom of the diagram and relayed neighbour to
+  neighbour — waiting out each intermittent link — until whichever turtle
+  currently has a connection uplinks it to hopeturtles.org. The turtle that took
+  it never needs to reach shore itself.</figcaption>
+</figure>
+
+<h3>What a bale gives us</h3>
+<div class="two-col">
+  <div class="mini-card"><h4>📦 Data survives the hull</h4>
+  <p>Records replicate to neighbours, so losing a turtle stops being a data loss.
+  A reading taken on day 2 should have several independent copies by day 5.</p></div>
+  <div class="mini-card"><h4>🍃 Shared wind, saved battery</h4>
+  <p>A luff sweep costs battery and interrupts steering. A neighbour ten kilometres
+  away is probably in the same wind field — so its fresh solution can seed, or
+  entirely skip, your next sweep.</p></div>
+  <div class="mini-card"><h4>🚩 Shared hazards</h4>
+  <p>A turtle becalmed or pushed backwards for six hours has learned something
+  about that patch of ocean. Broadcasting "this area cost me a day" lets the bale
+  route around it — an empirical current map the fleet builds itself.</p></div>
+  <div class="mini-card"><h4>📡 Anyone can be the gateway</h4>
+  <p>Any turtle that passes a harbour, a vessel, or a shore access point flushes
+  not just its own queue but everything it is carrying for the others.</p></div>
+  <div class="mini-card"><h4>🐢 The mother turtle</h4>
+  <p>Same hull, extra storage, bigger battery, no sailing mission — deployed to sit
+  among the bale and listen. Recovering one mother turtle recovers the whole
+  bale's log. Far cheaper than recovering every hull.</p></div>
+  <div class="mini-card"><h4>🔬 A real experiment, replicated</h4>
+  <p>Many hulls, same water, same weather, different policies and rigs, sharing a
+  clock and positions. That is a far stronger scientific design than a scatter of
+  isolated turtles, however well instrumented each one is.</p></div>
+</div>
+
+<figure>
+  <div class="frame">
+  <svg viewBox="0 0 660 210" role="img" aria-label="The loss model inverts: a lone turtle lost takes its data with it, a turtle in a bale does not">
+    <rect x="20" y="20" width="300" height="170" rx="12" fill="#fbe9e7" stroke="#b3403a" stroke-width="2"/>
+    <text x="170" y="46" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">Alone today</text>
+    <g class="hull-lost">
+      <g transform="translate(170,110)">
+        <rect x="-6" y="-20" width="12" height="40" rx="4" fill="#fff" stroke="#b3403a" stroke-width="2"/>
+        <rect x="-20" y="-6" width="40" height="12" rx="4" fill="#fff" stroke="#b3403a" stroke-width="2"/>
+      </g>
+      <text x="170" y="160" text-anchor="middle" class="svg-label-soft">carries every reading it ever took</text>
+    </g>
+    <text x="170" y="182" text-anchor="middle" class="svg-label" font-weight="700" fill="#b3403a">lost hull = lost voyage</text>
+
+    <rect x="340" y="20" width="300" height="170" rx="12" fill="#e3f2ea" stroke="#2e7d52" stroke-width="2"/>
+    <text x="490" y="46" text-anchor="middle" class="svg-label" font-weight="700" fill="#2e7d52">In a bale</text>
+    <g class="hull-lost">
+      <g transform="translate(400,100)">
+        <rect x="-5" y="-16" width="10" height="32" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+        <rect x="-16" y="-5" width="32" height="10" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      </g>
+    </g>
+    <g>
+      <g transform="translate(490,140)">
+        <rect x="-5" y="-16" width="10" height="32" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+        <rect x="-16" y="-5" width="32" height="10" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      </g>
+      <g transform="translate(575,95)">
+        <rect x="-5" y="-16" width="10" height="32" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+        <rect x="-16" y="-5" width="32" height="10" rx="3" fill="#fff" stroke="#2e7d52" stroke-width="2"/>
+      </g>
+    </g>
+    <g stroke="#5e548e" stroke-width="1.5" stroke-dasharray="3 4" opacity="0.7">
+      <line x1="410" y1="112" x2="478" y2="134"/>
+      <line x1="504" y1="134" x2="562" y2="106"/>
+      <line x1="412" y1="96" x2="562" y2="92"/>
+    </g>
+    <g class="hull-survives">
+      <text x="490" y="176" text-anchor="middle" class="svg-label" font-weight="700" fill="#2e7d52">its records left days ago ✓</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The loss model inverts. Watch both hulls fade: alone, a lost turtle is
+  a lost voyage. In a bale, losing a turtle loses a <em>node</em> — its data has
+  been living in its neighbours' memories for days.</figcaption>
+</figure>
+
+<h3>Why the sea is unusually good for this</h3>
+<p>Mesh radio networks have a reputation for being fussy and disappointing. That
+reputation was earned on land, and almost every reason for it is absent at sea:</p>
+<div class="two-col">
+  <div class="mini-card"><h4>👀 Nothing in the way</h4>
+  <p>Long-range radio is defeated by buildings, hills, and trees. Open water has
+  none of them — the limit becomes the horizon rather than the signal.</p></div>
+  <div class="mini-card"><h4>🤫 A quiet spectrum</h4>
+  <p>The radio bands we'd use are crowded in any city and nearly silent mid-ocean.
+  The same radio is a different instrument out there.</p></div>
+  <div class="mini-card"><h4>🌊 Drift correlates</h4>
+  <p>Turtles released together are pushed by the same current and wind. They spread
+  out slowly and coherently, so neighbours stay neighbours for days — the network's
+  shape changes by the hour, not by the second.</p></div>
+  <div class="mini-card"><h4>🐌 Nobody is in a hurry</h4>
+  <p>A voyage lasts weeks. A record is just as useful three days late as three
+  seconds late. That removes the hardest constraint in mesh design: we need
+  <em>eventual</em> delivery, which is a far cheaper problem.</p></div>
+  <div class="mini-card"><h4>🔗 The relays are the mission</h4>
+  <p>We can't afford to deploy a relay network — and we don't have to. Every turtle
+  launched to sail somewhere is simultaneously a node. The network gets denser for
+  free as the project succeeds.</p></div>
+  <div class="mini-card"><h4>➕ Strictly additive</h4>
+  <p>A turtle with no radio, or one that hears nobody, behaves exactly as turtles
+  behave today: queue to memory and sail on. There is no flag day, and a mixed
+  fleet is the expected setup for the first deployments.</p></div>
+</div>
+
+<div class="callout warn">
+<p><strong>The honest counterweight: antenna height.</strong> A turtle's antenna sits
+perhaps 30&nbsp;cm above the water, and in any real swell it spends part of its life
+<em>below</em> the wave crests. Links will appear and vanish within seconds even when
+the average shape of the bale is stable for days — something no flat-water test will
+reveal. That is exactly why the design is <strong>store-and-forward</strong>: a
+turtle hands over what it can, whenever it can, and never depends on holding a
+conversation.</p>
+</div>
+
+<h3>What has to be decided before anything is built</h3>
+<p><strong>Nothing here is committed to — no hardware chosen, no code written.</strong>
+This part of the plan exists so the decisions that are expensive to reverse get made
+deliberately rather than discovered halfway through:</p>
+<div class="two-col">
+  <div class="mini-card"><h4>📐 The message format</h4>
+  <p>A full telemetry message is 200–400 bytes of text; a long-range radio packet
+  holds about 51. A packed 20-byte record (who, when, where, state, battery, wind)
+  fits comfortably — but this format is the single most expensive thing in the
+  project to change later, because turtles, relays, and the shore server must agree
+  on it forever. It gets written down first, with a version number built in.</p></div>
+  <div class="mini-card"><h4>🔌 A second small brain</h4>
+  <p>The XIAO's pins are fully spoken for — two free, seven needed for a radio. The
+  recommended answer is a tiny second chip that owns the radio and talks to the
+  turtle over the wires the sensors already share, so a radio problem can never
+  stall the sailing loop.</p></div>
+  <div class="mini-card"><h4>⚖️ Airtime is rationed by law</h4>
+  <p>Radio regulations cap how much any node may transmit, and that budget is shared
+  between a turtle's own messages and the ones it relays for others. Which region's
+  rules apply — and what applies in international waters — needs a real answer, not
+  an assumption. It sets the whole message budget.</p></div>
+  <div class="mini-card"><h4>🔋 Power, measured not guessed</h4>
+  <p>Transmitting is expensive, and a busy relay can spend real energy carrying
+  other turtles' traffic. Before any design work, we measure actual draw with the
+  battery monitor already aboard.</p></div>
+</div>
+
+<p>Beyond those, four questions are for the team rather than the code: which radio
+region and band; whether the first bale is 3 hulls or 30 (below about 5 there is
+rarely a relay path, and the value is mostly data survival); whether a mother turtle
+is in the first deployment or a later one; and what added cost per hull is
+acceptable — if the radio doubles the price of a deliberately cheap turtle,
+launching twice as many isolated turtles may be the better experiment.</p>
+
+<div class="callout">
+<p>The full bale plan — the vision, the pin arithmetic, the packed record layout,
+the mesh rules (deduplication, hop limits, provenance, what happens when two halves
+of a bale meet again after a week apart), and the open questions — is in
+<code>docs/bale_network_vision.md</code>, with the phased task list as Stream C in
+<code>docs/navigation_roadmap.md</code>.</p>
+</div>
+
+<!-- ================================================================ -->
+<h2><span class="kicker">Part Six</span>The experimental ladder — phases for review</h2>
 <p>We propose climbing in this order, with a measurable pass/fail gate at each
 rung. Rungs 2–5 are Stream A's sailing experiments; the Stream B build
 (mission_review) runs in parallel and meets them at the J milestones. Each phase
@@ -1273,19 +1212,25 @@ proposal.</strong></p>
 <p>Meanwhile Stream B climbs its own ladder on hopeturtles.org — mission + AOELL
 database tables, idempotent batch ingestion, the mission_review replay (map,
 timeline, cycle inspector), annotation and comparison views, then staged models
-and the signed policy lifecycle. The two ladders meet at the J milestones:
-<strong>J1</strong> first replayed voyage (after rung 1), <strong>J2</strong>
-trustworthy training data (after the experiment rungs), <strong>J3</strong>
-shadow mode at sea, and <strong>J4</strong> the closed learning loop — the
-roadmap's definition of done for the learning architecture.</p>
+and the signed policy lifecycle. Stream C climbs a third: the message format on
+paper, then a transport layer, a turtle-to-turtle link, the store-and-forward
+mesh, the bale view ashore, and finally shared wind and hazard knowledge.</p>
+
+<p>The three ladders meet at the J milestones: <strong>J1</strong> first replayed
+voyage (after rung 1), <strong>J2</strong> trustworthy training data (after the
+experiment rungs), <strong>J3</strong> shadow mode at sea, <strong>J4</strong> the
+closed learning loop — the roadmap's definition of done for the learning
+architecture — and <strong>J5</strong>, a record taken by one turtle and carried
+home by another: the definition of done for evidence survival.</p>
 
 <div class="callout">
 <p>For the engineering-level task list behind these phases — file by file,
-checkbox by checkbox, both streams and the J milestones — see
+checkbox by checkbox, all three streams and the J milestones — see
 <code>docs/navigation_roadmap.md</code> in the repository. The full AOELL
 specification (event contract, database tables, API surface, ML stages, and
-statistical safeguards) is in <code>docs/AOELL nav revision.md</code>. This page
-and those documents describe the same plan at different zoom levels.</p>
+statistical safeguards) is in <code>docs/AOELL nav revision.md</code>, and the bale
+mesh plan is in <code>docs/bale_network_vision.md</code>. This page and those
+documents describe the same plan at different zoom levels.</p>
 </div>
 
 <!-- ================================================================ -->
@@ -1299,6 +1244,18 @@ and those documents describe the same plan at different zoom levels.</p>
   <dt>AOELL</dt><dd>The onboard cycle — Act, Observe, Evaluate, Log, Learn. Every
   action, even "hold the sail," becomes a recorded experiment with a prediction
   and an honestly scored outcome.</dd>
+  <dt>Bale</dt><dd>The collective noun for turtles — and our name for a group of
+  turtles deployed together that share records and lessons by radio, so no single
+  hull is the only copy of its own voyage.</dd>
+  <dt>Store-and-forward</dt><dd>Passing a message on whenever a neighbour happens
+  to be in range, rather than holding a live connection. The right design when
+  links come and go with the swell and nothing is urgent.</dd>
+  <dt>Mother turtle</dt><dd>A turtle with no sailing mission, extra storage and a
+  bigger battery, deployed to sit among a bale and record everything it hears —
+  the fleet's black box.</dd>
+  <dt>Gateway</dt><dd>Whichever turtle currently has a connection to shore. It
+  uplinks not only its own readings but everything it is carrying for the rest of
+  the bale.</dd>
   <dt>mission_review</dt><dd>The planned analysis panel on hopeturtles.org: a
   synchronized map, timeline, and cycle inspector for replaying any voyage and
   understanding what the turtle believed, did, predicted, and observed.</dd>
@@ -1339,8 +1296,9 @@ and those documents describe the same plan at different zoom levels.</p>
 </main>
 
 <footer>
-  Hope Turtles · turtleOS navigation system · current + roadmap · revised July 2026<br>
-  Companion engineering document: <code>docs/navigation_roadmap.md</code>
+  Hope Turtles · turtleOS navigation system · current + roadmap · July 2026<br>
+  Companion engineering documents: <code>docs/navigation_roadmap.md</code> ·
+  <code>docs/bale_network_vision.md</code>
 </footer>
 
 </body>

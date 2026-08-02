@@ -71,11 +71,14 @@ I2C_ADDR_AHT2X   = 0x38  # AHT10/AHT20/AHT21
 I2C_ADDR_SCD41   = 0x62  # SCD40/SCD41 true CO2 sensor
 I2C_ADDR_BME280     = 0x76  # BME280 temp + humidity + pressure (SDO=LOW)
 I2C_ADDR_BME280_ALT = 0x77  # BME280 alternate address (SDO=HIGH)
-I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone)
-I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine)
+I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone) — retired from boot path, see mpu9250.py
+I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine) — retired from boot path, see mpu9250.py
 I2C_ADDR_AS5600  = 0x36  # AS5600 magnetic angle sensor (sail position)
+I2C_ADDR_MPU9250 = 0x69  # MPU-9250 IMU (AD0 strapped high — 0x68 is DS3231's)
+I2C_ADDR_AK8963  = 0x0C  # AK8963 magnetometer, visible once MPU-9250 bypass is enabled
 
 _I2C_NAMES = {
+    0x0C: "AK8963",
     0x0D: "QMC5883L",
     0x1E: "HMC5883L",
     0x36: "AS5600",
@@ -85,6 +88,7 @@ _I2C_NAMES = {
     0x53: "ENS160",
     0x62: "SCD41",
     0x68: "DS3231",
+    0x69: "MPU9250",
     0x76: "BME280",
     0x77: "BME280",
 }
@@ -1271,13 +1275,22 @@ def step_as5600():
         return True, "ERROR"
 
 
-def step_compass():
+def step_mpu9250():
+    """Probe the MPU-9250 IMU (0x69) and confirm AK8963 bypass (0x0C)."""
     addrs = i2c_scan()
-    if I2C_ADDR_QMC5883 in addrs:
-        return True, "QMC5883L OK (0x0D)"
-    if I2C_ADDR_HMC5883 in addrs:
-        return True, "HMC5883L OK (0x1E)"
-    return True, "Compass: NOT FOUND"
+    if I2C_ADDR_MPU9250 not in addrs:
+        return True, "NOT FOUND"
+    try:
+        _gc()
+        from src.drivers.mpu9250 import MPU9250
+        imu = MPU9250(init_i2c())
+        if not imu.is_present:
+            return True, "init failed"
+        if imu.mag is None:
+            return True, "OK gyro/accel - AK8963 bypass FAILED"
+        return True, "OK - gyro/accel + AK8963 (0x0C)"
+    except Exception:
+        return True, "ERROR"
 
 
 def step_servo():
@@ -1394,7 +1407,7 @@ steps = [
     ("RTC clock...", step_rtc),
     ("Warming sensors...", step_warmup),
     ("GPS check...", step_gps),
-    ("Compass check...", step_compass),  # I2C address scan only — cheap, no driver import
+    ("MPU-9250 IMU...", step_mpu9250),  # imports MPU9250 driver if found; wakes chip + enables AK8963 bypass
 ]
 if _turtle_boot:
     steps += [

@@ -1,25 +1,31 @@
 # Navigation Roadmap — Road to the Full Olive Turtle Autonomy Stack
 
 This document tracks what remains between the **minimal SAIL-NAV system**
-now running in `device/src/nav/` and full unattended autonomy. It replaces
-the earlier `pending_nav_dev.md` and incorporates two July 2026 revisions:
+now running in `device/src/nav/` and full unattended autonomy.
 
-1. The **design review** that corrected several assumptions the original
-   plan inherited from `docs/Olive_Turtle_Dev_Deploy.pdf` (fixed rudder,
-   no direct steering, experiments before controllers).
-2. The **AOELL revision** (`docs/AOELL nav revision.md`), which added the
-   missing learning architecture: turtleOS is not a finished navigation
-   controller but an *instrumented sailing experiment*, and every voyage —
-   especially every failure — must produce evidence that improves the next
-   decision, policy version, and turtle.
+The governing idea is the **AOELL learning architecture**
+(`docs/AOELL nav revision.md`): turtleOS is not a finished navigation
+controller but an *instrumented sailing experiment*, and every voyage —
+especially every failure — must produce evidence that improves the next
+decision, the next policy version, and the next turtle.
 
-The roadmap therefore now runs in **two development streams**: the
-**aboard stream** (turtleOS firmware) and the **ashore stream**
-(hopeturtles.org — culminating in the `mission_review` panel). They are
-built in parallel, meet at defined integration milestones, and must
+The roadmap runs in **three development streams**:
+
+- **Aboard** (turtleOS firmware) — the turtle acts, observes, evaluates,
+  logs and learns.
+- **Ashore** (hopeturtles.org, culminating in the `mission_review` panel)
+  — the team and, later, models interpret those records and send back
+  versioned policy adjustments.
+- **Bale mesh** (`docs/bale_network_vision.md`) — turtles talk to each
+  other, so lessons and records propagate between hulls at sea and reach
+  shore through whichever hull finds connectivity first.
+
+They are built in parallel, meet at defined integration milestones, and
 complement each other completely: the turtle's logs are only as useful as
-the shore system that can make sense of them, and the shore system is only
-as useful as the causal records the turtle actually keeps.
+the shore system that can make sense of them; the shore system is only as
+useful as the causal records the turtle keeps; and both are limited by how
+much of that evidence actually survives the sea — which is what the mesh
+exists to fix.
 
 It is written to be readable by assistant engineers as well as the core
 team: each section opens with a plain-language summary of *why* the work
@@ -30,46 +36,38 @@ see `docs/nav_system/index.html`.
 
 ---
 
-## The July 2026 corrections — read this first
+## How the turtle actually sails — the ground rules
 
-The original plan quietly assumed the turtle steers like a normal boat.
-It does not. These corrections reshape the whole roadmap:
+Everything in this roadmap follows from seven facts about the hull. They
+are stated up front because each one shapes the order of the work:
 
 1. **The rudder is fixed. Only the sail rotates.** There is no steering
-   servo. Every reference to a "rudder/sail servo" in older notes means
-   the **sail servo**, full stop. The fixed rudder, hull, and keel are
+   servo. "Sail servo" is the only servo. The rudder, hull, and keel are
    passive.
 2. **Sail trim is not direct steering.** Moving the sail changes the
    aerodynamic force on the boat; the fixed rudder, hull, and keel then
    convert that force into some combination of forward movement and yaw.
-   **We do not yet know whether that relationship is consistent enough
-   for dependable navigation.** Establishing it experimentally is the
-   central open question of this roadmap.
-3. **PID heading control is premature.** PID assumes the actuator has a
-   reasonably predictable effect on the controlled variable. We have not
-   yet established that moving the sail by 10° produces a predictable
-   heading response. A PID controller wrapped around an unknown
-   relationship is an elegant way to automate confusion. The PID code in
-   `nav/pid.py` stays in the tree, but it is **gated behind the
-   turning-influence experiments** (Phase T below) rather than tuned
-   first.
-4. **No 50 Hz "spin guard counters immediately."** The IMU can *detect*
-   rotation at 20–50 Hz, but the sail must never be commanded at that
-   frequency. We must first determine whether any sail movement reliably
-   arrests — or accidentally worsens — a spin. Detection is a sensing
-   task; response is an experiment.
-5. **Tacking moves much later.** The ladder is: demonstrate luff
-   detection → demonstrate useful propulsion → demonstrate repeatable
-   turning influence → only then attempt a deliberate tack.
-6. **Wind accuracy claims are retired.** The "~2°" figure came from host
-   simulation with whole-degree servo quantization. The correct statement
-   everywhere is: **wind estimate accuracy is to be established
-   experimentally.**
-7. **ARRIVAL does not "hold position."** A sail-only turtle with a fixed
+   **Whether that relationship is consistent enough for dependable
+   navigation is the central open question** — establishing it
+   experimentally is what Phases P and T exist for.
+3. **Controllers come after evidence.** A heading controller assumes the
+   actuator has a predictable effect on the controlled variable. Until a
+   10° sail change is shown to produce a repeatable heading response,
+   wrapping a controller around it automates confusion rather than
+   navigation. `nav/pid.py` stays in the tree but is **gated behind the
+   turning-influence experiments** (Phase T).
+4. **Sensing is fast; acting is slow.** The IMU can *detect* rotation at
+   20–50 Hz, but the sail is never commanded at that frequency. Detection
+   is a sensing task; response is an experiment (see the cadence table).
+5. **The ladder is fixed:** demonstrate luff detection → demonstrate
+   useful propulsion → demonstrate repeatable turning influence → only
+   then attempt a deliberate tack.
+6. **Wind estimate accuracy is to be established experimentally.** No
+   accuracy figure is claimed until it is measured on water.
+7. **ARRIVAL does not hold position.** A sail-only turtle with a fixed
    rudder cannot be assumed to station-keep. ARRIVAL means: inside the
    arrival radius → feather the sail, report arrival, and keep reporting
-   position while drifting. Anything more is future work with no current
-   evidence behind it.
+   position while drifting.
 
 ## The AOELL learning architecture — learn twice
 
@@ -112,7 +110,7 @@ a **causal episode**, not merely a software loop:
   reviewable* policy adjustments.
 
 This makes turtleOS and hopeturtles.org **two parts of one learning
-system** — and gives the roadmap its two streams. The governing principle:
+system**. The governing principle:
 
 > **Act deliberately, observe carefully, evaluate honestly, log
 > completely, and learn twice: once aboard for the next decision, and
@@ -124,10 +122,67 @@ tables, API surface, ML stages, statistical safeguards, and the
 model/policy lifecycle) live in `docs/AOELL nav revision.md`; this roadmap
 sequences that work.
 
-## What remains strong
+## The bale — the third column
+
+Plain-language why: AOELL assumes the evidence gets home. Today it only
+does if the hull does. A turtle records to its own flash and waits for a
+shore access point that, on a real mission, most likely never comes until
+it arrives — and a turtle lost at sea takes every reading it ever took
+with it. That is a learning system with a single point of failure per
+hull.
+
+Turtles are cheap, open source, and built to be deployed in numbers, and
+they drift in loose company. A **bale** — the collective noun we are
+claiming for turtles, alongside flocks of sheep and swarms of wasps —
+changes the unit of survival from the turtle to the fleet. If turtles can
+talk to each other over LoRa:
+
+- a reading taken by one turtle can be **carried home by another**;
+- a turtle that solves the wind can **tell its neighbours what it
+  learned**, so a neighbour can skip or seed an expensive luff sweep;
+- a turtle that finds shore connectivity becomes a **gateway for the whole
+  bale**, flushing everything it carries, not just its own queue;
+- a **mother turtle** — same hull, extra storage, no sailing mission — can
+  shadow the bale as its flying recorder, so a voyage produces evidence
+  even when nothing makes landfall.
+
+The loss model inverts: losing a hull stops being a data loss and becomes
+the loss of a node whose records have been somewhere else for days.
+
+This is why the mesh is a *learning* feature rather than a comms feature,
+and why it earns a column beside aboard and ashore. It multiplies both
+directions of the loop — **at sea**, turtles learn from each other within
+a voyage instead of each repeating the same discoveries alone; **ashore**,
+the team receives evidence from hulls it will never recover. A bale is
+also a genuinely better experiment than a scatter of isolated devices:
+many hulls, same water, same weather, different policies and rigs, with a
+shared clock and shared positions.
+
+The sea is unusually good ground for this. LoRa's range budget is
+destroyed by buildings and terrain, of which open water has none; the ISM
+bands are near-silent mid-ocean; turtles released together drift
+coherently, so neighbours stay neighbours for days and a neighbour table
+refreshed a few times a day describes reality; and nothing is urgent — a
+record is as useful three days late as three seconds late, which reduces
+the problem to **eventual delivery** and makes store-and-forward the
+correct design rather than a compromise. The honest counterweight is
+antenna height: 30 cm above the water, periodically below the wave crests,
+so links appear and vanish in seconds even when average topology is stable
+for days. That argues for store-and-forward and against anything
+resembling a session.
+
+**The mesh is strictly additive.** A turtle with no LoRa hardware, or with
+LoRa that hears nobody, behaves exactly as turtles behave today: queue to
+flash and sail on. There is no flag day, and a mixed fleet is the expected
+configuration for the first several deployments.
+
+Full vision, hardware analysis, wire-format sketch, and open questions are
+in `docs/bale_network_vision.md`; Stream C below sequences that work.
+
+## The foundations we build on
 
 - **The state-machine architecture** (BOOT → ACQUIRE → SAIL_NAV →
-  ARRIVAL, any → SAFE) is the right skeleton and stays.
+  ARRIVAL, any → SAFE) is the skeleton, and it stays.
 - **GPS logging is our essential ground truth**: position, course over
   ground, speed over ground, and progress toward or away from the
   waypoint. Every experiment below is judged against the GPS track.
@@ -166,8 +221,8 @@ more accurate, more robust, and eventually able to sail upwind.
   circular-midpoint wind solve. Verified in host simulation; **on-water
   accuracy to be established experimentally.**
 - Minimal autopilot (`nav/controller.py`): heading-error → sail-servo
-  mapping (PID with placeholder gains — see correction #3; treat as
-  scaffolding, not a tuned controller), great-circle bearing to waypoint,
+  mapping (PID with placeholder gains — scaffolding, not a tuned
+  controller; see ground rule 3), great-circle bearing to waypoint,
   forward-only waypoint sequencing with flash persistence
   (`/nav_state.json`), arrival → ARRIVAL, GPS-loss timer → SAFE, low
   battery → feather.
@@ -210,9 +265,7 @@ the response experiments (Phase T) tell us what a response should be.
 ## The official IMU: the "MPU6050 module" (MPU-9250 chip)
 
 **Decision (July 2026):** the sourced and wired IMU module is the official
-motion sensor for the turtles, replacing the ICM-20948 that the original
-PDF specified. Everywhere the PDF or older notes say "ICM-20948", read
-"our IMU module" instead — the integration plan is the same.
+motion sensor for the turtles.
 
 ### One important naming clarification
 
@@ -239,54 +292,21 @@ board by reading the WHO_AM_I register (address `0x75`). Expected values:
 directions, so verify every batch. `tests/i2c_scan.py` plus a two-line
 register read does this in under a minute.
 
-### Wiring the module — and fixing the 0x68 address clash
+### Wiring — resolved, IMU lives at 0x69
 
-The IMU speaks I2C, the same shared two-wire bus every other sensor uses.
-The catch: the IMU's factory I2C address is **0x68 — the exact same
-address our DS3231 clock chip already uses**. Two devices with the same
-address on one bus is like two houses with the same street number: the
-mail (data) goes to the wrong place. The bus cannot work until one of
-them moves.
-
-Fortunately the chip designers planned for this. The module has a pin
-labeled **AD0** (sometimes printed ADO). It is an address-select switch:
-
-- AD0 left unconnected or wired to GND → address **0x68** (clashes ❌)
-- AD0 wired to 3.3 V → address **0x69** (free ✅)
-
-**So: do we wire AD0 to the VCC pin on the IMU's own board, or to the
-XIAO's 3V3 pin?** Answer: **either works — they are the same wire.** The
-module's VCC pin is fed from the XIAO's 3V3 pin, so both points carry the
-same 3.3 V. The tidiest option is a short jumper (or a solder bridge)
-right on the IMU board from **AD0 to the module's VCC pin**, because it
-keeps the fix on the module itself — any board wired that way is
-plug-in-safe no matter who connects it later.
-
-**One hard rule: power the module from the XIAO's 3V3 pin, never from
-5 V.** The spec sheet says "3–5 V supply", but that tolerance is for the
-VCC pin only (some boards have a regulator behind it). The AD0 pin
-connects straight to the sensor chip, which is a 3.3 V part — putting 5 V
-on AD0 can damage it. Powering everything at 3.3 V makes the whole
-question moot: every point is 3.3 V and AD0-to-VCC is safe by
-construction.
-
-Full hookup (4 wires + the AD0 strap):
-
-| IMU module pin | Connects to | Why |
-|---|---|---|
-| VCC | XIAO **3V3** | power (3.3 V only — see above) |
-| GND | XIAO GND | ground |
-| SCL | XIAO D5 / GPIO6 | shared I2C clock |
-| SDA | XIAO D4 / GPIO5 | shared I2C bus data |
-| **AD0** | **module VCC** (short jumper on the board) | moves address 0x68 → 0x69 |
-| INT, FSYNC, others | leave unconnected | not used |
+The IMU's factory I2C address (0x68) clashed with the DS3231 clock chip,
+which already sat there. **Fixed on the module itself**: AD0 is strapped
+to the module's own VCC pin, which flips the address to **0x69** — free
+on our bus. This is done; no further hardware work is needed here. The
+module is powered from the XIAO's 3V3 pin (never 5 V — AD0 ties straight
+to the 3.3 V-only sensor die).
 
 ### Updated I2C bus map with the IMU installed
 
 | Device | Address | Notes |
 |---|---|---|
-| AK8963 compass (inside the MPU-9250) | 0x0C | visible once bypass mode is enabled |
-| QMC5883L compass (GY-271) | 0x0D | current heading source; no clash with 0x0C |
+| AK8963 compass (inside the MPU-9250) | 0x0C | visible once bypass mode is enabled; **current heading source as of Phase 0** |
+| QMC5883L compass (GY-271) | 0x0D | retired from the runtime path as of Phase 0; no clash with 0x0C |
 | OLED | 0x3C | |
 | INA219 battery monitor | 0x40 | |
 | DS3231 clock | 0x68 | keeps its address; IMU moves instead |
@@ -300,12 +320,16 @@ changeover and be compared against each other on the bench.
 
 ---
 
-# The phases — two streams, one learning loop
+# The phases — three streams, one learning loop
 
-The roadmap runs as an **experimental ladder in two streams**:
+The roadmap runs as an **experimental ladder in three streams**:
 
-- **Stream A (aboard — turtleOS):** AOELL foundations (A) first, then the
-  sensing phases (S, L); propulsion (P) and turning influence (T) must be
+- **Stream A (aboard — turtleOS):** **Phase 0 (IMU bring-up) runs
+  immediately, ahead of everything else** — it is a hardware-integration
+  task, not an experiment, and every later phase (fusion, luff validation,
+  turning influence) depends on the MPU-9250 being read reliably. AOELL
+  foundations (A) follow, then the remaining sensing phase (S: fusion
+  proper), then L; propulsion (P) and turning influence (T) must be
   demonstrated before any closed-loop heading control (H); tacking (K)
   comes only after all of the above. Reliability (R) and
   watchdog/persistence (W) proceed in parallel where they don't depend on
@@ -315,18 +339,80 @@ The roadmap runs as an **experimental ladder in two streams**:
   every aboard phase is working toward connecting to. Without it, the
   turtle's experiments produce data nobody can interpret; with it, every
   failure becomes a lesson.
+- **Stream C (bale mesh — turtle to turtle):** the LoRa store-and-forward
+  network that makes evidence survive the hull that gathered it and lets
+  turtles learn from each other mid-voyage. It is deliberately sequenced
+  *behind* Stream A's foundations — a mesh that carries records defined by
+  an unfinished contract would have to be rebuilt — but its Phase 0 paper
+  work can and should start immediately, because the wire format is the
+  most expensive decision in the project to reverse.
 
 The streams are developed in parallel and **rejoin at the integration
-milestones (J1–J4)** defined after the phase lists. Neither stream can
-finish alone: the experiment phases (L, P, T) generate their evidence
-*through* the AOELL pipeline, and the shore-side models and policies feed
-adjusted behaviour *back* to the turtle. Failing, learning, failing,
-learning — knot by knot, inch by inch, toward a robust and potent turtle
-navigation system.
+milestones (J1–J5)** defined after the phase lists. None can finish alone:
+the experiment phases (L, P, T) generate their evidence *through* the
+AOELL pipeline, the shore-side models and policies feed adjusted behaviour
+*back* to the turtle, and the mesh decides how much of that evidence ever
+arrives. Failing, learning, failing, learning — knot by knot, inch by
+inch, toward a robust and potent turtle navigation system.
 
 ---
 
 # Stream A — aboard (turtleOS)
+
+## Phase 0 — IMU bring-up (immediate, blocks everything else)
+
+Plain-language why: the MPU-9250 is sourced, wired, and strapped to a
+free address — the only thing standing between it and the rest of the
+roadmap is code. This is deliberately **not** bundled into Phase A or
+Phase S: it is a short, mechanical hardware-integration task, and every
+later phase (AOELL, fusion, luff validation, turning influence) implicitly
+assumes it is already done. Do this first, before AOELL foundations, and
+before continuing the old GY-271/compass-only path.
+
+- [ ] **WHO_AM_I bench check**: read register `0x75` at address `0x69`;
+  expect `0x71` (MPU-9250). `tests/i2c_scan.py` plus `tests/mpu9250_bench.py`
+  (new — plain register pokes, no driver dependency) confirms the chip
+  identity, and also settles the warm-up and axis-convention questions
+  below. **Still needs to be run on real hardware** — not yet confirmed.
+- [x] **`src/drivers/mpu9250.py` driver**: init, gyro/accel raw reads,
+  bypass-mode enable (`INT_PIN_CFG`, `0x37`) so the AK8963 magnetometer
+  answers at `0x0C`. Written; `heading()` matches the existing
+  `QMC5883L`/`HMC5883L` contract so screens/`nav/heading.py` didn't need
+  to change their call sites. **Axis convention (`atan2(y, x)`) is a
+  starting assumption, not yet bench-verified on this breakout** — see
+  `tests/mpu9250_bench.py`.
+- [x] **Boot-time detection and registration**: `main.py`'s `step_mpu9250()`
+  scans for `0x69`, imports the driver, wakes the chip, enables bypass,
+  and reports a found/not-found/bypass-failed tri-state — same pattern as
+  `step_as5600()` — replacing the old `step_compass()`. `I2C_ADDR_MPU9250`/
+  `I2C_ADDR_AK8963` are in the generic `[BOOT] I2C scan: [...]` name table
+  too. **Not yet confirmed on hardware.**
+- [ ] **Warm-up question**: does the MPU-9250 need a settle period before
+  its first reading is trustworthy, the way the ENS160/AHT21 pair does
+  (`warmup_seconds`)? The datasheet suggests gyro/accel data is valid
+  within tens of milliseconds of power-up with no analogous "burn-in";
+  `tests/mpu9250_bench.py` compares an immediate AK8963 read against one
+  taken 1.5 s later to settle this rather than assuming it. If a delay
+  turns out to be needed, it's a short hardcoded `time.sleep_ms()` inside
+  `AK8963.__init__()`, not a `cfg["warmup_seconds"]`-style knob — this is
+  a much smaller ask than the ENS160/AHT21's multi-second thermal warmup.
+- [x] **Retire the GY-271 (QMC5883L) and treat this as the sole IMU**:
+  `compass.py` and `nav/heading.py` (not `sailpoint.py` — that screen is
+  100% AS5600 sail-angle and never touched the compass; this checklist
+  item's original wording was imprecise) now read `mpu9250.py` instead of
+  `hmc5883l_qmc5883l.py`. The old driver file is kept in the tree,
+  unimported, with a comment marking it retired-from-runtime and reserved
+  for the Phase S bench comparison — not deleted, per the "one deliberate
+  exception" wording below.
+- [x] **Wire it into the existing sensor screens**: `compass.py` and
+  `nav/heading.py` (consumed by `nav/controller.py` → the three-circle
+  state screen's heading circle) now show a heading sourced from the new
+  driver with no other behavior change.
+  *Gate: `[BOOT]` reports the IMU found; the compass screen and the
+  three-circle state screen display a live heading read from the
+  MPU-9250, with the old GY-271 path removed rather than left running in
+  parallel. **Code is in place; the gate itself — actually seeing this
+  work on a live board — still needs to be run and confirmed.***
 
 ## Phase A — AOELL foundations aboard
 
@@ -385,11 +471,15 @@ it commands the servo.
   Default address 0x68 collides with the DS3231 RTC — resolved by
   strapping AD0 to VCC on the module (→ 0x69).
 - [ ] **Bench verification**: WHO_AM_I check (expect `0x71`) and
-  `tests/i2c_scan.py` showing 0x69 (and 0x0C once bypass is enabled)
-  alongside the existing devices.
-- [ ] **`src/drivers/mpu9250.py` driver**: init, gyro/accel/mag reads at
-  the ranges we need (±250 °/s and ±2 g are plenty for a sailboat),
-  bypass-mode enable for the AK8963.
+  `tests/i2c_scan.py`/`tests/mpu9250_bench.py` showing 0x69 (and 0x0C once
+  bypass is enabled) alongside the existing devices. Same item as Phase 0's
+  bench check above — still needs to be run on real hardware.
+- [x] **`src/drivers/mpu9250.py` driver**: init, gyro/accel/mag reads at
+  the ranges we need (±250 °/s and ±2 g, the chip's power-on defaults —
+  plenty for a sailboat), bypass-mode enable for the AK8963. Built in
+  Phase 0 (`read_gyro()`/`read_accel()`/`heading()`); the raw-read methods
+  exist now specifically so this phase's fusion work can consume the same
+  driver instance without a rewrite.
 - [ ] `Mpu9250HeadingSource` in `nav/heading.py` implementing the
   complementary filter, sampled at 20–50 Hz per the cadence table:
   `heading = 0.98 × (heading + gyro_yaw_rate × dt) + 0.02 × mag_heading`
@@ -556,9 +646,8 @@ hull) and reacting safely instead of sailing off confidently in the wrong
 direction.
 
 - [ ] **Dead-reckoning** during GPS dropouts (fused heading + last known
-  SOG) before the SAFE timer fires — a short-duration estimate only. Was
-  blocked on the IMU — **unblocked now that the MPU-9250 is wired**;
-  still depends on the Phase S driver work.
+  SOG) before the SAFE timer fires — a short-duration estimate only.
+  Depends on the Phase S driver work.
 - [ ] **GPS spoofing detection**: compare RMC COG (already parsed into
   `nav/gpsfix.py:cog_deg()`) against compass heading; sustained
   disagreement beyond leeway → SAFE.
@@ -725,21 +814,301 @@ noisy, safety-critical data would be premature.
 
 ---
 
+# Stream C — the bale mesh network
+
+Plain-language why: a lesson learned at sea is only worth what reaches
+another turtle or the shore. This stream builds the turtle-to-turtle
+LoRa link, then the store-and-forward mesh on top of it, so that records
+replicate between hulls, any turtle that finds connectivity becomes the
+bale's uplink, and neighbours can share what they have learned about the
+wind and the water they are all sitting in. Full analysis in
+`docs/bale_network_vision.md`.
+
+## Phase B0 — Paper only (no hardware, no code)
+
+The cheapest and highest-leverage work in the whole stream, and the only
+part that should start before Stream A's Phase A contract is settled.
+The wire format is the **most expensive thing in the project to change
+later**, because device firmware, mesh relays, and shore ingest must all
+agree on it forever.
+
+- [ ] **Packed wire format, version-tagged** (`docs/bale_wire_format.md`).
+  A JSON telemetry payload is 200–400 bytes; the SF10–12 packet budget is
+  **51 bytes**. A packed record — origin device id, sequence, epoch,
+  lat/lon at 1e-5°, machine state + flags, battery, heading, wind solution
+  — fits in about 20 bytes, leaving room for hop count, a short MAC, and a
+  second record. Reserve a 4-bit format version in byte 0.
+  **The JSON/HTTP path stays for WiFi**; LoRa gets a packed encoder and
+  hopeturtles.org unpacks. Nothing about this replaces existing telemetry.
+- [ ] **Mesh semantics** (`docs/bale_protocol.md`): dedup key
+  `(origin_device_id, sequence)` with a bounded, reboot-surviving seen-set;
+  a low TTL (3–4) so a reconverging bale cannot broadcast-storm itself;
+  **provenance preservation** (a relayed record keeps its originator's id —
+  a record claiming the wrong origin is worse than a lost one); queue
+  eviction policy; and a partition digest so two halves of a bale that meet
+  after a week exchange only gaps, not everything.
+- [ ] **Regulatory answer for the intended operating area.** EU868's 1%
+  duty cycle vs. US915's dwell-time rules change the message budget
+  substantially and therefore the protocol; a vessel in international
+  waters is genuinely unclear. This needs an answer from someone who knows
+  maritime radio law, not an assumption.
+- [ ] **Measure real power draw** with the INA219 already on the bus
+  (0x40): idle, sailing, and a synthetic radio event. Every power estimate
+  in the vision document is unverified until this exists.
+- [ ] **Choose the co-processor and confirm a free I2C address.** The pin
+  budget settles this by arithmetic: with the L76K GNSS module stacked,
+  only D2/GPIO3 and D9/GPIO8 are free, and an SX1262-class radio needs
+  seven pins (SPI ×3, NSS, RESET, BUSY, DIO1). The recommended answer is a
+  **second MCU as a LoRa co-processor** on the existing I2C bus — it
+  preserves the hull, HAL, and driver stack, and it isolates a radio task
+  that blocks for seconds from a nav loop that cycles in 200–500 ms.
+  Address must be clear of 0x0D, 0x38, 0x3C, 0x40, 0x53, 0x62, 0x68.
+  *Gate: shore and device teams could implement against the wire format
+  independently.*
+
+## Phase B1 — Transport abstraction aboard
+
+Starts once B0 is settled and a radio is on the bench — earlier risks
+designing the wrong abstraction, since blocking behaviour and duty-cycle
+accounting placement are not knowable without hardware.
+
+- [ ] Extract a transport interface — `available()`, `send(record)`,
+  `flush(queue)` — from `src/net/background_process.py`, whose `_send()`
+  currently hardcodes WiFi association → HTTP POST → batch flush.
+- [ ] Wire `mission_connection_mode` (already validated in `config.py`,
+  already reserving `"lora"`) to select the transport.
+- [ ] Implement the packed codec in `src/net/` with **host-side round-trip
+  tests** under `tests/` — encode/decode is pure logic and needs no device.
+- [ ] No behaviour change for WiFi-only turtles.
+
+## Phase B2 — Point-to-point link
+
+- [ ] Co-processor firmware: SPI to the radio, I2C to the XIAO,
+  duty-cycle accounting owned entirely by the co-processor.
+- [ ] `src/net/lora_transport.py` implementing the Phase B1 interface.
+- [ ] Two turtles on a bench exchanging packed records; then two turtles
+  at opposite ends of a beach; **then on water** — the sea-state effect on
+  a 30 cm antenna will not appear in any land test.
+  *Gate: a record created on turtle A is decoded intact on turtle B, with
+  measured link availability across a real sea state.*
+
+## Phase B3 — Store-and-forward mesh
+
+- [ ] Seen-set, TTL, and provenance preservation per the B0 protocol.
+- [ ] **Queue ownership change**: `device/telemetry_queue.json` stops
+  meaning "my unsent readings" and starts meaning "readings I am
+  responsible for," including foreign ones — needs a size cap, an eviction
+  policy, and a decision on whether foreign records survive a reboot. The
+  file stays device-owned and excluded from the sync scripts; that
+  invariant becomes more important, not less.
+- [ ] **Transmit budget allocator** splitting the duty cycle between own
+  and relayed traffic. Without one, a naive relay exhausts its allowance
+  carrying other turtles' traffic and never sends its own.
+- [ ] Partition digest exchange.
+- [ ] **Bale screen** (`ui/screens/bale.py`): neighbours heard, records
+  carried, records relayed. Follow the CLAUDE.md conventions — `f_arvo20`
+  title at `x=0,y=5`, connection header at `icon_y=1` — and add it to
+  `_preload_screens()`.
+- [ ] **Mesh time**: dedup, ordering, and duty-cycled RX windows all need
+  consistent time. DS3231 is already kept in UTC and GPS is an independent
+  source; a turtle whose RTC has failed should be able to take time from
+  the mesh, which is another reason records carry absolute epochs.
+- [ ] **Authentication**: a short truncated MAC over the packed record
+  with a per-device key, verified authoritatively ashore. The threat model
+  is low today, but retrofitting authentication into a deployed wire
+  format is not cheap and `X-Device-Id` headers are meaningless in a
+  20-byte frame.
+  *Gate: a record originated by turtle A, relayed by turtle B, arrives
+  ashore attributed to A — once, no matter how many paths it took.*
+
+## Phase B4 — Ashore: bale ingest and view
+
+Runs in parallel with B1–B3; the device stream is useless without it.
+
+- [ ] Ingest endpoint for packed records — distinct from the JSON
+  telemetry endpoint, not a replacement.
+- [ ] **Idempotent dedup and provenance at ingest**: the same record will
+  arrive many times, by many paths, days apart, from turtles that did not
+  take it. Key on `(origin_device_id, sequence)`.
+- [ ] **Relay graph model**: which turtle carried which record, by what
+  path — scientifically interesting in its own right, as a measured map of
+  bale connectivity over a voyage.
+- [ ] **Bale view**: fleet positions, topology over time, per-turtle
+  carried-record counts.
+- [ ] Extend `mission_review` to reason about a **bale** rather than a
+  hull — comparative policy performance across turtles in the same water
+  is the payoff for the whole exercise.
+
+## Phase B5 — Collective intelligence
+
+Only meaningful once B3 and B4 are real and a bale has actually flown.
+
+- [ ] **Wind-field sharing** feeding `luff.py` re-sweep scheduling: a
+  sweep costs battery and interrupts steering, and a neighbour ten km away
+  is likely in a similar wind field. A turtle can seed its own sweep with
+  a neighbour's recent solution, or defer a scheduled re-sweep when a
+  fresh neighbour result agrees with its own.
+- [ ] **Hazard and dead-water reporting** weighting `waypoints.py`
+  routing: a turtle becalmed or driven backwards for six hours has learned
+  something about a patch of ocean worth broadcasting. This is the
+  beginning of an empirical current-and-wind map built by the bale itself.
+- [ ] **Mother turtle build**: same hull, added storage, larger battery,
+  no sailing mission — deployed to sit in the middle of a bale and listen.
+  Recovering one mother turtle recovers the bale's collective log.
+- [ ] **Position rescue**: a turtle with failed GPS that hears three
+  neighbours with known positions can bound its own location well enough
+  to keep sailing a sensible heading — better than SAFE and drift.
+- [ ] **Comparative policy reporting**: turtles broadcast policy version
+  and measured performance, turning a bale into a controlled experiment
+  with many replicates. Full over-the-air policy propagation is last,
+  hardest, and only with a rollback story.
+
+## Open questions for the team (Stream C)
+
+These need answers from people, not from the code:
+
+1. **Which region and band?** Determines the entire message budget.
+   Blocking for B0.
+2. **Realistic bale size for the first deployment** — 3 hulls or 30?
+   Below roughly 5, the mesh rarely has a relay path and the value is
+   mostly data survival rather than routing.
+3. **Is a mother turtle in scope for the first bale**, or a later
+   addition? It changes the storage requirement and the recovery plan.
+4. **What added cost per hull is acceptable?** If the mesh doubles the
+   cost of a deliberately cheap turtle, deploying twice as many isolated
+   turtles may be the better experiment.
+
+---
+
 # Integration milestones — where the streams rejoin
 
-The two streams exist to meet. Each milestone requires both sides and is
-the only honest measure that the system — not just one half of it — works.
+The streams exist to meet. Each milestone requires more than one side and
+is the only honest measure that the system — not just one part of it —
+works.
 
-| Milestone | Aboard requires | Ashore requires | Proof |
-|---|---|---|---|
-| **J1 — First replayed voyage** | Phase A (contract + queue) | M1–M3 | A real voyage scrubbed end-to-end in `mission_review`; any cycle explains belief → action → prediction → outcome |
-| **J2 — Trustworthy training data** | AOELL-instrumented L/P/T experiments | M4 | A reviewed, versioned dataset with confounded cycles excluded |
-| **J3 — Shadow mode at sea** | Policy runtime hooks reporting shadow recommendations | M5 | Candidate vs. incumbent compared over real missions |
-| **J4 — Closed learning loop** | Policy receive path (verify, ack, activate, rollback) | M6 | A signed adjustment deployed, monitored, and rollback-able — AOELL → Share → Learn → Adjust → AOELL, complete |
+| Milestone | Aboard requires | Ashore requires | Bale requires | Proof |
+|---|---|---|---|---|
+| **J1 — First replayed voyage** | Phase A (contract + queue) | M1–M3 | — | A real voyage scrubbed end-to-end in `mission_review`; any cycle explains belief → action → prediction → outcome |
+| **J2 — Trustworthy training data** | AOELL-instrumented L/P/T experiments | M4 | — | A reviewed, versioned dataset with confounded cycles excluded |
+| **J3 — Shadow mode at sea** | Policy runtime hooks reporting shadow recommendations | M5 | — | Candidate vs. incumbent compared over real missions |
+| **J4 — Closed learning loop** | Policy receive path (verify, ack, activate, rollback) | M6 | — | A signed adjustment deployed, monitored, and rollback-able — AOELL → Share → Learn → Adjust → AOELL, complete |
+| **J5 — Evidence outlives the hull** | Phase A records + B1 transport | B4 ingest, dedup, relay graph | B2–B3 | A record originated by one turtle, relayed by another, ingested once ashore and attributed to its originator — from a voyage where the originating hull never made landfall |
 
 Closed-loop waypoint navigation (Phase H) graduates from "tuned once" to
 "continuously improved" only after J4; tacking (Phase K) remains the last
-sailing feature either way.
+sailing feature either way. J5 is independent of J1–J4 in principle but
+gains its full value after them: once records explain the turtle's
+reasoning, carrying them home matters far more.
+
+---
+
+# Development timetable
+
+This is the sequencing decision layered on top of the phase lists above —
+what actually happens first, what runs in general terms after it, and
+where hopeturtles.org (a separate repo) has to move in step. It resolves
+to four buckets: an immediate, detailed **Phase 0**, then three
+progressively less-detailed phases carrying the project from "it senses
+correctly" through "it sails onshore," "it sails offshore unattended," and
+finally "a bale of them talk to each other." Later phases will be broken
+down with the same level of detail as Phase 0 once the phase before them
+is actually done — sequencing three sprints of detail in advance for work
+that depends on results not yet in hand would just be guessing twice.
+
+## Phase 0 — IMU integration (now)
+
+The only phase with no sailing dependency and no open experimental
+question — it is bring-up work, and it blocks every later phase, so it
+runs first regardless of anything else in flight.
+
+**turtleOS (this repo):**
+- Bench-verify the MPU-9250 at 0x69 (`WHO_AM_I` = `0x71`).
+- Write `src/drivers/mpu9250.py` (init, raw gyro/accel reads, AK8963
+  bypass).
+- Add boot-time detection + logging (`[BOOT] MPU-9250 found`), same
+  pattern as the existing ENS160/AHT21 announce.
+- Settle the warm-up question empirically (read-immediately vs.
+  read-after-delay comparison).
+- Cut over `compass.py` / `sailpoint.py` to the new driver; retire the
+  GY-271 read path rather than running both indefinitely.
+- Full task list: [Phase 0 above](#phase-0--imu-bring-up-immediate-blocks-everything-else).
+
+**hopeturtles.org:** none. Phase 0 is bench work; nothing ships home yet
+that the server doesn't already handle.
+
+## Phase 1 — Onshore: prove the turtle senses and moves correctly
+
+General shape, to be broken into a Phase-0-level task list once Phase 0
+lands. Everything here can be validated tethered or in a harbor/beach
+setting — no open-water passage required.
+
+**turtleOS:**
+- AOELL foundations (Phase A): cycle contract, local queue, resumable
+  upload.
+- Sensor fusion proper (Phase S): complementary filter, tilt compensation,
+  heel/turn-rate outputs, spin detection (report-only).
+- Luff validation (Phase L) started onshore/near-shore against a
+  reference wind source.
+
+**hopeturtles.org:**
+- Phase M1 (mission + AOELL data model) and Phase M2 (ingestion + policy
+  distribution endpoints) — the server needs these tables and endpoints
+  before there's anywhere for Phase A's records to go.
+- Phase M3 begins: enough of `mission_review` to replay a single tethered
+  session end to end (map + timeline), even before there's a real voyage
+  to look at.
+
+*Milestone: J1 — first replayed session, on the bench or in the harbor.*
+
+## Phase 2 — Offshore: prove the turtle sails and decides safely, unattended
+
+General shape. This is where the turtle actually leaves sight of shore,
+so it is gated entirely on Phase 1's evidence, not on a calendar date.
+
+**turtleOS:**
+- Propulsion (Phase P) and turning influence (Phase T) — the make-or-break
+  experiments, judged against GPS ground truth.
+- Heading control (Phase H), only once T produces a usable model.
+- Reliability (Phase R): dead reckoning, GPS spoofing check, geofence,
+  hull sensors, honest ARRIVAL.
+- Watchdog + persistence (Phase W): unattended reboot/resume.
+- Tacking (Phase K) at the tail of this phase, not before.
+
+**hopeturtles.org:**
+- Phase M4 (annotation + comparison views) and Phase M5 (descriptive →
+  supervised → shadow models) — the team needs to be able to mark up and
+  learn from real offshore voyages as they start arriving.
+- Phase M6 begins: the signed policy release pipeline, so a
+  shadow-validated improvement has somewhere to be approved and shipped
+  from.
+
+*Milestones: J2 (trustworthy training data) → J3 (shadow mode at sea) → J4
+(closed learning loop).*
+
+## Phase 3 — The bale: full onshore + offshore + mesh protocol
+
+General shape. Runs the mesh stream (C) to completion and lets Phase 1/2's
+learning loop extend across a fleet rather than one hull.
+
+**turtleOS:**
+- Stream C in full: B0 paper decisions (wire format, regulatory answer,
+  measured power draw) → B1 transport abstraction → B2 point-to-point
+  link → B3 store-and-forward mesh (seen-set, TTL, provenance, bale
+  screen) → B5 collective intelligence (shared wind, hazard reporting,
+  position rescue).
+
+**hopeturtles.org:**
+- Phase B4: packed-record ingest endpoint (distinct from the JSON
+  telemetry endpoint), idempotent dedup/provenance at ingest, the relay
+  graph model, and a bale view (fleet positions, topology over time,
+  per-turtle carried-record counts).
+- Extend `mission_review` to reason about a bale of turtles rather than a
+  single hull — comparative policy performance across turtles sharing the
+  same water and weather.
+
+*Milestone: J5 — a record originated by one turtle, relayed by another,
+attributed correctly ashore, from a voyage where the originating hull
+never made landfall.*
 
 ## Cross-cutting — confidence, telemetry, and tooling
 
@@ -771,8 +1140,7 @@ proven system act safely on what it *does* know.
 - [ ] **Bench simulation harness**: the host-side fakes used to verify the
   sweep/controller (FakeServo/FakeEnc/clock shim) should be committed
   under `tests/` so regressions are catchable without hardware.
-- [ ] **Pre-compile `src/nav/` to `.mpy`** to cut flash + import RAM
-  (also suggested in `docs/features_to_add.md`).
+- [ ] **Pre-compile `src/nav/` to `.mpy`** to cut flash + import RAM.
 - [ ] **Power budget for the sweep**: a full sweep is ~20–25 s of servo
   motion; gate automatic re-sweeps on battery percentage.
 - [ ] **Statistical safeguards baked into the experiment design** (from
@@ -817,8 +1185,21 @@ proven system act safely on what it *does* know.
 | Phase M5 | a model beats naïve baselines on held-out missions; shadow mode shows benefit, calibration, safe abstention |
 | Phase M6 | a signed policy adjustment deploys, monitors, and rolls back cleanly |
 
+**Stream C (bale mesh):**
+
+| Gate | Target |
+|---|---|
+| Phase B0 paper | wire format stable enough for shore and device teams to implement independently; band/regulatory answer recorded; measured power draw recorded |
+| Phase B1 bench | host-side codec round-trips every field; WiFi-only turtles show no behaviour change |
+| Phase B2 water | packed record decoded intact turtle-to-turtle, with measured link availability across a real sea state |
+| Phase B3 water | a relayed record arrives with its originator's id preserved, exactly once, with the duty-cycle budget respected |
+| Phase B4 | the same record arriving by many paths days apart ingests once; the relay graph reconstructs who carried what |
+| Phase B5 water | a shared wind solution measurably reduces a neighbour's sweep count without degrading its navigation |
+
 **Joint (the streams rejoined):** J1 first replayed voyage → J2
 trustworthy training data → J3 shadow mode at sea → J4 closed learning
-loop. J4 is the roadmap's definition of done for the learning
-architecture; the sailing ladder (through K) is its definition of done
-for navigation. The turtle is finished when both are.
+loop, with J5 evidence-outlives-the-hull carrying the bale stream in. J4
+is the roadmap's definition of done for the learning architecture; the
+sailing ladder (through K) is its definition of done for navigation; J5 is
+its definition of done for evidence survival. The turtle is finished when
+all three are.

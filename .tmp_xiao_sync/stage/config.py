@@ -34,6 +34,20 @@ DEFAULTS = {
     "wifi_ssid": "",
     "wifi_password": "",
 
+    # --- Mission link ---
+    # How the device tries to SHIP stored records. Orthogonal to
+    # telemetry_mode, which governs when records are CREATED. Readings always
+    # accumulate in telemetry_queue.json regardless; this only decides when a
+    # radio is allowed to come up.
+    #   "wifi_auto"   = attempt association on an exponential backoff
+    #                   (15 min, doubling to a 12 h cap; resets on success)
+    #   "wifi_manual" = never attempt on its own. Only a deliberate
+    #                   triple-click into the connectivity carousel connects.
+    #                   The right setting for a launched turtle: there is no
+    #                   home AP at sea, so every automatic scan is wasted TX.
+    #   "lora"        = reserved, not yet implemented
+    "mission_connection_mode": "wifi_auto",
+
     # --- Telemetry ---
     # telemetry_mode is authoritative:
     #   "auto"   = post automatically every telemetry_post_every_s seconds
@@ -365,6 +379,17 @@ def _normalize_types(cfg):
         if len(_clean) != len(wps):
             cfg["waypoints"] = _clean
             changed = True
+
+    # --- Mission link mode ---
+    try:
+        _mcm = str(cfg.get("mission_connection_mode", "wifi_auto") or "").strip().lower()
+    except Exception:
+        _mcm = ""
+    if _mcm not in ("wifi_auto", "wifi_manual", "lora"):
+        _mcm = "wifi_auto"
+    if cfg.get("mission_connection_mode") != _mcm:
+        cfg["mission_connection_mode"] = _mcm
+        changed = True
 
     # --- Nav numeric tunables ---
     for key, lo, hi in (

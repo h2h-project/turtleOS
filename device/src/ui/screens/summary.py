@@ -3,7 +3,8 @@
 import time
 from src.ui.glyphs import (
     draw_home, HOME_W, HOME_H, draw_degree, draw_c, draw_sub2, draw_face,
-    draw_battery, BATT_W, BATT_H, draw_x_mark, XMARK_W, XMARK_H,
+    draw_battery, draw_battery_level, battery_display_bands, BATT_W, BATT_H,
+    draw_x_mark, XMARK_W, XMARK_H,
 )
 
 try:
@@ -278,6 +279,14 @@ class SummaryScreen:
             pass
         return False
 
+    def _battery_volts(self):
+        if self._ina is None or not getattr(self._ina, "is_present", False):
+            return None
+        try:
+            return self._ina.bus_voltage_v()
+        except Exception:
+            return None
+
     def _draw_header(self, fb, beat_filled):
         w = self.oled.width
 
@@ -312,8 +321,13 @@ class SummaryScreen:
         text_y = self.oled.height - h - 2
         batt_y = text_y + (h - BATT_H) // 2
         present = self._battery_present()
+        volts = self._battery_volts() if present else None
         try:
-            draw_battery(fb, batt_x, batt_y)
+            if volts is None:
+                draw_battery(fb, batt_x, batt_y, no_battery=not present)
+            else:
+                bands, _status = battery_display_bands(volts)
+                draw_battery_level(fb, batt_x, batt_y, bands_filled=bands)
         except Exception:
             pass
         if not present:

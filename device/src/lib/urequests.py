@@ -1,4 +1,55 @@
 import usocket as socket
+import time
+
+
+# --- DNS resolve cache -------------------------------------------------
+# socket.getaddrinfo() is a synchronous C call into the lwIP resolver that
+# does not yield the MicroPython GIL, so while it runs NOTHING else executes
+# — not the button poll, not the OLED, not the GPS drain — even though the
+# caller is on the background thread. On a network with no reachable DNS it
+# retries across both servers for 10-15 s, which froze the whole UI on every
+# telemetry send.
+#
+# Note the socket timeout passed to request() cannot help: settimeout() is
+# applied to the socket *after* the resolve, so it bounds connect/recv only.
+# The only fix is to not call getaddrinfo, hence this cache.
+#
+# Failures are cached too (negative caching). Without that, a device
+# associated to an AP with no working DNS — the common field case — pays the
+# full stall again on every single send.
+_DNS_TTL_MS = 600000        # 10 min: successful resolve
+_DNS_FAIL_TTL_MS = 300000   # 5 min: failed resolve
+
+# (host, port) -> (addrinfo_or_None, expiry_ticks_ms)
+_dns_cache = {}
+
+
+def invalidate_dns():
+    """Drop all cached resolves. Call on WiFi (re)association — a new network
+    means new DNS servers and possibly a different answer for the same host."""
+    _dns_cache.clear()
+
+
+def _resolve(host, port):
+    """getaddrinfo() with a TTL cache in front of it. Raises OSError on a
+    cached failure without touching the network."""
+    key = (host, port)
+    now = time.ticks_ms()
+
+    ent = _dns_cache.get(key)
+    if ent is not None and time.ticks_diff(ent[1], now) > 0:
+        if ent[0] is None:
+            raise OSError("dns fail (cached): " + host)
+        return ent[0]
+
+    try:
+        ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0]
+    except Exception:
+        _dns_cache[key] = (None, time.ticks_add(now, _DNS_FAIL_TTL_MS))
+        raise
+
+    _dns_cache[key] = (ai, time.ticks_add(now, _DNS_TTL_MS))
+    return ai
 
 
 class Response:
@@ -50,7 +101,7 @@ def request(method, url, data=None, json=None, headers={}, timeout=None):
         host, port = host.split(":", 1)
         port = int(port)
 
-    ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0]
+    ai = _resolve(host, port)
     s = socket.socket(ai[0], ai[1], ai[2])
 
     if timeout is not None:

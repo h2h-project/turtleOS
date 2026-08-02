@@ -14,127 +14,62 @@ except Exception:
 # --------------------------------------------------------------------
 # Normal hobby servo signal:
 #   50 Hz PWM
-#   ~1000 us = one end
-#   ~1500 us = centre
-#   ~2000 us = other end
+#   ~1000 us = one end   (0 deg)
+#   ~1500 us = centre    (90 deg)
+#   ~2000 us = other end (180 deg)
 #
-# For a safer first test, use 1100 -> 1900.
-# For a fuller MG996R test, try 1000 -> 2000.
+# The test runs TWO legs:
+#   A -> B over SERVO_LEG_MS, then B -> A over SERVO_LEG_MS
+# where A/B straddle SERVO_HOME_DEG by SERVO_SWEEP_DEG/2.
 #
-# The test does ONE sweep only:
-#   SERVO_START_US -> SERVO_END_US over SERVO_SWEEP_MS
-#
+# Step size matters more than step rate. An MG996R is analogue and has a
+# deadband of roughly 5-10 us (~1-2 deg): command increments near that size
+# make the motor hunt back and forth without the horn making real progress.
+# The high-speed pinion is very visibly moving while the ~250:1-reduced
+# output creeps. SERVO_STEP_DEG keeps every increment decisively above the
+# deadband so each step is a real slew.
 SERVO_PWM_HZ = 50
 
-SERVO_START_US = 1000
-SERVO_END_US = 2000
-SERVO_SWEEP_MS = 4000
+SERVO_MIN_US = 1000
+SERVO_MAX_US = 2000
+SERVO_RANGE_DEG = 180
 
-SERVO_STEP_MS = 50
+SERVO_HOME_DEG = 90       # centre of the sweep
+SERVO_SWEEP_DEG = 90      # total travel per leg
+SERVO_LEG_MS = 4000       # time to cover one leg (ramp mode)
+SERVO_STEP_DEG = 3.0      # command increment (~17 us, well past deadband)
+
 SERVO_START_SETTLE_MS = 800
 SERVO_END_HOLD_MS = 800
 
+# Test mode:
+#   "endpoints" - bang-bang. Commands the full mechanical range as a single
+#                 instantaneous jump and holds, so the servo slews at its own
+#                 maximum rate (MG996R: ~0.17 s/60 deg, i.e. 180 deg in ~0.5 s).
+#                 This is the most aggressive command a servo can be given, and
+#                 therefore the decisive test: if the horn does not reach its
+#                 stops under this, no command shape will move it and the fault
+#                 is mechanical or electrical, not in this file.
+#   "ramp"      - timed SERVO_SWEEP_DEG sweep over SERVO_LEG_MS each way.
+#                 Use once the servo is known good and you want to watch
+#                 controlled sail-speed motion.
+SERVO_TEST_MODE = "endpoints"
+
+SERVO_BANG_LO_DEG = 0
+SERVO_BANG_HI_DEG = 180
+SERVO_BANG_HOLD_MS = 1500   # dwell at each end; must exceed full-range slew time
+SERVO_BANG_CYCLES = 3
+
 SERVO_DEINIT_AFTER_TEST = True
-
-# INA219 screen refresh
-SERVO_REFRESH_MS = 500
-
-
-def _fmt_v(v):
-    if v is None:
-        return "---"
-    return "{:.2f}V".format(float(v))
-
-
-def _fmt_ma(v):
-    if v is None:
-        return "---"
-    return "{:.0f}mA".format(float(v))
-
-
-def _fmt_mw(v):
-    if v is None:
-        return "---"
-    return "{:.0f}mW".format(float(v))
 
 
 class ServoScreen:
-    def __init__(self, oled, servo_pin=None, i2c=None, ina=None):
+    def __init__(self, oled, servo_pin=None):
         self.oled = oled
         self._pin = servo_pin
 
-        # I2C / INA219 for servo power measurement.
-        # Best wiring for servo current:
-        #   Pololu 6V OUT+ -> INA219 VIN+
-        #   INA219 VIN-    -> Servo red wire
-        #   Pololu GND     -> Servo GND
-        self._i2c = i2c
-        self._ina = ina
-
         self._connected = None         # None=unchecked, True=PWM OK, False=failed
         self._servo_configured = None  # config servo_present flag
-        self._refresh_ms = SERVO_REFRESH_MS
-
-    # ----------------------------------------------------------
-    # INA219 access
-    # ----------------------------------------------------------
-
-    def _get_ina(self):
-        if self._ina is not None:
-            return self._ina
-
-        if self._i2c is None:
-            return None
-
-        try:
-            from src.drivers.ina219 import INA219
-            ina = INA219(self._i2c, auto_init=True)
-            if ina.is_present:
-                self._ina = ina
-        except Exception:
-            pass
-
-        return self._ina
-
-    def _read_power(self):
-        ina = self._get_ina()
-
-        if ina is None or not ina.is_present:
-            return {
-                "present": False,
-                "bus_v": None,
-                "current_ma": None,
-                "power_mw": None,
-            }
-
-        try:
-            return {
-                "present": True,
-                "bus_v": ina.bus_voltage_v(),
-                "current_ma": ina.current_ma(),
-                "power_mw": ina.power_mw(),
-            }
-        except Exception:
-            return {
-                "present": False,
-                "bus_v": None,
-                "current_ma": None,
-                "power_mw": None,
-            }
-
-    def _update_peak(self, peak_ma, power):
-        try:
-            cur = power.get("current_ma")
-            if cur is None:
-                return peak_ma
-
-            cur_abs = abs(float(cur))
-            if peak_ma is None or cur_abs > peak_ma:
-                return cur_abs
-        except Exception:
-            pass
-
-        return peak_ma
 
     # ----------------------------
     # Probe
@@ -153,11 +88,7 @@ class ServoScreen:
           - signal input
 
         It has no data return line. So software cannot directly know whether
-        the servo is actually attached.
-
-        With the INA219 in the servo power path, you can infer presence by
-        seeing whether current changes during a command, but that is still
-        an inference rather than true digital detection.
+        the servo is actually attached. cfg["servo_present"] is authoritative.
         """
         if self._pin is None:
             self._connected = False
@@ -188,7 +119,7 @@ class ServoScreen:
     # Drawing
     # ----------------------------
 
-    def _draw(self, status_override=None, gear_rotation_rad=0.0, power=None, peak_ma=None):
+    def _draw(self, status_override=None, gear_rotation_rad=0.0):
         o = self.oled
         fb = o.oled
         fb.fill(0)
@@ -215,9 +146,6 @@ class ServoScreen:
         body_y = title_h + 4
         line_h = med_h + 3
 
-        if power is None:
-            power = self._read_power()
-
         # Status line
         if status_override is not None:
             status = status_override
@@ -234,23 +162,8 @@ class ServoScreen:
 
         o.f_med.write(status, 0, body_y)
 
-        # Power line
-        if power.get("present", False):
-            bus_v = power.get("bus_v")
-            cur_ma = power.get("current_ma")
-            o.f_med.write(
-                "{} {}".format(_fmt_v(bus_v), _fmt_ma(cur_ma)),
-                0,
-                body_y + line_h,
-            )
-        else:
-            o.f_med.write("No INA219", 0, body_y + line_h)
-
-        # Third line: peak current during test, otherwise pin label
-        if peak_ma is not None:
-            o.f_med.write("Pk {}".format(_fmt_ma(peak_ma)), 0, body_y + 2 * line_h)
-        elif self._pin is not None:
-            o.f_med.write("D8 / GPIO{}".format(self._pin), 0, body_y + 2 * line_h)
+        if self._pin is not None:
+            o.f_med.write("D8 / GPIO{}".format(self._pin), 0, body_y + line_h)
 
         # Gear icon on the right
         try:
@@ -316,79 +229,171 @@ class ServoScreen:
 
         raise RuntimeError("No supported PWM duty method")
 
+    def _make_pwm(self):
+        """
+        Build the servo PWM with the frequency set from the start.
+
+        A bare PWM(Pin(n)) on ESP32 comes up at the LEDC default (~5 kHz, 50%
+        duty) for the moment before .freq() lands. That is garbage to a servo
+        and can make it twitch or stall against a stop before the real signal
+        arrives, so pass freq in the constructor where the port supports it.
+        """
+        from machine import Pin, PWM
+
+        p = Pin(self._pin)
+        try:
+            return PWM(p, freq=SERVO_PWM_HZ, duty_u16=0)
+        except Exception:
+            pass
+        try:
+            return PWM(p, freq=SERVO_PWM_HZ)
+        except Exception:
+            pass
+
+        pwm = PWM(p)
+        pwm.freq(SERVO_PWM_HZ)
+        return pwm
+
+    def _report_signal(self, pwm):
+        """
+        Read the timer back and print what the peripheral actually ended up
+        with. We only ever verify our own arithmetic otherwise - this catches
+        the case where the LEDC timer did not take 50 Hz (at which point a
+        1000-2000 us pulse is longer than the period, duty clamps to 100%,
+        and the servo sees a DC level with no frame edges at all).
+        """
+        try:
+            f = pwm.freq()
+        except Exception:
+            f = None
+        try:
+            d = pwm.duty_ns()
+        except Exception:
+            d = None
+
+        print("[SERVO] signal check: freq={} Hz (want {}), duty_ns={}".format(
+            f, SERVO_PWM_HZ, d))
+
+        if f is not None and abs(int(f) - SERVO_PWM_HZ) > 2:
+            print("[SERVO] WARNING: timer is not at {} Hz - pulse widths are "
+                  "meaningless at this frequency".format(SERVO_PWM_HZ))
+        return f
+
+    def _us_for_angle(self, deg):
+        if deg < 0:
+            deg = 0
+        elif deg > SERVO_RANGE_DEG:
+            deg = SERVO_RANGE_DEG
+        span_us = SERVO_MAX_US - SERVO_MIN_US
+        return self._clamp_pulse_us(SERVO_MIN_US + (deg / SERVO_RANGE_DEG) * span_us)
+
+    def _write_angle(self, pwm, deg):
+        us = self._us_for_angle(deg)
+        self._write_pulse_us(pwm, us)
+        return us
+
     # ----------------------------
     # Simple servo test
     # ----------------------------
 
+    def _sweep_leg(self, pwm, from_deg, to_deg, duration_ms):
+        """
+        Drive from_deg -> to_deg over duration_ms.
+
+        Nothing else happens in here: no OLED writes, no I2C, no button poll.
+        The loop is PWM plus a sleep, so the leg takes duration_ms and the
+        step period is what it says it is. Steps are sized by SERVO_STEP_DEG
+        (not by a fixed period) so each command is a real slew rather than a
+        deadband-sized nudge the servo can hunt on.
+        """
+        span = to_deg - from_deg
+        steps = int(abs(span) / SERVO_STEP_DEG)
+        if steps < 1:
+            steps = 1
+
+        t0 = time.ticks_ms()
+
+        for i in range(1, steps + 1):
+            self._write_angle(pwm, from_deg + span * i / steps)
+
+            # Hold this step until its share of the leg has elapsed.
+            deadline = time.ticks_add(t0, int(duration_ms * i / steps))
+            while True:
+                remain = time.ticks_diff(deadline, time.ticks_ms())
+                if remain <= 0:
+                    break
+                time.sleep_ms(remain if remain < 10 else 10)
+
+    def _bang_bang(self, pwm):
+        """
+        Full-range bang-bang: jump to one end, hold, jump to the other, hold.
+
+        No ramp at all - each move is a single pulse-width change, so the servo
+        slews at its own maximum rate against its own stops. Nothing a command
+        can do moves a servo harder than this.
+        """
+        lo = SERVO_BANG_LO_DEG
+        hi = SERVO_BANG_HI_DEG
+        hold = max(200, int(SERVO_BANG_HOLD_MS))
+
+        for c in range(max(1, int(SERVO_BANG_CYCLES))):
+            for deg in (lo, hi):
+                us = self._write_angle(pwm, deg)
+                print("[SERVO] cycle {} -> {} deg ({} us)".format(c + 1, deg, us))
+                self._draw("{:.0f}d {}us".format(deg, us))
+                time.sleep_ms(hold)
+
     def _run_test(self):
         """
-        Simple one-way raw PWM test.
-
-        It commands:
-            SERVO_START_US -> SERVO_END_US
-
-        over:
-            SERVO_SWEEP_MS
+        Raw PWM servo test. See SERVO_TEST_MODE for the two shapes.
 
         This bypasses src.drivers.servo.Servo.angle() so we can test whether
-        the servo responds to plain 50Hz servo pulses.
-
-        During the sweep it displays:
-            - servo rail voltage from INA219
-            - servo current from INA219
-            - peak absolute current seen during the test
+        the servo responds to plain 50Hz servo pulses. The screen is drawn
+        between moves only, never during one - the servo is the only thing
+        that matters while the test is running. Each commanded position is
+        also printed to serial so the test can be followed over the REPL.
         """
         if self._pin is None:
             self._draw("No pin")
             time.sleep_ms(700)
             return
 
-        start_us = self._clamp_pulse_us(SERVO_START_US)
-        end_us = self._clamp_pulse_us(SERVO_END_US)
-
-        step_ms = max(20, int(SERVO_STEP_MS))
-        sweep_ms = max(step_ms, int(SERVO_SWEEP_MS))
-        steps = max(1, int(sweep_ms // step_ms))
-
         pwm = None
-        peak_ma = None
-        gear = 0.0
 
         try:
-            from machine import Pin, PWM
+            pwm = self._make_pwm()
+            print("[SERVO] test start: pin={} mode={}".format(self._pin, SERVO_TEST_MODE))
+            self._write_angle(pwm, SERVO_HOME_DEG)
+            self._report_signal(pwm)
 
-            pwm = PWM(Pin(self._pin))
-            pwm.freq(SERVO_PWM_HZ)
+            if SERVO_TEST_MODE == "endpoints":
+                self._bang_bang(pwm)
+            else:
+                half = SERVO_SWEEP_DEG / 2.0
+                a_deg = SERVO_HOME_DEG - half
+                b_deg = SERVO_HOME_DEG + half
+                leg_ms = max(200, int(SERVO_LEG_MS))
 
-            # Command start pulse and hold briefly.
-            self._write_pulse_us(pwm, start_us)
-            power = self._read_power()
-            peak_ma = self._update_peak(peak_ma, power)
-            self._draw("{}us".format(start_us), gear, power, peak_ma)
-            time.sleep_ms(SERVO_START_SETTLE_MS)
+                # Park at A at full servo speed, then let it settle.
+                self._write_angle(pwm, a_deg)
+                self._draw("Start {:.0f}d".format(a_deg))
+                time.sleep_ms(SERVO_START_SETTLE_MS)
 
-            # One smooth sweep from start_us to end_us.
-            for i in range(steps + 1):
-                pulse = start_us + (end_us - start_us) * i / steps
-                pulse = int(pulse)
+                # Leg 1: A -> B.
+                self._draw("{:.0f}d > {:.0f}d".format(a_deg, b_deg))
+                self._sweep_leg(pwm, a_deg, b_deg, leg_ms)
+                time.sleep_ms(SERVO_END_HOLD_MS)
 
-                self._write_pulse_us(pwm, pulse)
+                # Leg 2: B -> A.
+                self._draw("{:.0f}d > {:.0f}d".format(b_deg, a_deg))
+                self._sweep_leg(pwm, b_deg, a_deg, leg_ms)
 
-                power = self._read_power()
-                peak_ma = self._update_peak(peak_ma, power)
-
-                self._draw("{}us".format(pulse), gear, power, peak_ma)
-                gear += 0.05 if end_us >= start_us else -0.05
-
-                time.sleep_ms(step_ms)
-
-            # Hold final pulse briefly.
-            power = self._read_power()
-            peak_ma = self._update_peak(peak_ma, power)
-            self._draw("End {}us".format(end_us), gear, power, peak_ma)
+            self._draw("Test done")
+            print("[SERVO] test done")
             time.sleep_ms(SERVO_END_HOLD_MS)
 
-        except Exception:
+        except Exception as e:
+            print("[SERVO] test failed:", e)
             try:
                 self._draw("Test failed")
                 time.sleep_ms(900)
@@ -411,7 +416,16 @@ class ServoScreen:
     def show_live(self, btn):
         """
         Single click : advance carousel.
-        Double click : run one simple raw PWM servo sweep test.
+        Double click : run the raw PWM servo test (see SERVO_TEST_MODE).
+
+        The idle loop does nothing but poll the button. There is no periodic
+        redraw: with the INA219 readout gone this screen is entirely static
+        once probed, so a refresh tick would only add a 50-100 ms font-render
+        plus I2C flush during which the button is not sampled. A click is only
+        ~100 ms of debounced level change and the button is sampled *only*
+        when polled, so a redraw landing on top of the gap between two clicks
+        was enough to break a double into two singles. Poll fast, draw only on
+        change.
         """
         try:
             btn.reset()
@@ -426,8 +440,6 @@ class ServoScreen:
         self._probe()
         self._draw()
 
-        next_refresh = time.ticks_add(time.ticks_ms(), self._refresh_ms)
-
         while True:
             try:
                 action = btn.poll_action()
@@ -436,16 +448,14 @@ class ServoScreen:
 
             if action == "double" and self._connected:
                 self._run_test()
-
-                # Reset refresh timer after test.
-                next_refresh = time.ticks_add(time.ticks_ms(), self._refresh_ms)
+                # The test drew its own frames; restore the idle view.
+                self._draw()
+                try:
+                    btn.reset()
+                except Exception:
+                    pass
 
             elif action in ("single", "quad", "sleep"):
                 return action
 
-            now = time.ticks_ms()
-            if time.ticks_diff(now, next_refresh) >= 0:
-                self._draw()
-                next_refresh = time.ticks_add(now, self._refresh_ms)
-
-            time.sleep_ms(25)
+            time.sleep_ms(2)

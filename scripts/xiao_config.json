@@ -9,13 +9,13 @@
     "device_id": "18",
     "device_key": "119209285457a6f7d14979d0df1dcd6da32b732b81c8db00418c7b6f4dd3236f",
     "telemetry_enabled": true,
-    "telemetry_mode": "manual",
+    "telemetry_mode": "auto",
     "telemetry_post_every_s": 120,
     "timezone_offset_min": 60,
     "oled_col_offset": 2,
     "compass_offset_deg": -80,
     "turtle_mode": true,
-    "joke_mode": true,
+    "joke_mode": true,Lets
     "morse_bless": true,
     "servo_present": true,
 
