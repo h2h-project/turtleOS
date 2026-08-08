@@ -7,7 +7,7 @@ The governing idea is the **AOELL learning architecture**
 (`docs/AOELL nav revision.md`): turtleOS is not a finished navigation
 controller but an *instrumented sailing experiment*, and every voyage —
 especially every failure — must produce evidence that improves the next
-decision, the next policy version, and the next turtle.
+decision, the next policy version, and the next turtle.  AOELL stands for Act, Observe, Evaluate, Log and Learn-- a virtuous cycle that will help our turtles get smarter and smarter.
 
 The roadmap runs in **three development streams**:
 
@@ -15,7 +15,7 @@ The roadmap runs in **three development streams**:
   logs and learns.
 - **Ashore** (hopeturtles.org, culminating in the `mission_review` panel)
   — the team and, later, models interpret those records and send back
-  versioned policy adjustments.
+  versioned policy adjustments.  We are also discussing how our data could integrate into a meditaranean drift project model that we are investigating.
 - **Bale mesh** (`docs/bale_network_vision.md`) — turtles talk to each
   other, so lessons and records propagate between hulls at sea and reach
   shore through whichever hull finds connectivity first.
@@ -63,7 +63,7 @@ are stated up front because each one shapes the order of the work:
    useful propulsion → demonstrate repeatable turning influence → only
    then attempt a deliberate tack.
 6. **Wind estimate accuracy is to be established experimentally.** No
-   accuracy figure is claimed until it is measured on water.
+   accuracy figure is claimed until it is measured on water.  OUr luff detection method is a wild idea at this point. This is something we need to get into the water to test.
 7. **ARRIVAL does not hold position.** A sail-only turtle with a fixed
    rudder cannot be assumed to station-keep. ARRIVAL means: inside the
    arrival radius → feather the sail, report arrival, and keep reporting
