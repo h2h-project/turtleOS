@@ -413,7 +413,7 @@ class ServoScreen:
     # Public entry
     # ----------------------------
 
-    def show_live(self, btn):
+    def show_live(self, btn, tick_fn=None):
         """
         Single click : advance carousel.
         Double click : run the raw PWM servo test (see SERVO_TEST_MODE).
@@ -440,6 +440,9 @@ class ServoScreen:
         self._probe()
         self._draw()
 
+        _tick_next = time.ticks_ms()
+        _tick_every = 500
+
         while True:
             try:
                 action = btn.poll_action()
@@ -457,5 +460,14 @@ class ServoScreen:
 
             elif action in ("single", "quad", "sleep"):
                 return action
+
+            if tick_fn is not None:
+                now = time.ticks_ms()
+                if time.ticks_diff(now, _tick_next) >= 0:
+                    try:
+                        tick_fn()
+                    except Exception:
+                        pass
+                    _tick_next = time.ticks_add(now, _tick_every)
 
             time.sleep_ms(2)

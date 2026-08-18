@@ -13,9 +13,9 @@ set -euo pipefail
 # full screen set, all ESP32-S3 drivers.
 #
 # Usage:
-#   ./scripts/xiao_synker.sh
-#   ./scripts/xiao_synker.sh --fresh
-#   ./scripts/xiao_synker.sh --port /dev/cu.usbmodem141301
+#   ./scripts/sync_turtleOS.sh
+#   ./scripts/sync_turtleOS.sh --fresh
+#   ./scripts/sync_turtleOS.sh --port /dev/cu.usbmodem141301
 #
 # --fresh: non-interactive hard reset (wipe and re-upload)
 # ============================================================
@@ -42,7 +42,7 @@ print_help() {
 turtleOS XIAO Synker — uploads the full XIAO ESP32-S3 build
 
 Usage:
-  ./scripts/xiao_synker.sh [options]
+  ./scripts/sync_turtleOS.sh [options]
 
 Options:
   --fresh         Non-interactive hard reset (wipe board, then upload)
@@ -249,7 +249,31 @@ MPREMOTE_CMD=("$MPREMOTE" connect "$PORT")
 # ------------------------------------------------------------
 
 echo
-echo "==> turtleOS XIAO Synker"
+cat <<'BANNER'
+
+       █████                          █████    ████              ███████     █████████
+      ░░███                          ░░███    ░░███            ███░░░░░███  ███░░░░░███
+      ███████   █████ ████ ████████  ███████   ░███   ██████  ███     ░░███░███    ░░░
+     ░░░███░   ░░███ ░███ ░░███░░███░░░███░    ░███  ███░░███░███      ░███░░█████████
+       ░███     ░███ ░███  ░███ ░░░   ░███     ░███ ░███████ ░███      ░███ ░░░░░░░░███
+       ░███ ███ ░███ ░███  ░███       ░███ ███ ░███ ░███░░░  ░░███     ███  ███    ░███
+      ░░█████  ░░████████ █████      ░░█████  █████░░██████  ░░░███████░  ░░█████████
+        ░░░░░    ░░░░░░░░ ░░░░░        ░░░░░  ░░░░░  ░░░░░░     ░░░░░░░     ░░░░░░░░░
+
+      ░█▀█░░░█░█░█░█░█▄█░█▀█░█▀█░▀▀▄░█░█░█░█░█▄█░█▀█░█▀█░░░█▀█░█▀▄░█▀█░▀▀█░█▀▀░█▀▀░▀█▀
+      ░█▀█░░░█▀█░█░█░█░█░█▀█░█░█░▄▀░░█▀█░█░█░█░█░█▀█░█░█░░░█▀▀░█▀▄░█░█░░░█░█▀▀░█░░░░█░
+      ░▀░▀░░░▀░▀░▀▀▀░▀░▀░▀░▀░▀░▀░▀▀▀░▀░▀░▀▀▀░▀░▀░▀░▀░▀░▀░░░▀░░░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░▀░
+
+
+                                     _______    ___
+                                   /         \ |  0|
+                                   |         |/ __\|   D E V I C E   U P D A T E R
+                                   |___________/
+                                     |__| |__|
+BANNER
+echo
+echo "This is the Synker — it uploads new firmware to a turtleOS device you"
+echo "already installed. First-time setup lives in install_turtleOS.sh instead."
 echo
 echo "Uploads the full XIAO ESP32-S3 build:"
 echo "  Included: GPS, compass, servo/turtle, all screens, all drivers."
@@ -291,17 +315,19 @@ else
   echo
   echo "What would you like to do?  (Hit return for option 1)"
   echo "  1. Reboot the turtle and see the full boot log.  [default]"
-  echo "  2. Do a quick turtle sync"
-  echo "  3. Do a more in depth sync with full options"
+  echo "  2. Sync only the config file"
+  echo "  3. Do a quick sync — for any changes to the OS"
+  echo "  4. Do a more in depth sync with full options"
   echo
   while true; do
-    read -r -p "Enter 1, 2, or 3: " reply
+    read -r -p "Enter 1, 2, 3, or 4: " reply
     reply="${reply:-1}"
     case "$reply" in
       1) ACTION="reboot"; break ;;
-      2) ACTION="quick";  break ;;
-      3) ACTION="full";   break ;;
-      *) echo "  (Please enter 1, 2, or 3.)" ;;
+      2) ACTION="config"; break ;;
+      3) ACTION="quick";  break ;;
+      4) ACTION="full";   break ;;
+      *) echo "  (Please enter 1, 2, 3, or 4.)" ;;
     esac
   done
 fi
@@ -311,12 +337,23 @@ fi
 # ============================================================
 
 if [[ "$ACTION" == "reboot" ]]; then
+  open_repl
+  exit 0
+fi
+
+# ============================================================
+# Option 2 — Sync only the config file
+# ============================================================
+
+if [[ "$ACTION" == "config" ]]; then
+  msg "Uploading config.json only"
+  "${MPREMOTE_CMD[@]}" fs cp "$SCRIPTS_DIR/xiao_config.json" :config.json \
+    || die "Config upload failed. Try reconnecting the board and running again."
+  echo "Config: scripts/xiao_config.json → config.json"
   echo
-  echo "  Rebooting turtle — watch for the boot log below."
-  echo "  Press Ctrl-] to exit back to the shell."
-  echo
-  "${MPREMOTE_CMD[@]}" reset repl
-  echo
+  echo "  Done!  config.json updated."
+
+  open_repl
   exit 0
 fi
 
@@ -352,14 +389,12 @@ cp "$SCRIPTS_DIR/xiao_config.json" "$STAGE_DIR/config.json"
 echo "Config: scripts/xiao_config.json → config.json"
 
 # ============================================================
-# Option 2 — Quick sync
+# Option 3 — Quick sync (any changes to the OS)
 # ============================================================
 
 if [[ "$ACTION" == "quick" ]]; then
   do_upload_sync
 
-  msg "Flash usage (after sync)"
-  show_flash_usage
   echo
   echo "  Done!  turtleOS is installed."
 
@@ -368,7 +403,7 @@ if [[ "$ACTION" == "quick" ]]; then
 fi
 
 # ============================================================
-# Option 3 / --fresh — Full sync with options
+# Option 4 / --fresh — Full sync with options
 # ============================================================
 
 msg "Flash usage (before sync)"

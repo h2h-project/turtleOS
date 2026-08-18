@@ -44,7 +44,12 @@ class ToggleSwitch:
         self._circle(fb,cx,top,r,color,fill=True)
         self._circle(fb,cx,bot,r,color,fill=True)
 
-    def draw(self,fb,on=False):
+    def draw(self,fb,on=False,pos=None):
+        #pos overrides on= for three-position switches:
+        #  0 = hollow knob at bottom (off)
+        #  1 = filled knob at middle
+        #  2 = filled knob at top (on)
+        #pos=None keeps the original two-position behaviour from on=.
         x=self.x;y=self.y;w=self.w;h=self.h
 
         #outer pill filled
@@ -63,8 +68,14 @@ class ToggleSwitch:
         cx=x+(w//2)
         top=y+(w//2)
         bot=y+h-1-(w//2)
+        mid=(top+bot)//2
 
-        if on:
+        if pos is None:
+            pos=2 if on else 0
+
+        if pos>=2:
             self._circle(fb,cx,top,r,1,fill=True)
+        elif pos==1:
+            self._circle(fb,cx,mid,r,1,fill=True)
         else:
             self._circle(fb,cx,bot,r,1,fill=False)

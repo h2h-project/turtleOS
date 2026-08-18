@@ -19,24 +19,34 @@ fi
 # configures your turtle, and uploads turtleOS firmware.
 #
 # Usage (one-liner):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/turtle_install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/install_turtleOS.sh)
 #
 # For subsequent firmware updates use:
-#   ./scripts/xiao_synker.sh
+#   ./scripts/sync_turtleOS.sh
 # ============================================================
 
 cat <<'BANNER'
 
-             _______    ___
-           /         \ |  0|
-           |         |/ __\|
-             |___________/
-               |__| |__|
+       █████                          █████    ████              ███████     █████████
+      ░░███                          ░░███    ░░███            ███░░░░░███  ███░░░░░███
+      ███████   █████ ████ ████████  ███████   ░███   ██████  ███     ░░███░███    ░░░
+     ░░░███░   ░░███ ░███ ░░███░░███░░░███░    ░███  ███░░███░███      ░███░░█████████
+       ░███     ░███ ░███  ░███ ░░░   ░███     ░███ ░███████ ░███      ░███ ░░░░░░░░███
+       ░███ ███ ░███ ░███  ░███       ░███ ███ ░███ ░███░░░  ░░███     ███  ███    ░███
+      ░░█████  ░░████████ █████      ░░█████  █████░░██████  ░░░███████░  ░░█████████
+        ░░░░░    ░░░░░░░░ ░░░░░        ░░░░░  ░░░░░  ░░░░░░     ░░░░░░░     ░░░░░░░░░
 
-               turtleOS
-    D E V I C E   I N S T A L L E R
+      ░█▀█░░░█░█░█░█░█▄█░█▀█░█▀█░▀▀▄░█░█░█░█░█▄█░█▀█░█▀█░░░█▀█░█▀▄░█▀█░▀▀█░█▀▀░█▀▀░▀█▀
+      ░█▀█░░░█▀█░█░█░█░█░█▀█░█░█░▄▀░░█▀█░█░█░█░█░█▀█░█░█░░░█▀▀░█▀▄░█░█░░░█░█▀▀░█░░░░█░
+      ░▀░▀░░░▀░▀░▀▀▀░▀░▀░▀░▀░▀░▀░▀▀▀░▀░▀░▀▀▀░▀░▀░▀░▀░▀░▀░░░▀░░░▀░▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░░▀░
 
-     ~ A Human to Human project ~
+
+                                   _______    ___
+                                 /         \ |  0|
+                                 |         |/ __\|   D E V I C E   I N S T A L L E R
+                                 |___________/
+                                   |__| |__|
+
 
 BANNER
 
@@ -739,7 +749,7 @@ echo
 "$MPREMOTE_BIN" connect "$PORT" repl
 echo
 echo "For future firmware updates, run:"
-echo "  ./scripts/xiao_synker.sh"
+echo "  ./scripts/sync_turtleOS.sh"
 echo
 echo "Full wiring guide: wiring_guide.md"
 echo "Hardware list:     hardware_stack.md"

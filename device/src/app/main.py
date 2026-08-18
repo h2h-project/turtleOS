@@ -76,6 +76,12 @@ def run(
         boot_warmup_started=False,
         rtc_info=None,
         gps_boot=None,
+        i2c=None,
+        ina_dev=None,
+        gps=None,
+        wifi_manager=None,
+        nav_controller=None,
+        turtle_waiting_scr=None,
 ):
     BTN_PIN = _resolve_btn_pin_default()
     from config import load_config
@@ -117,11 +123,14 @@ def run(
     # no stale 100 kHz handles linger alongside the new peripheral init.
     # Use air_sensor (the parameter) not air (assigned later at line ~220).
     # ------------------------------------------------------------
-    if init_i2c:
-        i2c = init_i2c()
-    else:
-        from machine import I2C, Pin
-        i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
+    if i2c is None:
+        # Fallback path: only hit when step_init_runtime() (device/main.py)
+        # didn't build one — e.g. on Pico, or if it failed.
+        if init_i2c:
+            i2c = init_i2c()
+        else:
+            from machine import I2C, Pin
+            i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
 
     if air_sensor is not None:
         air_sensor._i2c = i2c
@@ -138,15 +147,16 @@ def run(
         except Exception:
             pass
 
-    _ina_dev = None
-    try:
-        from src.drivers.ina219 import INA219 as _INA219
-        _gc()
-        _ina_dev = _INA219(i2c, auto_init=True)
-        if not _ina_dev.is_present:
+    _ina_dev = ina_dev
+    if _ina_dev is None:
+        try:
+            from src.drivers.ina219 import INA219 as _INA219
+            _gc()
+            _ina_dev = _INA219(i2c, auto_init=True)
+            if not _ina_dev.is_present:
+                _ina_dev = None
+        except Exception:
             _ina_dev = None
-    except Exception:
-        _ina_dev = None
 
     rtc = rtc_info if isinstance(rtc_info, dict) else {}
 
@@ -159,7 +169,9 @@ def run(
         GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN = (1, 9600, 8, 9)
 
     _gps_cfg = load_config() or {}
-    if _gps_cfg.get("gps_enabled", False) and init_gps is not None:
+    if gps is None and _gps_cfg.get("gps_enabled", False) and init_gps is not None:
+        # Fallback path: only hit when step_init_runtime() didn't build a
+        # GPS session already (e.g. on Pico).
         try:
             gps = init_gps(
                 uart_id=GPS_UART_ID,
@@ -177,7 +189,7 @@ def run(
                 )
             except Exception as e:
                 print("[GPS] configure:", repr(e))
-    else:
+    elif not _gps_cfg.get("gps_enabled", False):
         gps = None
 
     try:
@@ -248,8 +260,9 @@ def run(
             pass
         return None
 
-    turtle_waiting_scr = None
-    if _gps_cfg.get("turtle_mode", False) and oled is not None:
+    if turtle_waiting_scr is None and _gps_cfg.get("turtle_mode", False) and oled is not None:
+        # Fallback path: only hit when step_init_runtime() didn't build one
+        # already (e.g. on Pico, or if it failed there).
         try:
             _gc()
             from src.ui.screens.turtle_waiting import TurtleWaitingScreen
@@ -292,8 +305,10 @@ def run(
         _is_esp32_loop = False
 
     _wifi_manager_ok = _boot_wifi_ok if _is_esp32_loop else True
-    wifi = None
-    if _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+    wifi = wifi_manager
+    if wifi is None and _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+        # Fallback path: only hit when step_init_runtime() didn't build one
+        # already (e.g. on Pico).
         try:
             from src.net.wifi_manager import WiFiManager
             wifi = WiFiManager()
@@ -677,7 +692,7 @@ def run(
     # Ticked from _bg_tick and from the state screen; NavController
     # self-rate-limits, so extra calls are cheap no-ops.
     # ------------------------------------------------------------
-    _nav_cell = [None]
+    _nav_cell = [nav_controller]
 
     def _get_nav():
         if _nav_cell[0] is not None:

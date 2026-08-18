@@ -2,8 +2,8 @@
 
     "board_type": "xiao_esp32s3",
     "wifi_enabled": true,
-    "wifi_ssid": "Wu-Tang LAN",
-    "wifi_password": "W3L0v3b008135!",
+    "wifi_ssid": "MAVI_MARMARA",
+    "wifi_password": "Mavimarmara@2010",
     "gps_enabled": true,
     "api_base": "http://hopeturtles.org",
     "device_id": "18",
@@ -15,7 +15,7 @@
     "oled_col_offset": 2,
     "compass_offset_deg": -80,
     "turtle_mode": true,
-    "joke_mode": true,Lets
+    "joke_mode": true,
     "morse_bless": true,
     "servo_present": true,
 

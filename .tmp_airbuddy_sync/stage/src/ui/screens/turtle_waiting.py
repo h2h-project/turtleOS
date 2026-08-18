@@ -120,10 +120,11 @@ class TurtleWaitingScreen:
     _BATT_DY = 1
     _BATT_TEXT_GAP = 6
 
-    def __init__(self, oled, nav_get=None, mission_get=None):
+    def __init__(self, oled, nav_get=None, mission_get=None, battery_get=None):
         self.oled = oled
         self._nav_get = nav_get        # callable -> NavController or None
         self._mission_get = mission_get  # callable -> mission name str or None
+        self._battery_get = battery_get  # callable -> bus voltage (float) or None
         w, h = oled.width, oled.height
         f1_fb,  f1_buf,  f1_x,  f1_y  = _prerender(_TURTLE_1,    w, h)
         f2_fb,  f2_buf,  f2_x,  f2_y  = _prerender(_TURTLE_2,    w, h)
@@ -152,6 +153,14 @@ class TurtleWaitingScreen:
         if not name:
             return None
         return str(name).strip() or None
+
+    def _battery_volts(self):
+        if self._battery_get is None:
+            return None
+        try:
+            return self._battery_get()
+        except Exception:
+            return None
 
     def _fit(self, text, max_w):
         """Truncate text (from the end) until it fits within max_w pixels."""
@@ -193,15 +202,21 @@ class TurtleWaitingScreen:
 
         nav = self._nav()
 
-        # Bottom-right corner: empty battery outline, flush to the right edge.
+        # Bottom-right corner: battery charge-level icon, flush to the right edge.
         try:
             from src.ui.glyphs import BATT_W as _batt_w
         except Exception:
             _batt_w = 12
         batt_x = w - _batt_w
+        volts = self._battery_volts()
         try:
-            from src.ui.glyphs import draw_battery
-            draw_battery(dst, batt_x, ty + self._BATT_DY)
+            if volts is None:
+                from src.ui.glyphs import draw_battery
+                draw_battery(dst, batt_x, ty + self._BATT_DY, no_battery=True)
+            else:
+                from src.ui.glyphs import draw_battery_level, battery_display_bands
+                bands, _status = battery_display_bands(volts)
+                draw_battery_level(dst, batt_x, ty + self._BATT_DY, bands_filled=bands)
         except Exception:
             pass
 
@@ -309,7 +324,25 @@ class TurtleWaitingScreen:
         # idle_state: [next_ms, live_status_dict, interval_ms]
         _overlay_next = time.ticks_add(time.ticks_ms(), 1000)
         _last_morse = 0
+
+        def _btn():
+            # Sampled between every expensive step below, not just once per
+            # iteration: a click is only ~100 ms of debounced level change, and
+            # a frame draw plus a telemetry/nav tick back to back is long enough
+            # to step over one entirely — which loses the 2nd or 3rd click of a
+            # triple and turns it into a single or double.
+            if btn is None:
+                return None
+            try:
+                return btn.poll_action()
+            except Exception:
+                return None
+
         while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+            action = _btn()
+            if action is not None:
+                return action
+
             now = time.ticks_ms()
             if tick_fn is not None and time.ticks_diff(now, tick_state[0]) >= 0:
                 try:
@@ -317,6 +350,9 @@ class TurtleWaitingScreen:
                 except Exception:
                     pass
                 tick_state[0] = time.ticks_add(now, 500)
+                action = _btn()
+                if action is not None:
+                    return action
             # Redraw at 1 Hz, or immediately whenever the morse circle state changes
             # (allows 50 ms morse symbols to be visible on the OLED).
             try:
@@ -331,6 +367,9 @@ class TurtleWaitingScreen:
                     pass
                 _overlay_next = time.ticks_add(now, 1000)
                 _last_morse = _cur_morse
+                action = _btn()
+                if action is not None:
+                    return action
             if on_idle is not None and idle_state is not None:
                 if time.ticks_diff(now, idle_state[0]) >= 0:
                     try:
@@ -340,13 +379,9 @@ class TurtleWaitingScreen:
                     except Exception:
                         pass
                     idle_state[0] = time.ticks_add(now, idle_state[2])
-            if btn is not None:
-                try:
-                    action = btn.poll_action()
-                except Exception:
-                    action = None
-                if action is not None:
-                    return action
+                    action = _btn()
+                    if action is not None:
+                        return action
             time.sleep_ms(self.POLL_MS)
         return None
 

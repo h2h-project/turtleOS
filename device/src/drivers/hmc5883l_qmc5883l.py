@@ -1,11 +1,10 @@
 # src/drivers/hmc5883l_qmc5883l.py
 # MicroPython drivers for HMC5883L and QMC5883L 3-axis magnetometers
 #
-# RETIRED from the runtime path as of Phase 0 (see docs/navigation_roadmap.md):
-# compass.py and nav/heading.py now read src/drivers/mpu9250.py instead.
-# Kept in the tree only for the Phase S bench comparison against the
-# MPU-9250's internal AK8963 magnetometer — do not re-wire this into any
-# screen or boot step without updating the roadmap.
+# Back in the runtime path: the Phase 0 MPU-9250 units on hand turned out
+# to be duds, so compass.py and nav/heading.py probe the MPU-9250 first
+    # (for forward compatibility) but fall back to QMC5883L/HMC5883L here when
+# it's absent — see the fallback logic in each file's _get_mag().
 #
 # HMC5883L (genuine):
 #   I2C address : 0x1E (fixed)

@@ -6,8 +6,46 @@ from src.ui.thermobar import ThermoBar
 # Single source of truth for the firmware version.  Referenced by the Booter
 # instance for the OLED label, and importable by the headless boot path in
 # main.py so the version is logged even when no OLED is present.
-VERSION_NUM = "2.3.9"
+VERSION_NUM = "2.3.11"
 VERSION = "turtleOS version " + VERSION_NUM
+
+
+class DotTicker:
+    """
+    Reusable animated dot sequence for a boot-step footer: "label.", then
+    "label..", then "label...", then clears back to "label" and repeats —
+    one dot added every `interval_ms` (default 500 ms).
+
+    Self-paced off wall-clock time via time.ticks_ms(), so callers can invoke
+    tick() as often as convenient (e.g. every iteration of an existing poll
+    loop) without needing to control the exact cadence themselves.
+    """
+
+    def __init__(self, booter, label, p=0.0, interval_ms=500, max_dots=3):
+        self.booter = booter
+        self.label = label
+        self.p = p
+        self.interval_ms = interval_ms
+        self.max_dots = max_dots
+        self._dots = 0
+        self._last_ms = time.ticks_ms()
+        self._draw()
+
+    def _draw(self):
+        if self.booter:
+            try:
+                self.booter._draw_frame(p=self.p, footer=self.label + "." * self._dots)
+            except Exception:
+                pass
+
+    def tick(self):
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._last_ms) >= self.interval_ms:
+            self._last_ms = now
+            self._dots += 1
+            if self._dots > self.max_dots:
+                self._dots = 0
+            self._draw()
 
 
 class Booter:
@@ -50,6 +88,14 @@ class Booter:
 
         self.bar = ThermoBar(oled)
         self._layout = None
+
+        # The DotTicker for whichever boot step is currently running (set
+        # fresh by boot_pipeline() before each step's fn() is called). Steps
+        # whose fn() has an internal poll loop (WiFi connect, GPS presence
+        # check, ...) call booter.step_ticker.tick() from that loop to
+        # animate; steps that are a single blocking call never call it, so
+        # they stay at zero dots — no per-step wiring needed either way.
+        self.step_ticker = None
 
         # footer truncation
         self._footer_max_chars = 26
@@ -239,6 +285,14 @@ class Booter:
         self._show_fb()
 
     # -------------------------------------------------
+    # Dot ticker factory (see DotTicker above)
+    # -------------------------------------------------
+    def make_dot_ticker(self, label, p=0.0, interval_ms=500, max_dots=3):
+        if self._layout is None:
+            self._layout = self._calc_layout()
+        return DotTicker(self, label, p=p, interval_ms=interval_ms, max_dots=max_dots)
+
+    # -------------------------------------------------
     # Legacy warmup animation (used by src/app/main.py)
     # -------------------------------------------------
     def show(self, duration=4.0, fps=18, footer=None):
@@ -287,11 +341,15 @@ class Booter:
             ramp_frames=1,
             # Per-step pause (override settle_ms behavior cleanly)
             step_pause_ms=None,
-            # Extra hold (ms) when a step detail looks like an error
+            # Extra hold (ms) when a step detail looks like an error — long
+            # enough to actually read a failure. Successful steps get no
+            # extra hold: settle_ms already showed the label, and the ramp
+            # frame shows the result, so a healthy boot doesn't pay for
+            # holds nobody needs to read.
             error_hold_ms=700,
-            # Minimum dwell (ms) for every step's result footer so it is
-            # readable on the OLED (the ramp animation alone is only ~1 frame).
-            result_hold_ms=500,
+            # Dwell (ms) for a successful step's result footer. 0 by default
+            # — only failures are held long enough to read.
+            result_hold_ms=0,
     ):
         if logger is None:
             logger = print
@@ -330,7 +388,12 @@ class Booter:
 
             label = str(label)
 
-            self._draw_frame(p=p_prev, footer=label)
+            # Fresh ticker per step, drawn immediately at zero dots (same
+            # frame the old plain _draw_frame call produced). If fn() has a
+            # poll loop it can call self.step_ticker.tick() to animate; a
+            # step that returns quickly is simply never ticked, so it never
+            # shows a dot.
+            self.step_ticker = self.make_dot_ticker(label, p=p_prev)
             logger("[BOOT] " + label)
 
             # Per-step pause (set to 0 to go full speed)

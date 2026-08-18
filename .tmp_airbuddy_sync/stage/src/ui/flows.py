@@ -8,7 +8,6 @@
 # - Make WiFiScreen call match its signature: show_live(btn)
 # - Make OnlineScreen call match its signature: show_live(btn)
 # - Make LoggingScreen call match its signature: show_live(btn, get_queue_size=None, get_last_sent=None)
-# - NEW: After Logging, route to GPS screen ONLY if GPS connectivity is present; otherwise return to waiting.
 #
 # PATCH (Feb 2026 - Offline carousel + quad fix):
 # - Connectivity carousel now works OFFLINE (no early return when wifi/api missing)
@@ -17,10 +16,17 @@
 # - Offline status notices are non-blocking (brief dwell OR user click), then carousel continues.
 #
 # PATCH (Jul 2026 - Connectivity carousel reorder):
-# - New order: Online -> Logging -> GPS -> WiFi -> Device.
+# - New order: Online -> Logging -> WiFi -> Device.
 # - Online screen leads and is always shown (even offline): it renders
 #   "Offline" and the pending unsent-telemetry count when WiFi is down.
 # - Removed the wifi_ok gates that previously hid Online/Device offline.
+#
+# PATCH (Jul 2026 - Manual GPS logging):
+# - GPS screen moved OUT of the single-click and triple-click carousels and to
+#   the FRONT of the hold flow (GPS -> Battery -> Sleep -> Version), so a
+#   hand-taken position stamp is: hold, click.
+# - In telemetry_mode="manual" the GPS screen stamps on SINGLE click and
+#   advances on DOUBLE; auto/off keep the legacy mapping.
 
 import time
 from src.ui.clicks import (
@@ -385,6 +391,20 @@ def _offline_notice(oled, btn, lines, dwell_ms=1200, poll_ms=25):
         return None
 
 
+def _request_wifi_check(telemetry, force=False):
+    """Ask the telemetry background process to try associating.
+
+    Non-blocking and best-effort: no background process (or no telemetry yet)
+    simply means nothing to ask.
+    """
+    try:
+        bp = telemetry.scheduler._background_process
+        if bp is not None:
+            bp.request_wifi_check(force=force)
+    except Exception:
+        pass
+
+
 def connectivity_carousel(
         btn,
         oled,
@@ -410,8 +430,6 @@ def connectivity_carousel(
     Online Screen (ALWAYS — shows "Offline" + pending queue when WiFi down)
        ↓ single click always advances
     Logging Screen
-       ↓ single click always advances
-    GPS Screen
        ↓ single click always advances
     WiFi Screen
        ↓ single click always advances
@@ -453,6 +471,12 @@ def connectivity_carousel(
         wifi_ok = bool(status.get("wifi_ok"))
     except Exception:
         wifi_ok = False
+
+    # Opening this carousel is an explicit request for connectivity, so it
+    # bypasses the background process's retry floor. The send path itself no
+    # longer scans (see TelemetryBackgroundProcess._send) — without this, a
+    # device that dropped its AP at sea would have no user-driven way back on.
+    _request_wifi_check(telemetry, force=True)
 
     # ------------------------------------------------------------
     # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.
@@ -511,7 +535,7 @@ def connectivity_carousel(
     log_scr = get_screen("logging")
     if log_scr and hasattr(log_scr, "show_live"):
         try:
-            a = log_scr.show_live(btn, tick_fn=tick_fn)
+            a = log_scr.show_live(btn, tick_fn=tick_fn, cfg=cfg)
         except Exception:
             a = wait_for_single(btn, tick_fn=tick_fn)
     else:
@@ -530,39 +554,7 @@ def connectivity_carousel(
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
-    # 3) GPS SCREEN — reads UART only, no TCP.
-    # ------------------------------------------------------------
-    try:
-        _gps_on = (status or {}).get("gps_on", 0)
-        _gps_en = bool((cfg or {}).get("gps_enabled", False))
-        _gps_lbl = ("none", "init", "fixed")
-        _gps_state_str = _gps_lbl[_gps_on] if isinstance(_gps_on, int) and 0 <= _gps_on <= 2 else str(_gps_on)
-        _log_screen("gps", "enabled={}  state={}".format(_gps_en, _gps_state_str))
-    except Exception:
-        _log_screen("gps")
-    gps_scr = get_screen("gps")
-    if gps_scr and hasattr(gps_scr, "show_live"):
-        try:
-            a = gps_scr.show_live(gps, btn)
-        except Exception:
-            a = wait_for_single(btn, tick_fn=tick_fn)
-    else:
-        draw_text(oled, "GPS", y=24)
-        a = wait_for_single(btn, tick_fn=tick_fn)
-
-    sp = _handle_special(a)
-    if sp == "handled":
-        return
-    if sp in ("quad", "debug"):
-        return sp
-
-    if a != "single":
-        return _exit(a)
-
-    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-    # ------------------------------------------------------------
-    # 4) WIFI SCREEN — disabled state handled by the screen itself
+    # 3) WIFI SCREEN — disabled state handled by the screen itself
     # ------------------------------------------------------------
     try:
         _w_ssid = (cfg or {}).get("wifi_ssid", "") or ""
@@ -591,7 +583,7 @@ def connectivity_carousel(
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
-    # 5) DEVICE SCREEN — last; uses boot-time cached info (no in-carousel
+    # 4) DEVICE SCREEN — last; uses boot-time cached info (no in-carousel
     #    HTTP unless the cache is empty and WiFi is up).
     # ------------------------------------------------------------
     try:
@@ -661,11 +653,12 @@ def sensor_carousel(
         tick_fn=None,
         gps=None,
         cfg=None,
+        telemetry=None,
 ):
     _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
     # Air sensors are optional in turtle_mode — the single-click carousel there
-    # is navigation screens (sailpoint/servo/gps/destination), which don't need
+    # is navigation screens (sailpoint/servo/destination), which don't need
     # the ENS160/AHT21. Only block on missing sensors in airOS mode.
     reading = None
     if air is None:
@@ -707,7 +700,7 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    _all_screens = (["sailpoint", "servo", "gps", "destination"] if _turtle_mode else []) \
+    _all_screens = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) \
                    + _sensor_screens \
                    + (["summary"] if _sensor_screens else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
@@ -715,7 +708,7 @@ def sensor_carousel(
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = (["sailpoint", "servo", "gps", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
+    _preload = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
     for _n in _preload:
         get_screen(_n)
         _gc()
@@ -769,27 +762,24 @@ def sensor_carousel(
             return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- GPS (third in single-click carousel, turtle mode only) ----
+        # ---- COMPASS (third in single-click carousel, turtle mode only) ----
         _gc()
-        gps_scr = get_screen("gps")
+        compass_scr2 = get_screen("compass")
         try:
-            try:
-                from src.ui import connection_header as _ch_gps
-                _gs = _ch_gps.get_gps_state()
-                _gps_lbl2 = ("none", "init", "fixed")
-                _gs_str = _gps_lbl2[_gs] if isinstance(_gs, int) and 0 <= _gs <= 2 else str(_gs)
-            except Exception:
-                _gs_str = "?"
-            _log_screen("gps", "state={}".format(_gs_str))
+            _hdg = compass_scr2._read() if compass_scr2 else None
+            if _hdg is not None:
+                _log_screen("compass", "heading={:.1f} deg".format(_hdg))
+            else:
+                _log_screen("compass", err="IMU not connected")
         except Exception:
-            _log_screen("gps")
-        if gps_scr and hasattr(gps_scr, "show_live"):
+            _log_screen("compass")
+        if compass_scr2 and hasattr(compass_scr2, "show_live"):
             try:
-                a = gps_scr.show_live(gps, btn)
+                a = compass_scr2.show_live(btn, tick_fn=tick_fn)
             except Exception:
                 a = None
         else:
-            draw_text(oled, "GPS", y=24)
+            draw_text(oled, "Compass", y=24)
             a = wait_for_single(btn, tick_fn=tick_fn)
 
         if a not in ("single", None):
@@ -1028,10 +1018,54 @@ def time_flow(btn, oled, cfg, wifi, ds3231, get_screen, flush_ms=250, poll_ms=25
 # ============================================================
 # SLEEP / LOW POWER (LONG PRESS)
 # ============================================================
-def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None):
+def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
+               gps=None, cfg=None, telemetry=None, status=None):
+    """
+    Hold flow (carousel order):
+
+    Waiting
+       ↓ (hold 2 s)
+    GPS Screen  ← manual telemetry stamps live here: one click = one reading
+       ↓ advance (double click in manual mode, single otherwise)
+    Battery Screen (skipped when no INA219)
+       ↓ single click
+    Sleep Screen
+       ↓ single click
+    Version Screen
+       ↓
+    Waiting
+
+    GPS leads the hold flow because hand-taken position stamps are the most
+    frequent field action on the turtle: hold, click, click, click.
+    """
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
 
-    # Battery screen first — skip directly to sleep if INA219 is not attached.
+    # ---- GPS SCREEN (first — reads UART only, no TCP) ----
+    _gc()
+    gps_scr = get_screen("gps")
+    try:
+        _gps_on = (status or {}).get("gps_on", 0)
+        _gps_en = bool((cfg or {}).get("gps_enabled", False))
+        _gps_lbl = ("none", "init", "fixed")
+        _gps_state_str = _gps_lbl[_gps_on] if isinstance(_gps_on, int) and 0 <= _gps_on <= 2 else str(_gps_on)
+        _log_screen("gps", "enabled={}  state={}".format(_gps_en, _gps_state_str))
+    except Exception:
+        _log_screen("gps")
+    if gps_scr and hasattr(gps_scr, "show_live"):
+        try:
+            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry)
+        except Exception:
+            a = None
+    else:
+        draw_text(oled, "GPS", y=24)
+        a = wait_for_single(btn, tick_fn=tick_fn)
+
+    if a != "single":
+        reset_and_flush(btn, flush_ms, poll_ms)
+        return
+    _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # Battery screen next — skip directly to sleep if INA219 is not attached.
     bat_scr = get_screen("battery")
     _ina_present = False
     if bat_scr is not None:

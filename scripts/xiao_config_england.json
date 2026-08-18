@@ -1,0 +1,32 @@
+{
+
+    "board_type": "xiao_esp32s3",
+    "wifi_enabled": true,
+    "wifi_ssid": "Wu-Tang LAN",
+    "wifi_password": "W3L0v3b008135!",
+    "gps_enabled": true,
+    "api_base": "http://hopeturtles.org",
+    "device_id": "18",
+    "device_key": "119209285457a6f7d14979d0df1dcd6da32b732b81c8db00418c7b6f4dd3236f",
+    "telemetry_enabled": true,
+    "telemetry_mode": "auto",
+    "telemetry_post_every_s": 120,
+    "timezone_offset_min": 60,
+    "oled_col_offset": 2,
+    "compass_offset_deg": -80,
+    "turtle_mode": true,
+    "joke_mode": true,Lets
+    "morse_bless": true,
+    "servo_present": true,
+
+    "waypoints": [],
+    "nav_cycle_ms": 300,
+    "arrival_radius_m": 300,
+    "luff_sweep_dps": 8,
+    "luff_threshold_mult": 5.0,
+    "luff_resweep_s": 600,
+    "sail_min_deg": 10,
+    "sail_max_deg": 170,
+    "low_batt_pct": 20,
+    "gps_loss_safe_s": 120
+}

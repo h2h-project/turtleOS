@@ -15,6 +15,12 @@
 # WiFi:  draw() always probes network.WLAN live — a fast C-level flag read,
 #        no socket or I/O.  The wifi_ok parameter is accepted for backward
 #        compatibility but is no longer used; the live result always wins.
+#        The icon itself is now a 4-tier signal-strength glyph (WIFI_NONE..
+#        WIFI_FULL), driven by RSSI read the same way as isconnected() —
+#        set_wifi_rssi()/get_wifi_rssi() mirror the set_wifi_ok() cache so
+#        the background thread (which owns the WiFi driver mutex during
+#        WPA2 auth) is the one calling wlan.status('rssi'), not the main
+#        thread's draw() call.
 #
 # API:   HTTP cannot be performed inside a draw call.  Instead a module-level
 #        boolean _api_ok is maintained.  Call set_api_ok(True/False) from the
@@ -23,8 +29,9 @@
 #        Callers that pass an explicit True/False still override the cache for
 #        that call (and update the cache so later draw() calls stay in sync).
 
-from src.ui.glyphs import draw_wifi, draw_gps, draw_api
+from src.ui.glyphs import draw_wifi_signal, draw_gps, draw_api
 from src.ui.glyphs import GPS_NONE, GPS_INIT, GPS_FIXED  # noqa: F401 — re-exported
+from src.ui.glyphs import WIFI_NONE, WIFI_FULL, wifi_level_from_rssi  # noqa: F401 — re-exported
 
 # Icon pixel dimensions (callers may import for layout math)
 WIFI_W = 9
@@ -53,6 +60,12 @@ _wifi_hw_enabled = True
 # after each attempt so the main thread never has to call wlan.isconnected()
 # (which can block 1-4 s when the WiFi driver mutex is held by WPA2 auth).
 _wifi_ok_cache = None
+
+# _wifi_rssi_cache: None = use live probe (or "unknown"); int = last dBm reading
+# pushed by set_wifi_rssi(), same producer/consumer split as _wifi_ok_cache —
+# background_process pushes a fresh reading after every connect check so the
+# main thread never calls wlan.status('rssi') itself.
+_wifi_rssi_cache = None
 
 # ISR-safe bytearray flags written by background_process timer callbacks.
 # bytearray element writes are atomic on ESP32 MicroPython — safe from Timer ISR.
@@ -85,6 +98,21 @@ def set_wifi_ok(ok):
 def get_wifi_ok():
     """Return the cached WiFi status, or None if live probing is still in use."""
     return _wifi_ok_cache
+
+
+def set_wifi_rssi(rssi):
+    """
+    Prime the WiFi RSSI cache (dBm int, or None when not connected / unknown).
+    Call this from the background_process alongside set_wifi_ok() so draw()
+    never has to call wlan.status('rssi') from the main thread.
+    """
+    global _wifi_rssi_cache
+    _wifi_rssi_cache = None if rssi is None else int(rssi)
+
+
+def get_wifi_rssi():
+    """Return the cached RSSI reading (dBm int, or None)."""
+    return _wifi_rssi_cache
 
 
 def set_gps_state(state):
@@ -134,6 +162,25 @@ def _probe_wifi():
         return False
 
 
+def _probe_wifi_rssi():
+    """
+    Live RSSI check, mirroring _probe_wifi()'s cache-first / hw-gated shape.
+    Only called from draw() when the connection is already known-good (via
+    cache or a live probe that already succeeded), so this does not add a
+    new isconnected() call on the association-blocking path.
+    """
+    if _wifi_rssi_cache is not None:
+        return _wifi_rssi_cache
+    if not _wifi_hw_enabled:
+        return None
+    try:
+        import network
+        wlan = network.WLAN(network.STA_IF)
+        return int(wlan.status("rssi"))
+    except Exception:
+        return None
+
+
 def draw(
         fb,
         oled_width,
@@ -167,10 +214,16 @@ def draw(
     gap           : pixels between icons
     """
     # WiFi: use override when provided (animation), else live probe.
+    # Signal level only means anything when actually connected — an
+    # override is used for the connect-flash animation, which has no
+    # RSSI reading yet, so it just alternates NONE/FULL like the old
+    # binary icon did.
     if wifi_override is not None:
         wifi_actual = bool(wifi_override)
+        wifi_level = WIFI_FULL if wifi_actual else WIFI_NONE
     else:
         wifi_actual = _probe_wifi()
+        wifi_level = wifi_level_from_rssi(_probe_wifi_rssi()) if wifi_actual else WIFI_NONE
 
     # API: use the caller-supplied value if explicit; fall back to cache.
     # The cache is only updated via set_api_ok() — passing an explicit value
@@ -188,7 +241,7 @@ def draw(
     # WiFi (rightmost)
     x -= WIFI_W
     fb.fill_rect(x, y, WIFI_W, WIFI_H, 0)
-    draw_wifi(fb, x, y, on=wifi_actual, color=1)
+    draw_wifi_signal(fb, x, y, level=wifi_level, color=1)
     x -= g
 
     # API

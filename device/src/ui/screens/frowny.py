@@ -18,7 +18,7 @@ class FrownyScreen:
     def __init__(self, oled):
         self.oled = oled
 
-    def show(self, btn, line1="", line2=""):
+    def show(self, btn, line1="", line2="", tick_fn=None):
         o = self.oled
         fb = o.oled
         w = int(getattr(o, "width", 128))
@@ -62,6 +62,8 @@ class FrownyScreen:
                 btn.reset()
             except Exception:
                 pass
+            _tick_next = time.ticks_ms()
+            _tick_every = 500
             while True:
                 a = None
                 try:
@@ -70,4 +72,14 @@ class FrownyScreen:
                     pass
                 if a in ("single", "double", "triple", "quad", "debug"):
                     break
+
+                if tick_fn is not None:
+                    now = time.ticks_ms()
+                    if time.ticks_diff(now, _tick_next) >= 0:
+                        try:
+                            tick_fn()
+                        except Exception:
+                            pass
+                        _tick_next = time.ticks_add(now, _tick_every)
+
                 time.sleep_ms(25)

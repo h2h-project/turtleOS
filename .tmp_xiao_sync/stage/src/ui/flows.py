@@ -348,14 +348,14 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
     return {}
 
 
-def _show_frowny(oled, btn, line1, line2):
+def _show_frowny(oled, btn, line1, line2, tick_fn=None):
     """
     Show FrownyScreen with two message lines and wait for any button click.
     Falls back to a plain centered text + brief sleep if the import fails.
     """
     try:
         from src.ui.screens.frowny import FrownyScreen
-        FrownyScreen(oled).show(btn, line1=line1, line2=line2)
+        FrownyScreen(oled).show(btn, line1=line1, line2=line2, tick_fn=tick_fn)
     except Exception:
         _draw_center_lines(oled, [line1, line2], y0=22, line_h=12)
         try:
@@ -664,7 +664,7 @@ def sensor_carousel(
     if air is None:
         if not _turtle_mode:
             print("[SINGLE] air=None — no sensors available")
-            _show_frowny(oled, btn, "Ack! No sensors", "are connected!")
+            _show_frowny(oled, btn, "Ack! No sensors", "are connected!", tick_fn=tick_fn)
             return
         print("[SINGLE] air=None — turtle_mode, showing nav screens only")
     else:
@@ -750,7 +750,7 @@ def sensor_carousel(
             _log_screen("servo")
         if servo_scr and hasattr(servo_scr, "show_live"):
             try:
-                a = servo_scr.show_live(btn)
+                a = servo_scr.show_live(btn, tick_fn=tick_fn)
             except Exception:
                 a = None
         else:
@@ -1025,22 +1025,45 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
 
     Waiting
        ↓ (hold 2 s)
-    GPS Screen  ← manual telemetry stamps live here: one click = one reading
-       ↓ advance (double click in manual mode, single otherwise)
     Battery Screen (skipped when no INA219)
        ↓ single click
+    GPS Screen  ← manual telemetry stamps live here: one click = one reading
+       ↓ advance (double click in manual mode, single otherwise)
     Sleep Screen
        ↓ single click
     Version Screen
        ↓
     Waiting
-
-    GPS leads the hold flow because hand-taken position stamps are the most
-    frequent field action on the turtle: hold, click, click, click.
     """
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
 
-    # ---- GPS SCREEN (first — reads UART only, no TCP) ----
+    # ---- BATTERY SCREEN (first) — skipped entirely if no INA219 is attached. ----
+    _gc()
+    bat_scr = get_screen("battery")
+    _ina_present = False
+    if bat_scr is not None:
+        try:
+            _bat_data = bat_scr._read()
+            _ina_present = bool(_bat_data.get("present", False))
+            if _ina_present:
+                _log_screen("battery", "voltage={:.2f}V  current={:.0f}mA".format(
+                    float(_bat_data.get("bus_v") or 0), float(_bat_data.get("current_ma") or 0)))
+            else:
+                _log_screen("battery", err="INA219 not connected — skipping to GPS")
+        except Exception:
+            _log_screen("battery")
+
+    if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
+        try:
+            a = bat_scr.show_live(btn, tick_fn=tick_fn)
+        except Exception:
+            a = None
+        if a != "single":
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ---- GPS SCREEN (reads UART only, no TCP) ----
     _gc()
     gps_scr = get_screen("gps")
     try:
@@ -1053,7 +1076,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
         _log_screen("gps")
     if gps_scr and hasattr(gps_scr, "show_live"):
         try:
-            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry)
+            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry, tick_fn=tick_fn)
         except Exception:
             a = None
     else:
@@ -1064,31 +1087,6 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
         reset_and_flush(btn, flush_ms, poll_ms)
         return
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-    # Battery screen next — skip directly to sleep if INA219 is not attached.
-    bat_scr = get_screen("battery")
-    _ina_present = False
-    if bat_scr is not None:
-        try:
-            _bat_data = bat_scr._read()
-            _ina_present = bool(_bat_data.get("present", False))
-            if _ina_present:
-                _log_screen("battery", "voltage={:.2f}V  current={:.0f}mA".format(
-                    float(_bat_data.get("bus_v") or 0), float(_bat_data.get("current_ma") or 0)))
-            else:
-                _log_screen("battery", err="INA219 not connected — going to sleep")
-        except Exception:
-            _log_screen("battery")
-
-    if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
-        try:
-            a = bat_scr.show_live(btn)
-        except Exception:
-            a = None
-        if a != "single":
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     _log_screen("sleep")
     scr = get_screen("sleep")
@@ -1148,10 +1146,10 @@ def selfdestruct_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=N
         # Next: show(btn)
         elif hasattr(scr, "show"):
             try:
-                scr.show(btn)
+                scr.show(btn, tick_fn=tick_fn)
             except TypeError:
                 try:
-                    scr.show(btn=btn)
+                    scr.show(btn=btn, tick_fn=tick_fn)
                 except Exception:
                     pass
             except Exception:

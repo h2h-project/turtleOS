@@ -361,6 +361,85 @@ def draw_wifi9(fb, x, y, on=True, color=1):
     draw_wifi(fb, x, y, on=on, color=color)
 
 
+# ----------------------------
+# WiFi signal-strength indicator (9x6) — 4-tier version of draw_wifi().
+#
+# Same concentric-arc shape as draw_wifi(), filled from the centre dot
+# outward so strength reads at a glance:
+#   WIFI_NONE (0) : fully hollow          — reuses _WIFI_OFF_6
+#   WIFI_LOW  (1) : dot + innermost arc   filled, outer two arcs hollow
+#   WIFI_ALOT (2) : dot + inner two arcs  filled, outermost arc hollow
+#   WIFI_FULL (3) : fully filled          — reuses _WIFI_ON_6
+#
+# The top row (row 0) is always the same solid bar in both the filled and
+# hollow originals, so it stays filled at every tier.
+# ----------------------------
+
+WIFI_NONE = 0
+WIFI_LOW  = 1
+WIFI_ALOT = 2
+WIFI_FULL = 3
+
+_WIFI_LOW_6 = [
+    "111111111",
+    "100000001",
+    "010000010",
+    "001111100",
+    "000111000",
+    "000010000",
+]
+
+_WIFI_ALOT_6 = [
+    "111111111",
+    "100000001",
+    "011111110",
+    "001111100",
+    "000111000",
+    "000010000",
+]
+
+_WIFI_SIGNAL_ROWS = {
+    WIFI_NONE: _WIFI_OFF_6,
+    WIFI_LOW:  _WIFI_LOW_6,
+    WIFI_ALOT: _WIFI_ALOT_6,
+    WIFI_FULL: _WIFI_ON_6,
+}
+
+
+def draw_wifi_signal(fb, x, y, level=WIFI_FULL, color=1):
+    """
+    Draw the 4-tier WiFi signal-strength indicator at (x, y). Size: 9x6.
+    level: WIFI_NONE (0) .. WIFI_FULL (3), see tier table above.
+    """
+    rows = _WIFI_SIGNAL_ROWS.get(int(level), _WIFI_OFF_6)
+    draw_bitmap_rows(fb, x, y, rows, c=color)
+
+
+def wifi_level_from_rssi(rssi):
+    """
+    Map an RSSI reading (dBm, e.g. from WiFiManager.rssi()) to a
+    WIFI_NONE..WIFI_FULL tier for draw_wifi_signal().
+
+    rssi is None (not connected, or hardware doesn't report RSSI) -> WIFI_NONE.
+    Thresholds follow the common informal RSSI bands for WiFi (dBm, less
+    negative = stronger): >= -60 excellent, -60..-70 good, -70..-80 weak,
+    < -80 very weak / unusable.
+    """
+    if rssi is None:
+        return WIFI_NONE
+    try:
+        rssi = int(rssi)
+    except Exception:
+        return WIFI_NONE
+    if rssi >= -60:
+        return WIFI_FULL
+    if rssi >= -70:
+        return WIFI_ALOT
+    if rssi >= -80:
+        return WIFI_LOW
+    return WIFI_NONE
+
+
 #
 # _GPS_6 = [
 #     "1111" "0" "1110" "0" "1111",

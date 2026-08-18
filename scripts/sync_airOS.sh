@@ -265,6 +265,11 @@ cat <<'BANNER'
                                  |___|
 BANNER
 echo
+echo "               A I R O S   V E R S I O N   U P D A T E R"
+echo
+echo "This is the Synker — it uploads new firmware to an airOS device you"
+echo "already installed. First-time setup lives in install_airOS.sh instead."
+echo
 echo "Uploads the air-quality-only XIAO ESP32-S3 build:"
 echo "  Included: air quality screens, connectivity, GPS (optional)."
 echo "  Excluded: Pico HAL, Pico-only override sources."
@@ -305,17 +310,19 @@ else
   echo
   echo "What would you like to do?  (Hit return for option 1)"
   echo "  1. Reboot the device and see the full boot log.  [default]"
-  echo "  2. Do a quick airBuddy sync"
-  echo "  3. Do a more in depth sync with full options"
+  echo "  2. Sync only the config file"
+  echo "  3. Do a quick sync — for any changes to the OS"
+  echo "  4. Do a more in depth sync with full options"
   echo
   while true; do
-    read -r -p "Enter 1, 2, or 3: " reply
+    read -r -p "Enter 1, 2, 3, or 4: " reply
     reply="${reply:-1}"
     case "$reply" in
       1) ACTION="reboot"; break ;;
-      2) ACTION="quick";  break ;;
-      3) ACTION="full";   break ;;
-      *) echo "  (Please enter 1, 2, or 3.)" ;;
+      2) ACTION="config"; break ;;
+      3) ACTION="quick";  break ;;
+      4) ACTION="full";   break ;;
+      *) echo "  (Please enter 1, 2, 3, or 4.)" ;;
     esac
   done
 fi
@@ -325,12 +332,23 @@ fi
 # ============================================================
 
 if [[ "$ACTION" == "reboot" ]]; then
+  open_repl
+  exit 0
+fi
+
+# ============================================================
+# Option 2 — Sync only the config file
+# ============================================================
+
+if [[ "$ACTION" == "config" ]]; then
+  msg "Uploading config.json only"
+  "${MPREMOTE_CMD[@]}" fs cp "$SCRIPTS_DIR/airbuddy_config.json" :config.json \
+    || die "Config upload failed. Try reconnecting the board and running again."
+  echo "Config: scripts/airbuddy_config.json → config.json"
   echo
-  echo "  Rebooting device — watch for the boot log below."
-  echo "  Press Ctrl-] to exit back to the shell."
-  echo
-  "${MPREMOTE_CMD[@]}" reset repl
-  echo
+  echo "  Done!  config.json updated."
+
+  open_repl
   exit 0
 fi
 
@@ -366,14 +384,12 @@ cp "$SCRIPTS_DIR/airbuddy_config.json" "$STAGE_DIR/config.json"
 echo "Config: scripts/airbuddy_config.json → config.json"
 
 # ============================================================
-# Option 2 — Quick sync
+# Option 3 — Quick sync (any changes to the OS)
 # ============================================================
 
 if [[ "$ACTION" == "quick" ]]; then
   do_upload_sync
 
-  msg "Flash usage (after sync)"
-  show_flash_usage
   echo
   echo "  Done!  airOS is installed."
 
@@ -382,7 +398,7 @@ if [[ "$ACTION" == "quick" ]]; then
 fi
 
 # ============================================================
-# Option 3 / --fresh — Full sync with options
+# Option 4 / --fresh — Full sync with options
 # ============================================================
 
 msg "Flash usage (before sync)"

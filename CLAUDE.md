@@ -118,8 +118,12 @@ device/               ← everything deployed to the microcontroller
 
 docs/                 ← development notes
 scripts/              ← host-side deploy helpers
-  ├── xiao_synker.sh  ← primary deploy script for XIAO ESP32-S3
-  └── xiao_config.json ← base config installed by xiao_synker.sh
+  ├── install_turtleOS.sh ← first-time setup: flash + configure + upload turtleOS (curl one-liner)
+  ├── install_airOS.sh    ← first-time setup: flash + configure + upload airOS (curl one-liner)
+  ├── sync_turtleOS.sh    ← Synker: re-upload turtleOS firmware to an already-installed device
+  ├── sync_airOS.sh       ← Synker: re-upload airOS firmware to an already-installed device
+  ├── xiao_config.json    ← base config installed by sync_turtleOS.sh
+  └── airbuddy_config.json ← base config installed by sync_airOS.sh
 tests/                ← hardware/integration scripts (not unit tests)
 backups/              ← archived experiment files
 ```
@@ -135,7 +139,7 @@ MicroPython runs `boot.py` then `main.py` automatically on power-on.
 - On ESP32 only: calls `esp.osdebug(None)` to suppress C-level log noise.
 
 ### Stage 2 — `main.py` (boot pipeline)
-Six sequential steps run inside an animated `Booter` progress bar on the OLED. Each step holds for 500 ms so errors are readable:
+Sequential steps run inside an animated `Booter` progress bar on the OLED (`device/main.py`'s `steps` list; `Booter.boot_pipeline()` in `src/app/booter.py`). Each step's label is held on screen for `BOOT_STEP_HOLD_MS` (500 ms) before it runs. The **result** line is held afterward only if it looks like a failure (`error_hold_ms`, 700 ms) — a successful step's result is not held (`result_hold_ms=0`), so a healthy boot doesn't pay to display text nobody needs to read.
 
 | # | Step | What it does |
 |---|------|-------------|
@@ -145,9 +149,11 @@ Six sequential steps run inside an animated `Booter` progress bar on the OLED. E
 | 4 | **RTC clock** | Reads DS3231 (I2C 0x68). Syncs `machine.RTC()` to UTC. DS3231 is always kept in UTC. |
 | 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
+| 7 | **MPU-9250 / compass probe, AS5600 sailpoint** (turtle_mode) | Probes the IMU/compass and, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
+| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr` kwargs) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
 
 After the pipeline, `main.py`:
-1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`).
+1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`) — in turtle_mode this is just a blank fill, since `TurtleWaitingScreen` (built in step 8) draws the real first frame itself once `run()`'s main loop starts.
 2. Checks HAL for `btn_pin()` — if missing, shows an error and waits 30 s then auto-resets.
 3. Calls `src.app.main.run(...)`, which is the permanent event loop.
 
@@ -214,7 +220,7 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 3 s** | GPS → Battery → Sleep → Version screens | GPS → Battery → Sleep → Version screens |
+| **Hold 3 s** | Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
@@ -250,7 +256,7 @@ Single-click enters `sensor_carousel()` configured for navigation screens:
 4. **Destination** screen — active waypoint.
 
 The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
-leads the hold flow instead, so hand-taken position stamps are one hold away from
+lives in the hold flow instead, so hand-taken position stamps are one hold away from
 the waiting screen. See [Manual GPS logging](#manual-gps-logging-hold-flow).
 
 ### airOS sensor carousel (turtle_mode=false)
@@ -285,7 +291,7 @@ Waiting → Online screen
 **Key rules:**
 - Online screen leads and is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
-- The GPS screen is **not** in this carousel; it leads the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
+- The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
 
@@ -294,14 +300,15 @@ Waiting → Online screen
 ## Manual GPS logging (hold flow)
 
 `telemetry_mode: "manual"` (set on the Logging screen: off → auto → manual) turns
-the GPS screen into a field logger. It is the **first screen of the hold flow**, so
-recording a position is: hold 2 s, then click.
+the GPS screen into a field logger. The hold flow now shows Battery first (skipped
+when no INA219 is attached), so recording a position is: hold 2 s, single click past
+Battery, then click.
 
 ```
-Waiting --hold 3s--> GPS screen --double click--> Battery --> Sleep --> Version --> Waiting
-                       ↑ single click = record one reading
-                       ↑ triple click = toggle gps_enabled
-                       ↑ hold         = leave the flow
+Waiting --hold 3s--> Battery screen --single click--> GPS screen --double click--> Sleep --> Version --> Waiting
+                       (skipped if no INA219)           ↑ single click = record one reading
+                                                         ↑ triple click = toggle gps_enabled
+                                                         ↑ hold         = leave the flow
 ```
 
 In `manual` mode the GPS screen inverts the usual gestures — **single click stamps a
@@ -471,20 +478,40 @@ Call `toggle.draw()` on every `_draw()` call — it re-renders from scratch each
 
 ## Deploying to the XIAO ESP32-S3
 
-The primary deploy script is `scripts/xiao_synker.sh`. It stages a XIAO-only copy (excludes Pico HAL and Pico-only overrides), then either hard-resets or syncs the board.
+There are two pairs of scripts, split by first-time setup vs. later updates — both pairs split again by mode (turtleOS vs. airOS):
+
+| | First install (flash + configure) | Update (re-upload firmware) |
+|---|---|---|
+| turtleOS | `scripts/install_turtleOS.sh` | `scripts/sync_turtleOS.sh` |
+| airOS | `scripts/install_airOS.sh` | `scripts/sync_airOS.sh` |
+
+**Installers** (`install_turtleOS.sh` / `install_airOS.sh`) are meant to be run once, straight from GitHub, before the repo is even cloned locally — they clone the repo themselves, optionally flash MicroPython via `esptool`, interactively build `config.json` from prompts, and upload. Use **process substitution**, not a pipe:
 
 ```bash
-# Interactive mode (prompts for hard reset vs sync)
-./scripts/xiao_synker.sh
-
-# Non-interactive hard reset (wipe and re-upload)
-./scripts/xiao_synker.sh --fresh
-
-# Specify port explicitly
-./scripts/xiao_synker.sh --port /dev/cu.usbmodem141301
+bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/install_turtleOS.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/install_airOS.sh)
 ```
 
-The script also offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
+Do **not** run these as `curl -sSL ... | bash`. Both scripts detect a non-interactive stdin and reattach it to `/dev/tty` (`exec < /dev/tty`) so `read` prompts still work when piped from `curl` — but that `exec` reassigns the shell's fd 0, which in a `curl | bash` pipeline *is* the read end of curl's own pipe. Severing it mid-script makes curl fail with `curl: (23) Failure writing output to destination` partway through. Process substitution (`bash <(curl ...)`) feeds the script through a separate fd, so `exec < /dev/tty` only ever touches keyboard input and doesn't disturb curl.
+
+**Synkers** (`sync_turtleOS.sh` / `sync_airOS.sh`, the "Version Updater" scripts) are for a device that's already been through the installer once. Run locally from a repo clone; they stage a XIAO-only copy (excludes Pico HAL and Pico-only overrides) and offer a menu:
+
+```bash
+# Interactive mode — menu: 1) reboot + watch boot log via REPL, 2) config.json only,
+# 3) quick sync (any OS changes), 4) full sync with options
+./scripts/sync_turtleOS.sh
+./scripts/sync_airOS.sh
+
+# Non-interactive hard reset (wipe and re-upload) — skips the menu, goes straight to option 4's reset path
+./scripts/sync_turtleOS.sh --fresh
+
+# Specify port explicitly
+./scripts/sync_turtleOS.sh --port /dev/cu.usbmodem141301
+```
+
+Option 1 (and the end of options 2/3/4) opens a REPL via `open_repl()` rather than forcing a hardware reset — pressing Ctrl-D inside the REPL triggers a *soft* reset (prints the full boot log) without dropping the USB serial connection. Don't chain `mpremote ... reset repl`: `reset` calls `machine.reset()`, a full chip reset that can drop/re-enumerate the XIAO's native USB port out from under the subsequent `repl` command.
+
+Option 2 uploads only `config.json` (from `xiao_config.json` / `airbuddy_config.json`) — no firmware staging, no flash-usage report. Option 3 (quick sync) re-uploads the full firmware for any OS code change, also without a flash-usage report. Only option 4 (full sync, or `--fresh`) reports flash usage before/after and offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
 
 **Manual mpremote operations:**
 ```bash
@@ -622,4 +649,5 @@ The GPS UART is on `TX=43, RX=44` (D6/D7), which are **also the ESP32-S3's defau
 | Air sensor + reading | `device/src/sensors/air.py` |
 | GPS parser | `device/src/sensors/ublox6gps.py` |
 | HTTP client | `device/src/lib/urequests.py` |
-| XIAO deploy script | `scripts/xiao_synker.sh` |
+| XIAO installer scripts | `scripts/install_turtleOS.sh`, `scripts/install_airOS.sh` |
+| XIAO update (Synker) scripts | `scripts/sync_turtleOS.sh`, `scripts/sync_airOS.sh` |

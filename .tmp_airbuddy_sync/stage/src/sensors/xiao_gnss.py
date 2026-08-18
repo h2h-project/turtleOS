@@ -96,10 +96,10 @@ class GnssModule:
     # -------------------------------------------------
     def configure_mode(self, turtle_mode=False, module="l76k"):
         """
-        Configure NMEA output and update rate for the active mode.
+        Configure NMEA output and update rate: 1 Hz, RMC + GGA only.
 
-        turtle_mode=True  → navigation: 5 Hz, GGA+GSA+GSV+RMC+VTG
-        turtle_mode=False → airOS static: 1 Hz, GGA+RMC only
+        Both modes use the same config. turtle_mode is kept in the signature
+        for callers but no longer changes anything — see _configure_l76k.
 
         module="l76k"  → Seeed GNSS Add-on / Quectel L76K (PMTK ASCII)
         module="neo6m" → u-blox NEO-6M (UBX binary) — LEGACY-NEO6M
@@ -112,16 +112,30 @@ class GnssModule:
             self._configure_l76k(turtle_mode)
 
     def _configure_l76k(self, turtle_mode):
-        """Configure Quectel L76K via PMTK ASCII sentences."""
-        if turtle_mode:
-            # Navigation: GGA + GSA + GSV + RMC + VTG enabled, GLL off, 5 Hz
-            # PMTK314 field order: GLL, RMC, VTG, GGA, GSA, GSV, ...
-            sentences = "PMTK314,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0"
-            rate = "PMTK220,200"
-        else:
-            # airOS static: GGA + RMC only, 1 Hz
-            sentences = "PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
-            rate = "PMTK220,1000"
+        """Configure Quectel L76K via PMTK ASCII sentences.
+
+        RMC + GGA at 1 Hz, for both turtle and airOS modes.
+
+        Nothing in the tree parses GSA, GSV, VTG or GLL: position and fix
+        validity come from RMC, fix quality and satellite count from GGA
+        fields 6 and 7. RMC + GGA is ~142 bytes per epoch; the full set with
+        GSV was ~700-830 and at 5 Hz needed ~4x the 960 bytes/s a 9600 baud
+        link can carry. The module's TX FIFO never drained, so every sentence
+        read was the oldest one queued and staleness grew without bound —
+        that, not the fix rate, was the multi-second lag on manual stamps.
+
+        1 Hz is also enough on the merits: heading comes from the QMC5883L
+        (see nav/heading.py), the luff sweep runs off the AS5600, and at
+        turtle speeds (~0.5-1 m/s) a second of travel is well inside the
+        receiver's ~2.5 m CEP. Raising the rate only resamples that noise.
+
+        If GPS course-over-ground is ever needed (e.g. damping magnetometer
+        drift for the planned ICM-20948), raise the baud with PMTK251 first —
+        do not go back to 5 Hz at 9600.
+        """
+        # PMTK314 field order: GLL, RMC, VTG, GGA, GSA, GSV, ...
+        sentences = "PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+        rate = "PMTK220,1000"
 
         self.uart.write(_pmtk_sentence(sentences).encode())
         time.sleep_ms(20)
@@ -130,15 +144,15 @@ class GnssModule:
 
     # ---- LEGACY-NEO6M: delete this method when NEO-6M support is dropped ----
     def _configure_neo6m_ubx(self, turtle_mode):
-        """Configure u-blox NEO-6M via proprietary UBX binary protocol."""
+        """Configure u-blox NEO-6M via proprietary UBX binary protocol.
+
+        GGA + RMC at 1 Hz, matching _configure_l76k — same 9600 baud budget,
+        same reasoning.
+        """
         # NMEA sentence IDs (class 0xF0):
         #   GGA=0x00, GLL=0x01, GSA=0x02, GSV=0x03, RMC=0x04, VTG=0x05
-        if turtle_mode:
-            rates = {0x00: 1, 0x01: 0, 0x02: 1, 0x03: 1, 0x04: 1, 0x05: 1}
-            meas_lo, meas_hi = 0xC8, 0x00  # 200 ms = 5 Hz
-        else:
-            rates = {0x00: 1, 0x01: 0, 0x02: 0, 0x03: 0, 0x04: 1, 0x05: 0}
-            meas_lo, meas_hi = 0xE8, 0x03  # 1000 ms = 1 Hz
+        rates = {0x00: 1, 0x01: 0, 0x02: 0, 0x03: 0, 0x04: 1, 0x05: 0}
+        meas_lo, meas_hi = 0xE8, 0x03  # 1000 ms = 1 Hz
 
         for msg_id, rate in rates.items():
             pl = bytes([0xF0, msg_id, 0x00, rate, 0x00, 0x00, 0x00, 0x00])

@@ -135,7 +135,7 @@ class BatteryScreen:
     # ----------------------------------------------------------
     # Live loop
     # ----------------------------------------------------------
-    def show_live(self, btn):
+    def show_live(self, btn, tick_fn=None):
         try:
             btn.reset()
         except Exception:
@@ -145,8 +145,19 @@ class BatteryScreen:
         self._draw(data)
 
         _next = time.ticks_add(time.ticks_ms(), self._refresh_ms)
+        _tick_next = time.ticks_ms()
+        _tick_every = 500
 
         while True:
+            now = time.ticks_ms()
+
+            if tick_fn is not None and time.ticks_diff(now, _tick_next) >= 0:
+                try:
+                    tick_fn()
+                except Exception:
+                    pass
+                _tick_next = time.ticks_add(now, _tick_every)
+
             try:
                 action = btn.poll_action()
             except Exception:
@@ -155,7 +166,6 @@ class BatteryScreen:
             if action == "single":
                 return "single"
 
-            now = time.ticks_ms()
             if time.ticks_diff(now, _next) >= 0:
                 data  = self._read()
                 self._draw(data)

@@ -14,7 +14,7 @@ class CompassScreen:
     def __init__(self, oled, i2c=None, mag=None, offset_deg=0):
         self.oled = oled
         self._i2c = i2c
-        self._mag = mag        # pre-shared HMC5883L instance (optional)
+        self._mag = mag        # pre-shared MPU9250 instance (optional)
         self._mag_probed = mag is not None  # skip probe if a sensor was injected
         self._offset_deg = float(offset_deg)
         self._refresh_ms = 200
@@ -40,20 +40,12 @@ class CompassScreen:
             self._i2c = _init_i2c()
         except Exception:
             pass
-        # Try QMC5883L (0x0D) first — the common GY-271 clone
+        # MPU-9250 (0x69) with the AK8963 magnetometer behind I2C bypass (0x0C).
+        # WHO_AM_I can succeed while bypass fails, so both must check out.
         try:
-            from src.drivers.hmc5883l_qmc5883l import QMC5883L
-            m = QMC5883L(self._i2c)
-            if m.is_present:
-                self._mag = m
-                return self._mag
-        except Exception:
-            pass
-        # Fall back to genuine HMC5883L (0x1E)
-        try:
-            from src.drivers.hmc5883l_qmc5883l import HMC5883L
-            m = HMC5883L(self._i2c)
-            if m.is_present:
+            from src.drivers.mpu9250 import MPU9250
+            m = MPU9250(self._i2c)
+            if m.is_present and m.mag is not None:
                 self._mag = m
         except Exception:
             pass

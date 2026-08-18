@@ -83,7 +83,7 @@ class SelfDestructScreen:
 
         fb.show()
 
-    def show(self, btn):
+    def show(self, btn, tick_fn=None):
         btn.reset()
         o = self.oled
         fb = o.oled
@@ -185,6 +185,8 @@ class SelfDestructScreen:
 
         # Wait for click to exit
         btn.reset()
+        _tick_next = time.ticks_ms()
+        _tick_every = 500
         while True:
             a = None
             try:
@@ -194,4 +196,14 @@ class SelfDestructScreen:
 
             if a in ("single", "double", "triple", "quad", "debug"):
                 return "next"
+
+            if tick_fn is not None:
+                now = time.ticks_ms()
+                if time.ticks_diff(now, _tick_next) >= 0:
+                    try:
+                        tick_fn()
+                    except Exception:
+                        pass
+                    _tick_next = time.ticks_add(now, _tick_every)
+
             time.sleep_ms(25)

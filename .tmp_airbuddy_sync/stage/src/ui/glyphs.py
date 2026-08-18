@@ -489,6 +489,51 @@ def draw_battery(fb, x, y, color=1, no_battery=False):
 
 
 # ----------------------------
+# Battery indicator with charge-level fill (12x7) — same footprint/outline
+# as draw_battery(), with up to 5 thin vertical bars filled inside the body
+# to show charge level. Bars sit at the interior columns x+1,3,5,7,9 (1px
+# wide, 1px gap), each spanning the 5 interior rows y+1..y+5.
+# ----------------------------
+
+_BATT_LEVEL_BAR_XOFFS = (1, 3, 5, 7, 9)
+
+
+def draw_battery_level(fb, x, y, bands_filled=5, color=1):
+    """
+    Draw the 12x7 battery outline with `bands_filled` (0-5) thin vertical
+    bars filled inside, left to right. bands_filled=0 draws the empty
+    outline only (used for the low-battery blink).
+    """
+    x = int(x); y = int(y)
+    bands_filled = max(0, min(5, int(bands_filled)))
+    draw_bitmap_rows(fb, x, y, _BATT_EMPTY_7, c=color)
+    for i in range(bands_filled):
+        _vline(fb, x + _BATT_LEVEL_BAR_XOFFS[i], y + 1, 5, color)
+
+
+def battery_display_bands(volts, now_ms=None):
+    """
+    Map bus voltage to (bands_filled, status) for the compact 12x7 level
+    glyph. At "critical" charge, bands_filled blinks between 0 and 1 on a
+    1 Hz cadence (500 ms empty / 500 ms showing the single critical bar)
+    so a near-dead battery draws attention instead of sitting static.
+    """
+    status = battery_status(volts)
+    bands = _BATTERY_LEVEL_BANDS.get(status, 0)
+
+    if status == "critical":
+        try:
+            if now_ms is None:
+                now_ms = time.ticks_ms()
+        except Exception:
+            now_ms = int(time.time() * 1000)
+        if (now_ms % 1000) < 500:
+            bands = 0
+
+    return bands, status
+
+
+# ----------------------------
 # API indicator (7x6)  <-- matches WiFi/GPS height
 #
 # Visual Logic:

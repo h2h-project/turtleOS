@@ -236,7 +236,7 @@ class NavController:
         out = self._pid.update(error, dt_s)
 
         # Placeholder actuation around servo neutral; encoder↔servo trim
-        # calibration is a pending_nav_dev.md task.
+        # calibration is a navigation_roadmap.md task.
         self._set_sail(90.0 + out)
 
     def _battery_pct(self):

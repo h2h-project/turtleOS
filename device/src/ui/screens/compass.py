@@ -47,6 +47,18 @@ class CompassScreen:
             m = MPU9250(self._i2c)
             if m.is_present and m.mag is not None:
                 self._mag = m
+                return self._mag
+        except Exception:
+            pass
+        # MPU-9250 units on hand turned out to be duds — fall back to the
+        # QMC5883L/HMC5883L (GY-271 clone, 0x0D/0x1E), the compass actually in service.
+        try:
+            from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
+            m = QMC5883L(self._i2c)
+            if not m.is_present:
+                m = HMC5883L(self._i2c)
+            if m.is_present:
+                self._mag = m
         except Exception:
             pass
         return self._mag

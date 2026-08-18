@@ -71,8 +71,8 @@ I2C_ADDR_AHT2X   = 0x38  # AHT10/AHT20/AHT21
 I2C_ADDR_SCD41   = 0x62  # SCD40/SCD41 true CO2 sensor
 I2C_ADDR_BME280     = 0x76  # BME280 temp + humidity + pressure (SDO=LOW)
 I2C_ADDR_BME280_ALT = 0x77  # BME280 alternate address (SDO=HIGH)
-I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone) — retired from boot path, see mpu9250.py
-I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine) — retired from boot path, see mpu9250.py
+I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone) — compass fallback, see step_mpu9250()
+I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine) — compass fallback, see step_mpu9250()
 I2C_ADDR_AS5600  = 0x36  # AS5600 magnetic angle sensor (sail position)
 I2C_ADDR_MPU9250 = 0x69  # MPU-9250 IMU (AD0 strapped high — 0x68 is DS3231's)
 I2C_ADDR_AK8963  = 0x0C  # AK8963 magnetometer, visible once MPU-9250 bypass is enabled
@@ -296,6 +296,7 @@ def api_device_lookup(cfg):
         print("API lookup: HTTP", code)
 
         if code != 200:
+            info["http_status"] = code
             return False, "HTTP {}".format(code if code is not None else "?"), info
 
         try:
@@ -439,6 +440,7 @@ def gps_boot_check(cfg):
 
         # Presence-only check: just wait for any bytes on the UART — no read needed.
         # Max 5 seconds. Avoids uart.read(n) blocking on inter-character timeouts.
+        # Animates the shared per-step ticker (see step_wifi) from this poll loop.
         start = time.ticks_ms()
         seen = False
         while time.ticks_diff(time.ticks_ms(), start) < 5000:
@@ -448,6 +450,8 @@ def gps_boot_check(cfg):
                     break
             except Exception:
                 pass
+            if booter and booter.step_ticker:
+                booter.step_ticker.tick()
             time.sleep_ms(100)
 
         info["detected"] = bool(seen)
@@ -984,18 +988,11 @@ def step_wifi():
         except Exception:
             pass
 
-        # Dot ticker: updates OLED footer with "WiFi connect...." on each
-        # connection poll (once per second on ESP32).
-        # WiFi is step 1 of 6, so p_prev = 1/6 ≈ 0.167.
-        _dots = [0]
-
+        # Animate the shared per-step ticker (boot_pipeline created it at
+        # zero dots before calling this function) from the connect poll loop.
         def _wifi_tick():
-            _dots[0] += 1
-            if booter:
-                try:
-                    booter._draw_frame(p=1.0 / 6.0, footer="WiFi connect" + "." * _dots[0])
-                except Exception:
-                    pass
+            if booter and booter.step_ticker:
+                booter.step_ticker.tick()
 
         ok, ip, status = wifi.connect(
             cfg.get("wifi_ssid", ""),
@@ -1058,6 +1055,9 @@ def step_api():
             pass
         return True, "SKIPPED (No WiFi)"
 
+    # A single blocking HTTP call has no loop to tick the shared per-step
+    # ticker from, so this stays at the zero dots boot_pipeline drew before
+    # calling this function — an honest "no progress to show", not a fake one.
     ok, detail, info = api_device_lookup(cfg)
     api_boot = info
 
@@ -1072,6 +1072,9 @@ def step_api():
 
 def step_rtc():
     global rtc_info
+    # Same as step_api: the DS3231 read (and the rare NTP fallback below) is
+    # a single blocking call with no loop to tick the shared ticker from, so
+    # this stays at the zero dots boot_pipeline already drew for this step.
     ok, detail, info = sync_rtc_from_ds3231()
     rtc_info = info
 
@@ -1276,54 +1279,161 @@ def step_as5600():
 
 
 def step_mpu9250():
-    """Probe the MPU-9250 IMU (0x69) and confirm AK8963 bypass (0x0C)."""
+    """Probe the MPU-9250 IMU (0x69) and confirm AK8963 bypass (0x0C).
+    Falls back to the QMC5883L/HMC5883L (GY-271, 0x0D/0x1E) compass when the
+    MPU-9250 or its AK8963 bypass isn't present — see compass.py / nav/heading.py."""
     addrs = i2c_scan()
-    if I2C_ADDR_MPU9250 not in addrs:
-        return True, "NOT FOUND"
+
+    if I2C_ADDR_MPU9250 in addrs:
+        try:
+            _gc()
+            from src.drivers.mpu9250 import MPU9250
+            imu = MPU9250(init_i2c())
+            if imu.is_present and imu.mag is not None:
+                return True, "OK - gyro/accel + AK8963 (0x0C)"
+        except Exception:
+            pass
+
     try:
         _gc()
-        from src.drivers.mpu9250 import MPU9250
-        imu = MPU9250(init_i2c())
-        if not imu.is_present:
-            return True, "init failed"
-        if imu.mag is None:
-            return True, "OK gyro/accel - AK8963 bypass FAILED"
-        return True, "OK - gyro/accel + AK8963 (0x0C)"
-    except Exception:
-        return True, "ERROR"
-
-
-def step_servo():
-    """
-    Probe the servo output.  PWM init always succeeds on ESP32-S3 regardless
-    of physical wiring, so the servo_present config flag is authoritative.
-    """
-    pin = None
-    try:
-        from src.hal.board import servo_pin as _sp
-        pin = _sp()
+        from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
+        i2c = init_i2c()
+        if I2C_ADDR_QMC5883 in addrs:
+            m = QMC5883L(i2c)
+            if m.is_present:
+                return True, "OK - QMC5883L fallback (0x0D)"
+        if I2C_ADDR_HMC5883 in addrs:
+            m = HMC5883L(i2c)
+            if m.is_present:
+                return True, "OK - HMC5883L fallback (0x1E)"
     except Exception:
         pass
 
-    if pin is None:
-        print("[BOOT] Servo: no servo pin on this board")
-        return True, "No servo pin"
+    return True, "NOT FOUND"
 
-    is_present = bool(cfg and cfg.get("servo_present", False))
-    if not is_present:
-        print("[BOOT] Servo: not wired (servo_present=false in config)")
-        return True, "Not wired"
+
+_rt_i2c = None
+_rt_ina = None
+_rt_gps = None
+_rt_wifi_mgr = None
+_rt_nav = None
+_rt_turtle_scr = None
+
+
+def _rt_mission_name():
+    # Mirrors src/app/main.py's _mission_name() — kept here too since
+    # TurtleWaitingScreen is now built during boot, before run() exists.
+    try:
+        if isinstance(api_boot, dict):
+            sn = api_boot.get("mission_short_name") or api_boot.get("mission_full_name")
+            if sn:
+                return sn
+    except Exception:
+        pass
+    return None
+
+
+def step_init_runtime():
+    """
+    Build the runtime objects (I2C, battery monitor, GPS session, WiFi
+    manager, nav controller, turtle waiting screen) that src.app.main.run()
+    used to construct silently AFTER the boot screen had already gone
+    blank — leaving several seconds of dead screen between "Locked &
+    loaded!" and the first drawn frame. Building them here keeps that work
+    visible under the boot logo/progress bar instead. run() uses whatever
+    was built here and only falls back to building it itself if a piece is
+    missing (e.g. this step was skipped on Pico, or something here failed).
+    """
+    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr
+
+    if _is_pico:
+        # Pico's tight heap doesn't have room for a second copy of this setup
+        # living in device/main.py's globals *and* run()'s locals — leave the
+        # Pico path exactly as it was.
+        return True, "SKIPPED (pico)"
+
+    if not cfg:
+        return True, "SKIPPED (No config)"
+
+    _gc()
 
     try:
-        _gc()
-        from src.drivers.servo import Servo
-        s = Servo(pin)
-        s.deinit()
-        print("[BOOT] Servo: OK GPIO{}".format(pin))
-        return True, "Servo OK (GPIO{})".format(pin)
+        _rt_i2c = init_i2c()
     except Exception as e:
-        print("[BOOT] Servo: init failed:", repr(e))
-        return True, "Servo init FAIL"
+        print("[NAV] i2c init failed:", repr(e))
+        _rt_i2c = None
+
+    try:
+        from src.drivers.ina219 import INA219
+        _ina = INA219(_rt_i2c, auto_init=True)
+        _rt_ina = _ina if _ina.is_present else None
+    except Exception:
+        _rt_ina = None
+
+    if cfg.get("gps_enabled", False):
+        try:
+            from src.sensors.xiao_gnss import GnssModule
+            _rt_gps = GnssModule(uart_id=GPS_UART_ID, baud=GPS_BAUD,
+                                  tx_pin=GPS_TX_PIN, rx_pin=GPS_RX_PIN)
+            _rt_gps.configure_mode(cfg.get("turtle_mode", False),
+                                    module=cfg.get("gps_module", "l76k"))
+        except Exception as e:
+            print("[NAV] gps init failed:", repr(e))
+            _rt_gps = None
+
+    # Same ESP32 gating run() used to apply: only re-enter the WiFi driver
+    # here if boot's own connection attempt actually succeeded, to avoid
+    # RTCWDT risk from broken driver state.
+    _boot_wifi_ok = isinstance(wifi_boot, dict) and wifi_boot.get("ok")
+    _wifi_manager_ok = _boot_wifi_ok if _is_esp32 else True
+    if cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+        try:
+            from src.net.net_caps import wifi_supported
+            if wifi_supported():
+                from src.net.wifi_manager import WiFiManager
+                _rt_wifi_mgr = WiFiManager()
+        except Exception as e:
+            print("[NAV] wifi manager init failed:", repr(e))
+            _rt_wifi_mgr = None
+
+    if not cfg.get("turtle_mode", False):
+        _gc()
+        return True, "OK"
+
+    nav_servo = None
+    if cfg.get("servo_present", False):
+        try:
+            from src.hal.board import servo_pin as _servo_pin
+            from src.drivers.servo import Servo
+            _sp = _servo_pin()
+            if _sp is not None:
+                nav_servo = Servo(_sp)
+        except Exception as e:
+            print("[NAV] servo init failed:", repr(e))
+
+    try:
+        from src.nav.controller import NavController
+        _rt_nav = NavController(cfg, i2c=_rt_i2c, gps=_rt_gps,
+                                 servo=nav_servo, battery=_rt_ina)
+    except Exception as e:
+        print("[NAV] controller init failed:", repr(e))
+        _rt_nav = None
+
+    if oled is not None:
+        try:
+            from src.ui.screens.turtle_waiting import TurtleWaitingScreen
+            _rt_turtle_scr = TurtleWaitingScreen(
+                oled,
+                nav_get=lambda: _rt_nav,
+                mission_get=_rt_mission_name,
+                battery_get=lambda: (_rt_ina.bus_voltage_v() if _rt_ina else None),
+            )
+        except Exception as e:
+            print("[NAV] turtle_waiting init failed:", repr(e))
+            _rt_turtle_scr = None
+
+    _gc()
+    return True, ("OK" if _rt_nav else "NAV FAIL")
 
 
 # Keep the Pin object alive in a module-level global so GC cannot finalize it
@@ -1399,21 +1509,32 @@ def step_led():
 #   - WiFi early (ESP32 heap stability), API right after WiFi.
 _turtle_boot = bool((_early_cfg or {}).get("turtle_mode", False))
 
+# Labels intentionally carry no trailing "...": boot_pipeline gives every
+# step its own DotTicker (starts at zero dots) that ticks only if the step's
+# fn() has a poll loop to drive it. A hardcoded "..." would misrepresent a
+# step that finished before a single dot could show.
 steps = [
-    ("LED check...", step_led),
-    ("Loading config...", step_load_config),
+    ("LED check", step_led),
+    ("Loading config", step_load_config),
     ("WiFi connect", step_wifi),
-    ("Device API check...", step_api),
-    ("RTC clock...", step_rtc),
-    ("Warming sensors...", step_warmup),
-    ("GPS check...", step_gps),
-    ("MPU-9250 IMU...", step_mpu9250),  # imports MPU9250 driver if found; wakes chip + enables AK8963 bypass
+    ("Device API check", step_api),
+    ("RTC clock", step_rtc),
+    ("Warming sensors", step_warmup),
+    ("GPS check", step_gps),
+    ("MPU-9250 IMU", step_mpu9250),  # imports MPU9250 driver if found; wakes chip + enables AK8963 bypass
 ]
 if _turtle_boot:
     steps += [
-        ("AS5600 sailpoint...", step_as5600),  # imports AS5600 driver if found on I2C
-        ("Servo check...", step_servo),        # imports Servo driver if servo_present=true
+        ("AS5600 sailpoint", step_as5600),  # imports AS5600 driver if found on I2C
     ]
+
+# Last step: build the runtime objects run() needs (I2C, battery, GPS
+# session, WiFi manager, nav controller, turtle waiting screen) here, under
+# the boot bar, instead of leaving them to run() to build silently behind a
+# blank screen. Label reflects what's actually happening in each mode.
+steps += [
+    ("Initiating nav" if _turtle_boot else "Finishing boot", step_init_runtime),
+]
 
 if booter:
     try:
@@ -1460,6 +1581,23 @@ _gc()
 # Show waiting immediately after boot (single render)
 go_waiting(oled, wifi_boot=wifi_boot, api_boot=api_boot, gps_boot=gps_boot)
 
+# WiFi connected but the device API rejected the id/key pair — surface this
+# instead of leaving the user staring at a waiting screen that just never
+# shows a connection, with no clue why (e.g. a mistyped device_id).
+if (
+    oled is not None
+    and isinstance(wifi_boot, dict) and wifi_boot.get("ok")
+    and isinstance(api_boot, dict) and not api_boot.get("ok")
+    and api_boot.get("http_status") in (401, 403)
+):
+    try:
+        from src.ui.screens.frowny import FrownyScreen
+        FrownyScreen(oled).show(None, line1="No connection:", line2="key mismatch!")
+        time.sleep_ms(3000)
+        go_waiting(oled, wifi_boot=wifi_boot, api_boot=api_boot, gps_boot=gps_boot)
+    except Exception as e:
+        print("KEY MISMATCH screen error:", repr(e))
+
 
 # ------------------------------------------------------------
 # Preflight: Button HAL must exist (avoid crash loop)
@@ -1503,7 +1641,13 @@ if _btn_hal_ok:
             oled=oled,
             air_sensor=air,
             boot_warmup_started=True,
-            rtc_info=rtc_info
+            rtc_info=rtc_info,
+            i2c=_rt_i2c,
+            ina_dev=_rt_ina,
+            gps=_rt_gps,
+            wifi_manager=_rt_wifi_mgr,
+            nav_controller=_rt_nav,
+            turtle_waiting_scr=_rt_turtle_scr,
         )
     except Exception as e:
         # Write crash info with minimal heap — repr(e) is cheap, no traceback capture

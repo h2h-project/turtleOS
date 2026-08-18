@@ -50,6 +50,7 @@ class WiFiScreen:
 
         self._last_status = ""
         self._last_ip = ""
+        self._last_rssi = None
         self._last_refresh_ms = 0
         self._checking = False
         self._dots = 0
@@ -80,9 +81,14 @@ class WiFiScreen:
             except Exception:
                 self._last_ip = ""
             self._last_status = "Connected"
+            try:
+                self._last_rssi = self.wifi.rssi()
+            except Exception:
+                self._last_rssi = None
         else:
             self._last_status = "Not connected"
             self._last_ip = ""
+            self._last_rssi = None
 
     # ----------------------------
     # Drawing
@@ -127,6 +133,8 @@ class WiFiScreen:
             status_text = self._last_status
             if self._checking:
                 status_text = status_text + ("." * self._dots)
+            if connected and self._last_rssi is not None:
+                status_text = "%s %ddBm" % (status_text, self._last_rssi)
             o.f_med.write(status_text[:18], 0, data_y)
             if connected:
                 if self.ssid:

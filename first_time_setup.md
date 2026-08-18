@@ -165,7 +165,7 @@ When WiFi is in range, the turtle connects automatically and posts telemetry to 
 
 ## For Future Firmware Updates
 
-After the initial install, use `xiao_synker.sh` to push firmware updates to the board:
+After the initial install, use `sync_turtleOS.sh` to push firmware updates to the board:
 
 ```bash
 cd ~/Documents/HopeTurtle/turtleOS
@@ -174,13 +174,13 @@ cd ~/Documents/HopeTurtle/turtleOS
 git pull
 
 # Sync to the connected XIAO (choose hard reset or incremental sync)
-./scripts/xiao_synker.sh
+./scripts/sync_turtleOS.sh
 
 # Or force a full wipe and re-upload
-./scripts/xiao_synker.sh --fresh
+./scripts/sync_turtleOS.sh --fresh
 ```
 
-`xiao_synker.sh` preserves your `config.json` (it uses `scripts/xiao_config.json` as the base). Edit that file if you need to change settings without running the full installer again.
+`sync_turtleOS.sh` preserves your `config.json` (it uses `scripts/xiao_config.json` as the base). Edit that file if you need to change settings without running the full installer again.
 
 ---
 
@@ -188,7 +188,7 @@ git pull
 
 **Board not found by mpremote:** Check the USB cable (some cables are charge-only). Try `mpremote connect /dev/ttyUSB0 repl` with the explicit port name.
 
-**Upload fails partway through:** Run `./scripts/xiao_synker.sh --fresh` to do a clean wipe and re-upload.
+**Upload fails partway through:** Run `./scripts/sync_turtleOS.sh --fresh` to do a clean wipe and re-upload.
 
 **OLED blank after boot:** Check I2C wiring (SDA to GPIO5, SCL to GPIO6). Run the I2C scanner to confirm devices are detected:
 

@@ -537,7 +537,7 @@ class GPSScreen:
         self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
         return True
 
-    def show_live(self, gps, btn, cfg=None, telemetry=None):
+    def show_live(self, gps, btn, cfg=None, telemetry=None, tick_fn=None):
         """
         In manual telemetry mode (the field-logging layout):
           Single click : stamp and record one telemetry reading.
@@ -581,7 +581,18 @@ class GPSScreen:
 
             manual = (self._tel_mode == "manual")
 
+            _tick_next = time.ticks_ms()
+            _tick_every = 500
+
             while True:
+                now0 = time.ticks_ms()
+                if tick_fn is not None and time.ticks_diff(now0, _tick_next) >= 0:
+                    try:
+                        tick_fn()
+                    except Exception:
+                        pass
+                    _tick_next = time.ticks_add(now0, _tick_every)
+
                 try:
                     action = btn.poll_action()
                 except Exception:

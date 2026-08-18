@@ -21,7 +21,7 @@
 #
 # Known limitation: if the wind zone sits right at sail_min the calibration
 # stretch overlaps the flutter and inflates the threshold — see
-# docs/pending_nav_dev.md (sweep failure handling).
+# docs/navigation_roadmap.md (sweep failure handling).
 
 import time
 from array import array

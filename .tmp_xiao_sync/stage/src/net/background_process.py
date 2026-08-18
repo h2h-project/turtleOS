@@ -512,8 +512,9 @@ class TelemetryBackgroundProcess:
             # while WPA2 auth is in progress on this thread).
             self._set_result(wifi_ok=wifi_ok)
             try:
-                from src.ui.connection_header import set_wifi_ok
+                from src.ui.connection_header import set_wifi_ok, set_wifi_rssi
                 set_wifi_ok(wifi_ok)
+                set_wifi_rssi(self._wifi.rssi() if wifi_ok else None)
             except Exception:
                 pass
 

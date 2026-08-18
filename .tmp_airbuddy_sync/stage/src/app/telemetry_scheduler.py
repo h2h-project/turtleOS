@@ -76,6 +76,14 @@ class TelemetryScheduler:
         self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None}
         self._send_now = False
 
+        # One-shot: set by send_manual() so the next payload is flagged as a
+        # hand-taken registry stamp rather than an automatic sample.
+        self._manual_flag = False
+
+        # Inline-path WiFi retry backoff — see the reconnect call in tick().
+        self._last_wifi_attempt_ms = None
+        self._wifi_fail_streak = 0
+
         # Background process — set via set_background_process() after start-up.
         # When present, tick() hands payloads off non-blocking instead of sending inline.
         self._background_process = None
@@ -93,6 +101,27 @@ class TelemetryScheduler:
         self._send_now = True
         self._next_send_ms = time.ticks_ms()
         self._dbg_print("[ONLINE] request_now: send queued")
+
+    def send_manual(self):
+        """
+        Arm a hand-taken registry stamp. Punches through the "manual" mode gate
+        in tick() and marks the resulting payload as manual, not auto-logged.
+        """
+        self._manual_flag = True
+        self.request_now()
+
+    def manual_pending(self):
+        """
+        True while an armed manual stamp has not yet produced a payload.
+        _build_full_payload() consumes the flag only when it actually builds one,
+        so a still-set flag means no record was created (RTC not yet synced,
+        sampling in flight, or no values) — the caller must not report success.
+        """
+        return bool(self._manual_flag)
+
+    def clear_manual(self):
+        """Drop an unconsumed manual arm so it cannot leak into a later send."""
+        self._manual_flag = False
 
     @staticmethod
     def read_last_sent():
@@ -296,10 +325,17 @@ class TelemetryScheduler:
     _GPS_RELOC_THRESH = 5       # clear reference after this many consecutive all-rejected ticks
 
     def _read_gps_fix(self):
-        """Non-blocking: drain UART buffer and return (lat, lon) from the first active RMC, or (None, None)."""
+        """Non-blocking: drain the UART buffer and return (lat, lon) from the
+        newest active RMC, or (None, None).
+
+        Drains to the end rather than returning on the first RMC: if the
+        buffer ever holds more than one epoch, the first sentence is the
+        oldest position in the queue, not the current one.
+        """
         if self.gps is None:
             return None, None
         delta_rejects = 0
+        newest = None
         try:
             for _ in range(30):
                 line = self.gps.read_nmea()
@@ -317,9 +353,11 @@ class TelemetryScheduler:
                     self._last_gps_lat = lat
                     self._last_gps_lon = lon
                     self._gps_reject_streak = 0
-                    return lat, lon
+                    newest = (lat, lon)
         except Exception:
             pass
+        if newest is not None:
+            return newest
         if delta_rejects > 0:
             self._gps_reject_streak += 1
             if self._gps_reject_streak >= self._GPS_RELOC_THRESH:
@@ -526,6 +564,35 @@ class TelemetryScheduler:
         except Exception:
             return None
 
+    # Mirrors TelemetryBackgroundProcess — see the rationale there.
+    WIFI_RETRY_BASE_MS = 900000      # 15 min
+    WIFI_RETRY_CAP_MS = 43200000     # 12 h
+    WIFI_FAIL_STREAK_MAX = 6
+
+    def _may_retry_wifi(self, cfg=None):
+        """True when the inline fallback path may attempt an association again.
+
+        Honours mission_connection_mode: wifi_manual / lora never bring the
+        radio up automatically. This path has no screen wiring, so there is no
+        force override here — a deliberate reconnect goes through the
+        background process.
+        """
+        try:
+            mode = str((cfg or {}).get("mission_connection_mode", "wifi_auto") or "wifi_auto")
+        except Exception:
+            mode = "wifi_auto"
+        if mode != "wifi_auto":
+            return False
+
+        last = self._last_wifi_attempt_ms
+        if last is None:
+            return True
+        streak = min(self._wifi_fail_streak, self.WIFI_FAIL_STREAK_MAX)
+        wait = self.WIFI_RETRY_BASE_MS << streak
+        if wait > self.WIFI_RETRY_CAP_MS:
+            wait = self.WIFI_RETRY_CAP_MS
+        return time.ticks_diff(time.ticks_ms(), last) >= wait
+
     def _build_full_payload(self, cfg, rtc_dict, do_print=False):
         """Build a complete telemetry payload dict from all local sensors.
         Returns the payload dict, or None if any blocking condition is unmet.
@@ -572,7 +639,13 @@ class TelemetryScheduler:
         if batt:
             values.update(batt)
 
-        if not values:
+        # GPS is read before the "no values" gate: a hand-taken registry stamp
+        # on a turtle with no air sensor carries a position and nothing else,
+        # and that is a complete record — dropping it for having no sensor
+        # values loses exactly the reading the user asked for.
+        gps_lat, gps_lon = self._read_gps_fix()
+
+        if not values and not (self._manual_flag and gps_lat is not None):
             if do_print:
                 self._dbg_print("telemetry: skip (no values)")
             return None
@@ -582,8 +655,6 @@ class TelemetryScheduler:
             if do_print:
                 self._dbg_print("telemetry: skip (rtc not epoch) t=", recorded_at)
             return None
-
-        gps_lat, gps_lon = self._read_gps_fix()
 
         if do_print:
             self._dbg_print(
@@ -596,10 +667,15 @@ class TelemetryScheduler:
             if gps_lat is not None:
                 self._dbg_print("telemetry: gps lat=", gps_lat, "lon=", gps_lon)
 
+        # One-shot manual flag: consumed here so a later automatic send is not
+        # mislabelled as a hand-taken stamp.
+        _manual = bool(self._manual_flag)
+        self._manual_flag = False
+
         payload = {
             "recorded_at": recorded_at,
             "values": values,
-            "flags": {"auto_log": True},
+            "flags": {"auto_log": not _manual, "manual_registry": _manual},
         }
 
         # Machine state (BOOT/ACQUIRE/SAIL_NAV/ARRIVAL/SAFE) — top-level so
@@ -620,7 +696,23 @@ class TelemetryScheduler:
         return payload
 
     def tick(self, cfg, rtc_dict=None):
-        if not cfg or not cfg.get("telemetry_enabled", True):
+        if not cfg:
+            return
+
+        # telemetry_mode: "auto" posts on the interval; "manual" posts only when
+        # request_now()/send_manual() has armed _send_now; "off" never posts.
+        try:
+            mode = str(cfg.get("telemetry_mode", "auto") or "auto").strip().lower()
+        except Exception:
+            mode = "auto"
+        if mode not in ("off", "auto", "manual"):
+            mode = "auto"
+
+        if mode == "off":
+            self._send_now = False
+            self._manual_flag = False
+            return
+        if mode != "auto" and not self._send_now:
             return
 
         now = time.ticks_ms()
@@ -670,8 +762,21 @@ class TelemetryScheduler:
 
             if do_print:
                 self._dbg_print("telemetry: handing off to background_process")
-            self._background_process.put_payload(payload, cfg)
-            return None
+            if self._background_process.put_payload(payload, cfg):
+                return None
+
+            # The background thread is not running (never started, or it
+            # crashed). Without this fallback the payload would be dropped in
+            # silence while the UI reports a successful stamp.
+            self._dbg_print("telemetry: bg thread down — queueing to flash")
+            try:
+                self._ensure_client(cfg).enqueue(payload)
+                self.api_state["ok"] = False
+                self.api_state["msg"] = "queued (bg down)"
+                self.api_state["last_ms"] = time.ticks_ms()
+            except Exception as _qe:
+                self._dbg_print("telemetry: queue err", repr(_qe))
+            return False
 
         # --- Inline send path (fallback: no background process attached) ---
         # WiFi: attempt reconnect, but do NOT return early on failure.
@@ -682,14 +787,26 @@ class TelemetryScheduler:
                 if not self.wifi.is_connected():
                     ssid = str(cfg.get("wifi_ssid") or "")
                     pw = str(cfg.get("wifi_password") or "")
-                    if cfg.get("wifi_enabled", False) and ssid:
+                    # Rate-limited: reconnect() runs a full-power wlan.scan(),
+                    # so retrying it on every send drains the battery for
+                    # nothing when no AP is in range. The background path gates
+                    # this on an explicit request instead (see
+                    # TelemetryBackgroundProcess.request_wifi_check); this
+                    # inline fallback has no screen wiring, so it uses a plain
+                    # time floor to stay self-recovering.
+                    if cfg.get("wifi_enabled", False) and ssid and self._may_retry_wifi(cfg):
                         if do_print:
                             self._dbg_print("telemetry: wifi down, reconnecting")
+                        self._last_wifi_attempt_ms = time.ticks_ms()
                         try:
                             self.wifi.reconnect(ssid, pw, timeout_s=6)
                         except Exception as _re:
                             if do_print:
                                 self._dbg_print("telemetry: reconnect err", repr(_re))
+                        if self.wifi.is_connected():
+                            self._wifi_fail_streak = 0
+                        elif self._wifi_fail_streak < self.WIFI_FAIL_STREAK_MAX:
+                            self._wifi_fail_streak += 1
                 wifi_ok = self.wifi.is_connected()
             except Exception:
                 wifi_ok = False
