@@ -43,7 +43,7 @@ cat <<'BANNER'
 
                                    _______    ___
                                  /         \ |  0|
-                                 |         |/ __\|   D E V I C E   I N S T A L L E R
+                 D E V I C E     |         |/ __\|     I N S T A L L E R
                                  |___________/
                                    |__| |__|
 
