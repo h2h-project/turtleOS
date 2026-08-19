@@ -232,7 +232,92 @@ def sync_rtc_from_ds3231():
 # ----------------------------
 # API Device Lookup (LOW-RAM, inline)
 # ----------------------------
-def api_device_lookup(cfg):
+def _wait_socket_readable(s, tick_fn, deadline_ms, poll_ms=250):
+    """
+    Block until `s` has data to read, calling tick_fn() every poll_ms while
+    it waits — used so the API check's boot-step DotTicker keeps animating
+    through what is otherwise one long blocking network wait (DNS + connect
+    + server round-trip), the same way step_wifi/gps_boot_check tick from
+    their own poll loops. select.poll() only *observes* readiness; it never
+    consumes bytes, so it's safe to interleave with the normal blocking
+    socket reads that follow.
+    """
+    import uselect as select
+
+    poller = select.poll()
+    poller.register(s, select.POLLIN)
+    try:
+        while True:
+            if poller.poll(poll_ms):
+                return
+            if tick_fn:
+                tick_fn()
+            if time.ticks_diff(deadline_ms, time.ticks_ms()) <= 0:
+                raise OSError("timeout waiting for API response")
+    finally:
+        poller.unregister(s)
+
+
+def _api_get_ticked(url, headers, timeout_s=6, tick_fn=None):
+    """
+    Minimal GET, equivalent to urequests.get(), but waits for the socket to
+    become readable via _wait_socket_readable() before each blocking read so
+    tick_fn() runs throughout the wait instead of the caller staring at a
+    frozen 0-dot ticker for the whole request. Kept separate from
+    src/lib/urequests.py (used elsewhere for telemetry) so this doesn't risk
+    that shared path — this is only ever used for the boot-time API check.
+    """
+    import usocket as socket
+
+    proto, _, host, path = url.split("/", 3)
+    if proto != "http:":
+        raise ValueError("Unsupported protocol: " + proto)
+    port = 80
+    if ":" in host:
+        host, port = host.split(":", 1)
+        port = int(port)
+
+    deadline_ms = time.ticks_add(time.ticks_ms(), int(timeout_s * 1000))
+
+    ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0]
+    s = socket.socket(ai[0], ai[1], ai[2])
+    s.settimeout(timeout_s)
+
+    try:
+        s.connect(ai[-1])
+
+        s.write(b"GET /%s HTTP/1.0\r\nHost: %s\r\n" % (path.encode(), host.encode()))
+        for k, v in headers.items():
+            s.write(("%s: %s\r\n" % (k, v)).encode())
+        s.write(b"\r\n")
+
+        _wait_socket_readable(s, tick_fn, deadline_ms)
+        l = s.readline()
+        l = l.split(None, 2)
+        status = int(l[1])
+
+        while True:
+            _wait_socket_readable(s, tick_fn, deadline_ms)
+            l = s.readline()
+            if not l or l == b"\r\n":
+                break
+
+        _wait_socket_readable(s, tick_fn, deadline_ms)
+        body = s.read()
+
+        class _TickedResponse:
+            def close(self):
+                pass
+
+        resp = _TickedResponse()
+        resp.status_code = status
+        resp.text = str(body, "utf-8") if body else ""
+        return resp
+    finally:
+        s.close()
+
+
+def api_device_lookup(cfg, tick_fn=None):
     info = {
         "ok": False,
         "device_name": "",
@@ -276,8 +361,6 @@ def api_device_lookup(cfg):
         except Exception:
             import json  # type: ignore
 
-        import urequests
-
         headers = {
             "X-Device-Id": device_id,
             "X-Device-Key": device_key,
@@ -287,10 +370,7 @@ def api_device_lookup(cfg):
 
         print("API lookup: GET", url)
 
-        try:
-            r = urequests.get(url, headers=headers, timeout=6)
-        except TypeError:
-            r = urequests.get(url, headers=headers)
+        r = _api_get_ticked(url, headers=headers, timeout_s=6, tick_fn=tick_fn)
 
         code = getattr(r, "status_code", None)
         print("API lookup: HTTP", code)
@@ -436,7 +516,7 @@ def gps_boot_check(cfg):
         if gps is None:
             info["ok"] = False
             info["detected"] = False
-            return True, "NOT DETECTED", info
+            return True, "GPS not found", info
 
         # Presence-only check: just wait for any bytes on the UART — no read needed.
         # Max 5 seconds. Avoids uart.read(n) blocking on inter-character timeouts.
@@ -456,12 +536,12 @@ def gps_boot_check(cfg):
 
         info["detected"] = bool(seen)
         info["ok"] = bool(seen)
-        return True, ("OK" if seen else "NOT DETECTED"), info
+        return True, ("OK" if seen else "GPS not found"), info
 
     except Exception:
         info["ok"] = False
         info["detected"] = False
-        return True, "NOT DETECTED", info
+        return True, "GPS not found", info
     finally:
         gps = None
         _gc()
@@ -1055,10 +1135,12 @@ def step_api():
             pass
         return True, "SKIPPED (No WiFi)"
 
-    # A single blocking HTTP call has no loop to tick the shared per-step
-    # ticker from, so this stays at the zero dots boot_pipeline drew before
-    # calling this function — an honest "no progress to show", not a fake one.
-    ok, detail, info = api_device_lookup(cfg)
+    # This is the slowest boot step (DNS + connect + server round-trip), so
+    # unlike step_rtc it's worth ticking: pass the shared per-step ticker's
+    # tick() in so _api_get_ticked() can animate dots while it waits on the
+    # socket instead of freezing at zero dots for the whole request.
+    _tick_fn = booter.step_ticker.tick if (booter and booter.step_ticker) else None
+    ok, detail, info = api_device_lookup(cfg, tick_fn=_tick_fn)
     api_boot = info
 
     try:
@@ -1072,9 +1154,11 @@ def step_api():
 
 def step_rtc():
     global rtc_info
-    # Same as step_api: the DS3231 read (and the rare NTP fallback below) is
-    # a single blocking call with no loop to tick the shared ticker from, so
-    # this stays at the zero dots boot_pipeline already drew for this step.
+    # The DS3231 read is a single fast I2C call with no loop to tick the
+    # shared ticker from, so this stays at the zero dots boot_pipeline
+    # already drew for this step. (The rare NTP fallback below is a single
+    # blocking call too, but it's the exception path, not the common case
+    # step_api's ticking was added for.)
     ok, detail, info = sync_rtc_from_ds3231()
     rtc_info = info
 
@@ -1104,7 +1188,7 @@ def step_rtc():
 
     # NOT FOUND only if DS3231 absent and NTP also failed
     if not info.get("detected") and not info.get("synced"):
-        return True, "NOT FOUND"
+        return True, "RTC not found"
 
     if not info.get("synced"):
         _r = info.get("reason") or info.get("error") or "?"
@@ -1259,7 +1343,7 @@ def step_as5600():
     """Probe the AS5600 magnetic angle sensor (sail position, 0x36)."""
     addrs = i2c_scan()
     if I2C_ADDR_AS5600 not in addrs:
-        return True, "NOT FOUND"
+        return True, "AS5600 not found"
     try:
         _gc()
         from src.drivers.as5600 import AS5600
@@ -1309,7 +1393,7 @@ def step_mpu9250():
     except Exception:
         pass
 
-    return True, "NOT FOUND"
+    return True, "Compass not found"
 
 
 _rt_i2c = None
@@ -1532,8 +1616,11 @@ if _turtle_boot:
 # session, WiFi manager, nav controller, turtle waiting screen) here, under
 # the boot bar, instead of leaving them to run() to build silently behind a
 # blank screen. Label reflects what's actually happening in each mode.
+# show_footer=False: its label is shown again — centered, full-screen — by
+# boot_pipeline's finishing transition right after this step completes, so
+# the under-logo footer is suppressed to avoid printing it twice.
 steps += [
-    ("Initiating nav" if _turtle_boot else "Finishing boot", step_init_runtime),
+    ("Initiating nav" if _turtle_boot else "Finishing boot", step_init_runtime, False),
 ]
 
 if booter:

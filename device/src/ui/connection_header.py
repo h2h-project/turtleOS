@@ -6,7 +6,7 @@
 # Import and call draw() from any screen that needs the connectivity row.
 #
 # GPS states (re-exported for callers):
-#   GPS_NONE  (0) — no hardware / disabled        → outline triangle
+#   GPS_NONE  (0) — no hardware / disabled        → nothing drawn (blank)
 #   GPS_INIT  (1) — hardware present, no fix       → partially filled triangle
 #   GPS_FIXED (2) — has satellite fix              → fully filled triangle
 #

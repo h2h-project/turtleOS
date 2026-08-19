@@ -352,7 +352,7 @@ class Booter:
     # -------------------------------------------------
     # Detail substrings that indicate a step failed or hardware is missing
     _ERROR_HINTS = (
-        "FAIL", "ERROR", "NOT DETECTED", "ENOMEM",
+        "FAIL", "ERROR", "NOT DETECTED", "NOT FOUND", "ENOMEM",
         "HTTP", "BAD", "TIMEOUT", "MISSING", "NO SENSORS",
     )
 
@@ -419,8 +419,12 @@ class Booter:
         p_prev = 0.0
 
         for idx, item in enumerate(steps):
+            show_footer = True
             try:
-                label, fn = item
+                if len(item) >= 3:
+                    label, fn, show_footer = item[0], item[1], bool(item[2])
+                else:
+                    label, fn = item
             except Exception:
                 label, fn = ("Step", None)
 
@@ -430,8 +434,11 @@ class Booter:
             # frame the old plain _draw_frame call produced). If fn() has a
             # poll loop it can call self.step_ticker.tick() to animate; a
             # step that returns quickly is simply never ticked, so it never
-            # shows a dot.
-            self.step_ticker = self.make_dot_ticker(label, p=p_prev)
+            # shows a dot. Steps marked show_footer=False (e.g. the final
+            # "Initiating nav" step, whose label is shown again — centered,
+            # full-screen — by _show_finishing() right after) skip the
+            # under-logo footer entirely rather than printing the label twice.
+            self.step_ticker = self.make_dot_ticker(label, p=p_prev) if show_footer else None
             logger("[BOOT] " + label)
 
             # Per-step pause (set to 0 to go full speed)
@@ -479,6 +486,10 @@ class Booter:
             for j in range(rf):
                 pj = p_prev + (p_next - p_prev) * ((j + 1) / float(rf))
                 footer = detail if detail else label
+                # A footer-less step still surfaces a failure — only a
+                # successful result is hidden, so debugging never goes dark.
+                if not show_footer and not self._detail_is_error(detail):
+                    footer = None
                 self._draw_frame(p=pj, footer=footer)
                 time.sleep_ms(int(1000 / max(1, int(fps))))
 
