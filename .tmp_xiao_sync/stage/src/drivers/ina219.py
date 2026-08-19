@@ -154,14 +154,12 @@ class INA219:
     def current_ma(self):
         if not self.is_present:
             return None
-        self._write_register(self._REG_CALIBRATION, self.calibration_value)
         raw = self._to_signed(self._read_register(self._REG_CURRENT))
         return raw * self.current_lsb * 1000.0
 
     def power_mw(self):
         if not self.is_present:
             return None
-        self._write_register(self._REG_CALIBRATION, self.calibration_value)
         raw = self._read_register(self._REG_POWER)
         return raw * self.power_lsb * 1000.0
 

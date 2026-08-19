@@ -1111,14 +1111,25 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     # ------------------------------------------------------------
     _log_screen("version")
     ver_scr = get_screen("version")
+    _ver_action = None
     if ver_scr and hasattr(ver_scr, "show_live"):
         try:
-            ver_scr.show_live(btn=btn, tick_fn=tick_fn)
+            _ver_action = ver_scr.show_live(btn=btn, tick_fn=tick_fn)
         except Exception:
             pass
     else:
         draw_text(oled, "turtleOS", y=24)
-        wait_for_single(btn, tick_fn=tick_fn)
+        _ver_action = wait_for_single(btn, tick_fn=tick_fn)
+
+    if _ver_action == "triple":
+        # Triple click on the Version screen flips turtle_mode and reboots —
+        # turtleOS <-> airOS, mirroring the quint-click gesture on the
+        # waiting screen (src/ui/screens/togglemode.py).
+        try:
+            from src.ui.screens.togglemode import show_toggle_mode
+            show_toggle_mode(oled, (cfg or {}).get("turtle_mode", False))
+        except Exception as e:
+            print("[VERSION] mode switch failed:", repr(e))
 
     reset_and_flush(btn, flush_ms, poll_ms)
 

@@ -1162,7 +1162,7 @@ def step_warmup():
     has_bme   = _bme_addr is not None
 
     if not (has_aht or has_ens or has_scd41 or has_bme):
-        return True, "NO SENSORS DETECTED"
+        return True, "No sensors found"
 
     # Line 2 of 3: inventory of detected sensor chips
     found = []
@@ -1543,7 +1543,8 @@ if booter:
             intro_ms=500,
             fps=18,
             settle_ms=BOOT_STEP_HOLD_MS,  # <-- hold each step on OLED
-            logger=_log
+            logger=_log,
+            finishing_label=("Initiating Nav" if _turtle_boot else "Finishing boot"),
         )
     except Exception as e:
         print("BOOTER error:", repr(e))

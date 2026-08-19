@@ -64,7 +64,8 @@ class Booter:
     UI/Timing patches:
     - Faster progression: per-step settle reduced
     - Ramp frames reduced to 1 (less flicker + faster)
-    - Final "Locked & loaded!" hold reduced to tiny blink (default 20ms)
+    - Final step is followed by a full-screen animated "Initiating Nav..."
+      transition (brand/bar hidden) instead of a static "Locked & loaded!"
     """
 
     def __init__(self, oled):
@@ -285,6 +286,44 @@ class Booter:
         self._show_fb()
 
     # -------------------------------------------------
+    # Final transition screen (replaces the old static "Locked & loaded!")
+    # -------------------------------------------------
+    def _show_finishing(self, label, interval_ms=500, max_dots=3):
+        """
+        Full-screen centered "<label>..." transition drawn once the last
+        boot step completes. Unlike _draw_frame(), this hides the brand
+        line and progress bar entirely rather than layering text over them.
+        Dots animate at the same 0.5s cadence as DotTicker, and the first
+        dot is likewise held off for interval_ms so the bare label gets a
+        beat on screen before dots start.
+        """
+        h = int(getattr(self.oled, "height", 64))
+        writer = self.f_footer or self.f_brand
+
+        fh = 11
+        if writer:
+            try:
+                _, fh = writer.size("A")
+            except Exception:
+                fh = 11
+        y = max(0, (h - fh) // 2)
+
+        def _frame(dots):
+            self._clear()
+            self._draw_centered_text_shadow(writer, label + "." * dots, y)
+            self._show_fb()
+
+        _frame(0)
+        for dots in range(1, int(max_dots) + 1):
+            time.sleep_ms(int(interval_ms))
+            _frame(dots)
+
+        # Hold the fully-dotted frame for one more interval — otherwise the
+        # caller (go_waiting) overwrites it on the very frame it finishes
+        # drawing, so the 3-dot state would never actually be visible.
+        time.sleep_ms(int(interval_ms))
+
+    # -------------------------------------------------
     # Dot ticker factory (see DotTicker above)
     # -------------------------------------------------
     def make_dot_ticker(self, label, p=0.0, interval_ms=500, max_dots=3):
@@ -335,8 +374,6 @@ class Booter:
             settle_ms=120,
             logger=None,
             *,
-            # Explicit final hold so you can eliminate delay after "Locked & loaded!"
-            final_hold_ms=20,
             # Fewer ramp frames (1 is fastest/least flicker)
             ramp_frames=1,
             # Per-step pause (override settle_ms behavior cleanly)
@@ -350,6 +387,9 @@ class Booter:
             # Dwell (ms) for a successful step's result footer. 0 by default
             # — only failures are held long enough to read.
             result_hold_ms=0,
+            # Label for the final full-screen transition shown once every
+            # step has run (replaces the old static "Locked & loaded!").
+            finishing_label="Initiating Nav",
     ):
         if logger is None:
             logger = print
@@ -368,10 +408,8 @@ class Booter:
             total = 0
 
         if total <= 0:
-            self._draw_frame(p=1.0, footer="Locked & loaded!")
-            logger("[BOOT] Locked & loaded!")
-            if final_hold_ms and int(final_hold_ms) > 0:
-                time.sleep_ms(int(final_hold_ms))
+            logger("[BOOT] " + finishing_label)
+            self._show_finishing(finishing_label)
             return {"ok": True, "results": []}
 
         # If step_pause_ms not specified, keep using settle_ms
@@ -461,11 +499,10 @@ class Booter:
 
             p_prev = p_next
 
-        # Final: minimal hold so waiting screen can take over immediately
-        self._draw_frame(p=1.0, footer="Locked & loaded!")
-        logger("[BOOT] Locked & loaded!")
-        if final_hold_ms and int(final_hold_ms) > 0:
-            time.sleep_ms(int(final_hold_ms))
+        # Final: full-screen animated transition (brand/bar hidden) instead
+        # of a static "Locked & loaded!" footer.
+        logger("[BOOT] " + finishing_label)
+        self._show_finishing(finishing_label)
 
         all_ok = True
         for r in results:

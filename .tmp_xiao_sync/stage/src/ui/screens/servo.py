@@ -10,7 +10,7 @@ except Exception:
 
 
 # --------------------------------------------------------------------
-# Simple raw servo test settings
+# Raw servo movement test settings
 # --------------------------------------------------------------------
 # Normal hobby servo signal:
 #   50 Hz PWM
@@ -18,47 +18,41 @@ except Exception:
 #   ~1500 us = centre    (90 deg)
 #   ~2000 us = other end (180 deg)
 #
-# The test runs TWO legs:
-#   A -> B over SERVO_LEG_MS, then B -> A over SERVO_LEG_MS
-# where A/B straddle SERVO_HOME_DEG by SERVO_SWEEP_DEG/2.
+# The MG996R now gets its own rail from an LTC1871 boost converter
+# (3-35V in -> 3.5-35V/9A out) instead of sharing the logic supply. The two
+# test movements exist to load that rail two different ways:
 #
-# Step size matters more than step rate. An MG996R is analogue and has a
-# deadband of roughly 5-10 us (~1-2 deg): command increments near that size
-# make the motor hunt back and forth without the horn making real progress.
-# The high-speed pinion is very visibly moving while the ~250:1-reduced
-# output creeps. SERVO_STEP_DEG keeps every increment decisively above the
-# deadband so each step is a real slew.
+#   "low"  - a small oscillation around centre. Modest torque, modest
+#            current draw - confirms the rail holds up under light load.
+#   "high" - full-range bang-bang against the mechanical stops (0 <-> 180),
+#            each move a single instantaneous pulse-width jump so the servo
+#            slews at its own maximum rate. This is the most aggressive
+#            command a servo can be given and draws the most current
+#            (worst case: stall current at the stops), so it is the
+#            decisive test of whether the rail sags under load.
+#
+# Step size matters more than step rate for the low-power ramp. An MG996R
+# is analogue and has a deadband of roughly 5-10 us (~1-2 deg): command
+# increments near that size make the motor hunt back and forth without the
+# horn making real progress. MOVE_STEP_DEG keeps every increment decisively
+# above the deadband so each step is a real slew.
 SERVO_PWM_HZ = 50
 
 SERVO_MIN_US = 1000
 SERVO_MAX_US = 2000
 SERVO_RANGE_DEG = 180
 
-SERVO_HOME_DEG = 90       # centre of the sweep
-SERVO_SWEEP_DEG = 90      # total travel per leg
-SERVO_LEG_MS = 4000       # time to cover one leg (ramp mode)
-SERVO_STEP_DEG = 3.0      # command increment (~17 us, well past deadband)
+SERVO_HOME_DEG = 90       # centre for the low-power oscillation
 
-SERVO_START_SETTLE_MS = 800
-SERVO_END_HOLD_MS = 800
+LOW_POWER_HALF_SWEEP_DEG = 15   # low-power arc: HOME +/- this, light load
+HIGH_POWER_LO_DEG = 0           # high-power arc: full range, stalls at stops
+HIGH_POWER_HI_DEG = 180
 
-# Test mode:
-#   "endpoints" - bang-bang. Commands the full mechanical range as a single
-#                 instantaneous jump and holds, so the servo slews at its own
-#                 maximum rate (MG996R: ~0.17 s/60 deg, i.e. 180 deg in ~0.5 s).
-#                 This is the most aggressive command a servo can be given, and
-#                 therefore the decisive test: if the horn does not reach its
-#                 stops under this, no command shape will move it and the fault
-#                 is mechanical or electrical, not in this file.
-#   "ramp"      - timed SERVO_SWEEP_DEG sweep over SERVO_LEG_MS each way.
-#                 Use once the servo is known good and you want to watch
-#                 controlled sail-speed motion.
-SERVO_TEST_MODE = "endpoints"
-
-SERVO_BANG_LO_DEG = 0
-SERVO_BANG_HI_DEG = 180
-SERVO_BANG_HOLD_MS = 1500   # dwell at each end; must exceed full-range slew time
-SERVO_BANG_CYCLES = 3
+MOVE_STEP_DEG = 3.0        # low-power ramp increment (~17 us, past deadband)
+MOVE_STEP_PERIOD_MS = 15   # time per ramp step (low-power only)
+MOVE_HOLD_MS = 600         # dwell at each end before reversing (high-power)
+MOVE_MAX_MS = 4000         # hard cap on a single movement run, either mode
+MOVE_POLL_MS = 15          # how often the button is checked for a stop click
 
 SERVO_DEINIT_AFTER_TEST = True
 
@@ -293,65 +287,70 @@ class ServoScreen:
         return us
 
     # ----------------------------
-    # Simple servo test
+    # Interruptible movement test
     # ----------------------------
 
-    def _sweep_leg(self, pwm, from_deg, to_deg, duration_ms):
+    def _poll_stop(self, btn):
+        """Return True if a single click (stop) has been seen."""
+        try:
+            action = btn.poll_action()
+        except Exception:
+            action = None
+        return action == "single"
+
+    def _move_loop(self, btn, pwm, lo, hi, ramped):
         """
-        Drive from_deg -> to_deg over duration_ms.
+        Oscillate between lo and hi until a single click stops it or
+        MOVE_MAX_MS total elapses, whichever comes first.
 
-        Nothing else happens in here: no OLED writes, no I2C, no button poll.
-        The loop is PWM plus a sleep, so the leg takes duration_ms and the
-        step period is what it says it is. Steps are sized by SERVO_STEP_DEG
-        (not by a fixed period) so each command is a real slew rather than a
-        deadband-sized nudge the servo can hunt on.
+        ramped=True steps through MOVE_STEP_DEG increments (low-power arc,
+        gentle on the boost-converter rail). ramped=False jumps instantly to
+        each end and holds (high-power arc, max slew, max current draw
+        against the stops). Returns "stopped" or "timeout".
         """
-        span = to_deg - from_deg
-        steps = int(abs(span) / SERVO_STEP_DEG)
-        if steps < 1:
-            steps = 1
+        t_start = time.ticks_ms()
+        pos = lo
+        going_to = hi
 
-        t0 = time.ticks_ms()
+        while True:
+            if time.ticks_diff(time.ticks_ms(), t_start) >= MOVE_MAX_MS:
+                return "timeout"
 
-        for i in range(1, steps + 1):
-            self._write_angle(pwm, from_deg + span * i / steps)
+            if ramped:
+                span = going_to - pos
+                steps = max(1, int(abs(span) / MOVE_STEP_DEG))
+                for i in range(1, steps + 1):
+                    if time.ticks_diff(time.ticks_ms(), t_start) >= MOVE_MAX_MS:
+                        return "timeout"
+                    if self._poll_stop(btn):
+                        return "stopped"
+                    self._write_angle(pwm, pos + span * i / steps)
+                    time.sleep_ms(MOVE_STEP_PERIOD_MS)
+            else:
+                self._write_angle(pwm, going_to)
+                hold_deadline = time.ticks_add(time.ticks_ms(), MOVE_HOLD_MS)
+                while time.ticks_diff(hold_deadline, time.ticks_ms()) > 0:
+                    if time.ticks_diff(time.ticks_ms(), t_start) >= MOVE_MAX_MS:
+                        return "timeout"
+                    if self._poll_stop(btn):
+                        return "stopped"
+                    time.sleep_ms(MOVE_POLL_MS)
 
-            # Hold this step until its share of the leg has elapsed.
-            deadline = time.ticks_add(t0, int(duration_ms * i / steps))
-            while True:
-                remain = time.ticks_diff(deadline, time.ticks_ms())
-                if remain <= 0:
-                    break
-                time.sleep_ms(remain if remain < 10 else 10)
+            pos = going_to
+            going_to = lo if going_to == hi else hi
 
-    def _bang_bang(self, pwm):
+    def _run_movement(self, btn, mode):
         """
-        Full-range bang-bang: jump to one end, hold, jump to the other, hold.
+        Run one interruptible test movement.
 
-        No ramp at all - each move is a single pulse-width change, so the servo
-        slews at its own maximum rate against its own stops. Nothing a command
-        can do moves a servo harder than this.
-        """
-        lo = SERVO_BANG_LO_DEG
-        hi = SERVO_BANG_HI_DEG
-        hold = max(200, int(SERVO_BANG_HOLD_MS))
+        mode: "low"  - small oscillation around SERVO_HOME_DEG (light load).
+              "high" - full-range bang-bang, 0 <-> 180 (heavy load, stalls
+                       at the stops).
 
-        for c in range(max(1, int(SERVO_BANG_CYCLES))):
-            for deg in (lo, hi):
-                us = self._write_angle(pwm, deg)
-                print("[SERVO] cycle {} -> {} deg ({} us)".format(c + 1, deg, us))
-                self._draw("{:.0f}d {}us".format(deg, us))
-                time.sleep_ms(hold)
-
-    def _run_test(self):
-        """
-        Raw PWM servo test. See SERVO_TEST_MODE for the two shapes.
-
-        This bypasses src.drivers.servo.Servo.angle() so we can test whether
-        the servo responds to plain 50Hz servo pulses. The screen is drawn
-        between moves only, never during one - the servo is the only thing
-        that matters while the test is running. Each commanded position is
-        also printed to serial so the test can be followed over the REPL.
+        Bypasses src.drivers.servo.Servo.angle() so this tests the raw 50 Hz
+        signal path and the servo's own power rail directly. Runs until a
+        single click stops it or MOVE_MAX_MS elapses. Each commanded
+        position is printed to serial for REPL diagnosis.
         """
         if self._pin is None:
             self._draw("No pin")
@@ -359,43 +358,35 @@ class ServoScreen:
             return
 
         pwm = None
+        label = "Low power" if mode == "low" else "High power"
 
         try:
             pwm = self._make_pwm()
-            print("[SERVO] test start: pin={} mode={}".format(self._pin, SERVO_TEST_MODE))
-            self._write_angle(pwm, SERVO_HOME_DEG)
-            self._report_signal(pwm)
+            print("[SERVO] {} move start: pin={} (max {} ms)".format(
+                label, self._pin, MOVE_MAX_MS))
 
-            if SERVO_TEST_MODE == "endpoints":
-                self._bang_bang(pwm)
+            if mode == "low":
+                lo = SERVO_HOME_DEG - LOW_POWER_HALF_SWEEP_DEG
+                hi = SERVO_HOME_DEG + LOW_POWER_HALF_SWEEP_DEG
+                ramped = True
             else:
-                half = SERVO_SWEEP_DEG / 2.0
-                a_deg = SERVO_HOME_DEG - half
-                b_deg = SERVO_HOME_DEG + half
-                leg_ms = max(200, int(SERVO_LEG_MS))
+                lo = HIGH_POWER_LO_DEG
+                hi = HIGH_POWER_HI_DEG
+                ramped = False
 
-                # Park at A at full servo speed, then let it settle.
-                self._write_angle(pwm, a_deg)
-                self._draw("Start {:.0f}d".format(a_deg))
-                time.sleep_ms(SERVO_START_SETTLE_MS)
+            self._write_angle(pwm, lo)
+            self._report_signal(pwm)
+            self._draw("{}...".format(label))
 
-                # Leg 1: A -> B.
-                self._draw("{:.0f}d > {:.0f}d".format(a_deg, b_deg))
-                self._sweep_leg(pwm, a_deg, b_deg, leg_ms)
-                time.sleep_ms(SERVO_END_HOLD_MS)
-
-                # Leg 2: B -> A.
-                self._draw("{:.0f}d > {:.0f}d".format(b_deg, a_deg))
-                self._sweep_leg(pwm, b_deg, a_deg, leg_ms)
-
-            self._draw("Test done")
-            print("[SERVO] test done")
-            time.sleep_ms(SERVO_END_HOLD_MS)
+            result = self._move_loop(btn, pwm, lo, hi, ramped)
+            print("[SERVO] {} move {}".format(label, result))
+            self._draw("{} {}".format(label, result))
+            time.sleep_ms(400)
 
         except Exception as e:
-            print("[SERVO] test failed:", e)
+            print("[SERVO] move failed:", e)
             try:
-                self._draw("Test failed")
+                self._draw("Move failed")
                 time.sleep_ms(900)
             except Exception:
                 pass
@@ -415,8 +406,15 @@ class ServoScreen:
 
     def show_live(self, btn, tick_fn=None):
         """
-        Single click : advance carousel.
-        Double click : run the raw PWM servo test (see SERVO_TEST_MODE).
+        Single click  : advance carousel (idle) / stop the running movement.
+        Double click  : start the low-power movement (small oscillation
+                        around centre, light load on the servo rail).
+        Triple click  : start the high-power movement (full-range
+                        bang-bang against the stops, heaviest load on the
+                        servo rail).
+
+        Both movements run until a single click stops them or MOVE_MAX_MS
+        elapses, whichever comes first.
 
         The idle loop does nothing but poll the button. There is no periodic
         redraw: with the INA219 readout gone this screen is entirely static
@@ -450,8 +448,16 @@ class ServoScreen:
                 action = None
 
             if action == "double" and self._connected:
-                self._run_test()
-                # The test drew its own frames; restore the idle view.
+                self._run_movement(btn, "low")
+                # The movement drew its own frames; restore the idle view.
+                self._draw()
+                try:
+                    btn.reset()
+                except Exception:
+                    pass
+
+            elif action == "triple" and self._connected:
+                self._run_movement(btn, "high")
                 self._draw()
                 try:
                     btn.reset()
