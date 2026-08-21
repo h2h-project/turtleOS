@@ -274,6 +274,7 @@ def run(
                 nav_get=lambda: _nav_cell[0],
                 mission_get=_mission_name,
                 battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
             )
             _gc()
         except Exception as e:
@@ -648,6 +649,7 @@ def run(
                     nav_get=lambda: _nav_cell[0],
                     mission_get=_mission_name,
                     battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                    current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
                 )
 
             elif name == "state":
@@ -841,7 +843,7 @@ def run(
         # is safe to call on every pass.
         if _background_process is not None:
             try:
-                _background_process.request_wifi_check()
+                _background_process.request_wifi_check(cfg=cfg)
             except Exception:
                 pass
         if turtle_waiting_scr is not None:

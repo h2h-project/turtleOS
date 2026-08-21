@@ -454,7 +454,12 @@ def wifi_level_from_rssi(rssi):
 # GPS indicator (14x6) — right-angle triangle
 #
 # Three states:
-#   GPS_NONE  (0) : outline only    — no hardware / disabled
+#   GPS_NONE  (0) : nothing drawn  — no hardware / disabled. An outline was
+#                   tried here previously, but even an "empty" outline has
+#                   solid right/bottom edges (~18% of the icon's pixels lit),
+#                   which reads as "slightly filled" at this size and wrongly
+#                   alludes to GPS presence when there is none. Drawing
+#                   nothing is the only way to guarantee zero pixels lit.
 #   GPS_INIT  (1) : bottom 2 rows filled, top 4 outlined — hardware present, no fix
 #   GPS_FIXED (2) : fully filled   — has satellite fix
 # ----------------------------
@@ -470,16 +475,6 @@ _GPS_TRI_6 = [
     "00000000000111",
     "00000000001111",
     "00000000011111",
-    "00000000111111",
-]
-
-# Outline only (hypotenuse + right edge + bottom edge)
-_GPS_EMPTY_6 = [
-    "00000000000001",
-    "00000000000011",
-    "00000000000101",
-    "00000000001001",
-    "00000000010001",
     "00000000111111",
 ]
 
@@ -500,13 +495,14 @@ def draw_gps(fb, x, y, on=True, color=1, state=None):
 
     state (GPS_NONE/GPS_INIT/GPS_FIXED) overrides `on` when provided.
     Legacy callers using on=True/False continue to work (True→GPS_FIXED, False→GPS_NONE).
+    GPS_NONE draws nothing — see the state-table comment above.
     """
     if state is None:
         state = GPS_FIXED if bool(on) else GPS_NONE
     state = int(state)
 
     if state == GPS_NONE:
-        draw_bitmap_rows(fb, x, y, _GPS_EMPTY_6, c=color)
+        return
     elif state == GPS_INIT:
         draw_bitmap_rows(fb, x, y, _GPS_PART_6, c=color)
     else:

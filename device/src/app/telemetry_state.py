@@ -126,7 +126,7 @@ class TelemetryState:
     def api_state(self):
         if self.scheduler is not None:
             return self.scheduler.api_state
-        return {"ok": None, "sending": False, "msg": "", "last_ms": None}
+        return {"ok": None, "sending": False, "msg": "", "last_ms": None, "last_ok_ms": None}
 
     def request_now(self):
         """Trigger an immediate telemetry send at the next background tick."""

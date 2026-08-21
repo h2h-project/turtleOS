@@ -101,8 +101,6 @@ class TurtleWaitingScreen:
     REST_MS = 2000
     SWIM_CYCLES = 6
 
-    _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
-
     # Space to reserve left of the mission text for the target glyph
     # (7px glyph + 4px gap).
     _TARGET_GAP = 11
@@ -115,16 +113,17 @@ class TurtleWaitingScreen:
     _TARGET_DY = 1
 
     # Battery icon: bottom-right corner, flush to the right edge. _BATT_DY
-    # nudges it down onto the mission/heading baseline; _BATT_TEXT_GAP is the
-    # space between it and the heading text on its left.
+    # nudges it down onto the mission/current-draw baseline; _BATT_TEXT_GAP is
+    # the space between it and the current-draw text on its left.
     _BATT_DY = 1
     _BATT_TEXT_GAP = 6
 
-    def __init__(self, oled, nav_get=None, mission_get=None, battery_get=None):
+    def __init__(self, oled, nav_get=None, mission_get=None, battery_get=None, current_get=None):
         self.oled = oled
         self._nav_get = nav_get        # callable -> NavController or None
         self._mission_get = mission_get  # callable -> mission name str or None
         self._battery_get = battery_get  # callable -> bus voltage (float) or None
+        self._current_get = current_get  # callable -> INA219 current in mA (float) or None
         w, h = oled.width, oled.height
         f1_fb,  f1_buf,  f1_x,  f1_y  = _prerender(_TURTLE_1,    w, h)
         f2_fb,  f2_buf,  f2_x,  f2_y  = _prerender(_TURTLE_2,    w, h)
@@ -162,6 +161,14 @@ class TurtleWaitingScreen:
         except Exception:
             return None
 
+    def _battery_current_ma(self):
+        if self._current_get is None:
+            return None
+        try:
+            return self._current_get()
+        except Exception:
+            return None
+
     def _fit(self, text, max_w):
         """Truncate text (from the end) until it fits within max_w pixels."""
         o = self.oled
@@ -187,7 +194,7 @@ class TurtleWaitingScreen:
     def _overlay(self, dst):
         """Nav status in the screen corners: machine state top-left,
         mission (target glyph + name) or next-sweep countdown bottom-left,
-        heading then battery icon bottom-right."""
+        battery current draw/charge then battery icon bottom-right."""
         o = self.oled
         w = o.width
         h = o.height
@@ -220,41 +227,25 @@ class TurtleWaitingScreen:
         except Exception:
             pass
 
-        # Compass heading like NE-45° (------ without compass), right-aligned
-        # against the battery. Track the total width consumed from the right
-        # edge so the bottom-left mission text can steer clear.
-        heading_right = batt_x - self._BATT_TEXT_GAP
-        heading = None
-        if nav is not None:
-            try:
-                heading = nav.heading_deg()
-            except Exception:
-                heading = None
-        if heading is None:
+        # Battery current draw/charge like "+104mA" (charging) or "-52mA"
+        # (drawing), right-aligned against the battery icon. INA219 raw
+        # current_ma() sign: positive = charging, negative = discharging.
+        # Track the total width consumed from the right edge so the
+        # bottom-left mission text can steer clear.
+        current_right = batt_x - self._BATT_TEXT_GAP
+        current_ma = self._battery_current_ma()
+        if current_ma is None:
             txt = "------"
-            try:
-                tw, _ = o._text_size(o.f_small, txt)
-            except Exception:
-                tw = 24
-            tx = heading_right - tw
-            o.f_small.write(txt, tx, ty)
-            right_w = w - tx
         else:
-            letter = self._LETTERS[int((float(heading) + 22.5) / 45.0) % 8]
-            txt = "{}-{}".format(letter, int(heading))
-            try:
-                tw, _ = o._text_size(o.f_small, txt)
-            except Exception:
-                tw = len(txt) * 5
-            # Text + degree glyph (6px) as one unit, right-aligned on the battery.
-            tx = heading_right - (tw + 6)
-            o.f_small.write(txt, tx, ty)
-            right_w = w - tx
-            try:
-                from src.ui.glyphs import draw_degree
-                draw_degree(dst, tx + tw + 2, ty, r=2)
-            except Exception:
-                pass
+            sign = "+" if current_ma >= 0 else "-"
+            txt = "{}{}mA".format(sign, int(abs(current_ma)))
+        try:
+            tw, _ = o._text_size(o.f_small, txt)
+        except Exception:
+            tw = len(txt) * 5
+        tx = current_right - tw
+        o.f_small.write(txt, tx, ty)
+        right_w = w - tx
 
         # Bottom-left: the luff-sweep countdown takes precedence during
         # SAIL-NAV; otherwise show the mission name (prefixed with a target

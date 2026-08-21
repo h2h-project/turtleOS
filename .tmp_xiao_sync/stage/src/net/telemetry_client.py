@@ -464,10 +464,12 @@ class TelemetryClient:
 
     def flush_queue(self):
         """Drain all queued readings in one batch POST.
-        Keeps queue intact on failure so the next successful send retries."""
+        Keeps queue intact on failure so the next successful send retries.
+        Returns (ok: bool, sent: int) — sent is 0 and ok is True when the
+        queue was already empty (nothing to do, not a failed attempt)."""
         q = self._load_queue()
         if not q:
-            return
+            return True, 0
 
         _gc_collect()
         print("telemetry queue: flushing", len(q), "buffered readings via batch")
@@ -482,5 +484,7 @@ class TelemetryClient:
                 extra=msg if msg and msg != "OK" else None
             )
             self._save_queue([])
+            return True, len(q)
         else:
             print("telemetry queue: batch flush failed:", msg, "- will retry next send")
+            return False, 0

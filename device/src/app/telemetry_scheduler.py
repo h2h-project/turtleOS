@@ -73,7 +73,10 @@ class TelemetryScheduler:
         self._gps_reject_streak = 0
 
         # Public state for UI (Online screen reads this instead of making its own HTTP)
-        self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None}
+        # last_ms stamps every send *attempt* (success or failure); last_ok_ms
+        # stamps only a successful one, so "last sent" on the Online screen can
+        # report actual connectivity instead of the most recent retry.
+        self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None, "last_ok_ms": None}
         self._send_now = False
 
         # One-shot: set by send_manual() so the next payload is flagged as a
@@ -756,6 +759,8 @@ class TelemetryScheduler:
                         self.api_state["ok"] = bool(bp_result["ok"])
                         self.api_state["msg"] = str(bp_result.get("msg", ""))
                         self.api_state["last_ms"] = bp_result["last_ms"]
+                        if bp_result.get("last_ok_ms") is not None:
+                            self.api_state["last_ok_ms"] = bp_result["last_ok_ms"]
                         self.write_last_sent(payload["recorded_at"], ok=bool(bp_result["ok"]))
             except Exception:
                 pass
@@ -864,6 +869,8 @@ class TelemetryScheduler:
             self.api_state["ok"] = bool(ok)
             self.api_state["msg"] = str(msg)
             self.api_state["last_ms"] = time.ticks_ms()
+            if ok:
+                self.api_state["last_ok_ms"] = self.api_state["last_ms"]
             _gc_collect()
 
         if do_print:

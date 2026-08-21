@@ -322,6 +322,16 @@ class WiFiManager:
             self._apply_pm_performance()
             return (True, self.ip(), "CONNECTED")
 
+        # Tick once before any blocking radio work (WPA3 scan, hard reset,
+        # connect() call) so the boot-step dot ticker shows its first dot
+        # right away instead of freezing at zero dots for however long that
+        # setup takes — a WPA3 scan alone can run several seconds.
+        if tick_cb is not None:
+            try:
+                tick_cb()
+            except Exception:
+                pass
+
         # If the radio is already active (pre-activated during boot before heap
         # fragmentation), skip the active(False)→active(True) cycle.
         # That cycle releases and re-allocates the WiFi rx buffers — on a

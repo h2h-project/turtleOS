@@ -129,18 +129,18 @@ class WiFiScreen:
             o.f_med.write("WiFi is set off.", 0, data_y)
             o.f_med.write("2x click to", 0, data_y + line_h)
             o.f_med.write("turn on.", 0, data_y + line_h * 2)
+        elif connected:
+            if self.ssid:
+                o.f_med.write(self.ssid[:18], 0, data_y)
+            if self._last_rssi is not None:
+                o.f_med.write("%ddBm" % self._last_rssi, 0, data_y + line_h)
+            if self._last_ip:
+                o.f_med.write(self._last_ip[:18], 0, data_y + line_h * 2)
         else:
             status_text = self._last_status
             if self._checking:
                 status_text = status_text + ("." * self._dots)
-            if connected and self._last_rssi is not None:
-                status_text = "%s %ddBm" % (status_text, self._last_rssi)
             o.f_med.write(status_text[:18], 0, data_y)
-            if connected:
-                if self.ssid:
-                    o.f_med.write(self.ssid[:18], 0, data_y + line_h)
-                if self._last_ip:
-                    o.f_med.write(self._last_ip[:18], 0, data_y + line_h * 2)
 
         self.toggle.draw(fb, on=self.enabled)
         fb.show()

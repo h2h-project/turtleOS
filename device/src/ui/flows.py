@@ -391,16 +391,18 @@ def _offline_notice(oled, btn, lines, dwell_ms=1200, poll_ms=25):
         return None
 
 
-def _request_wifi_check(telemetry, force=False):
+def _request_wifi_check(telemetry, cfg=None, force=False):
     """Ask the telemetry background process to try associating.
 
     Non-blocking and best-effort: no background process (or no telemetry yet)
-    simply means nothing to ask.
+    simply means nothing to ask. cfg is passed through so the bg thread can
+    still reconnect + flush the queue even when it has no payload of its own
+    to piggyback the check on (see TelemetryBackgroundProcess._run()).
     """
     try:
         bp = telemetry.scheduler._background_process
         if bp is not None:
-            bp.request_wifi_check(force=force)
+            bp.request_wifi_check(cfg=cfg, force=force)
     except Exception:
         pass
 
@@ -476,7 +478,7 @@ def connectivity_carousel(
     # bypasses the background process's retry floor. The send path itself no
     # longer scans (see TelemetryBackgroundProcess._send) — without this, a
     # device that dropped its AP at sea would have no user-driven way back on.
-    _request_wifi_check(telemetry, force=True)
+    _request_wifi_check(telemetry, cfg=cfg, force=True)
 
     # ------------------------------------------------------------
     # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.

@@ -279,6 +279,15 @@ def _api_get_ticked(url, headers, timeout_s=6, tick_fn=None):
 
     deadline_ms = time.ticks_add(time.ticks_ms(), int(timeout_s * 1000))
 
+    # Tick once before DNS + connect — both are blocking with no callback
+    # hook, so without this the dot ticker sits frozen at zero dots for
+    # however long that takes instead of showing its first dot right away.
+    if tick_fn:
+        try:
+            tick_fn()
+        except Exception:
+            pass
+
     ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0]
     s = socket.socket(ai[0], ai[1], ai[2])
     s.settimeout(timeout_s)
@@ -1511,6 +1520,7 @@ def step_init_runtime():
                 nav_get=lambda: _rt_nav,
                 mission_get=_rt_mission_name,
                 battery_get=lambda: (_rt_ina.bus_voltage_v() if _rt_ina else None),
+                current_get=lambda: (_rt_ina.current_ma() if _rt_ina else None),
             )
         except Exception as e:
             print("[NAV] turtle_waiting init failed:", repr(e))

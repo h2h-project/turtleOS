@@ -485,7 +485,11 @@ class Booter:
 
             for j in range(rf):
                 pj = p_prev + (p_next - p_prev) * ((j + 1) / float(rf))
-                footer = (detail if detail else label) if show_footer else None
+                footer = detail if detail else label
+                # A footer-less step still surfaces a failure — only a
+                # successful result is hidden, so debugging never goes dark.
+                if not show_footer and not self._detail_is_error(detail):
+                    footer = None
                 self._draw_frame(p=pj, footer=footer)
                 time.sleep_ms(int(1000 / max(1, int(fps))))
 

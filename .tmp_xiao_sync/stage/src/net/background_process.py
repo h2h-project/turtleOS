@@ -106,6 +106,11 @@ class TelemetryBackgroundProcess:
         self._wifi_fail_streak = 0
         self._was_connected = False
 
+        # cfg snapshot from the most recent put_payload()/request_wifi_check()
+        # call — needed so a wifi-check-only request (no payload attached) can
+        # still reach the SSID/password/api_base it needs on the bg thread.
+        self._last_cfg = None
+
         # LED blink state (used during active sends)
         self._blink_timer = None
         self._blink_led = None
@@ -132,8 +137,8 @@ class TelemetryBackgroundProcess:
             print("[BACKGROUND] Failed to start thread:", repr(e))
             self._running = False
 
-    def request_wifi_check(self, force=False):
-        """Ask the background thread to try associating on its next send.
+    def request_wifi_check(self, cfg=None, force=False):
+        """Ask the background thread to try associating on its next pass.
 
         Non-blocking: sets a flag, never touches the radio on the main thread.
         Call from boot and on entry to the waiting / online / wifi screens.
@@ -142,8 +147,18 @@ class TelemetryBackgroundProcess:
         backoff and mission_connection_mode, so a triple-click into the
         connectivity carousel always gets a real attempt. Everything else is
         advisory and may be ignored.
+
+        cfg, when given, is remembered as the config to check/reconnect/flush
+        with if the bg thread has no pending payload to piggyback on (see
+        _run()) — without it, a check requested with nothing queued to send
+        (the common case: WiFi has been down a while, so nothing has built a
+        payload recently) would set the flag and then never be consumed,
+        since _send() — the only place that used to read it — only runs when
+        a payload is popped off _pending.
         """
         self._wifi_check_requested = True
+        if cfg is not None:
+            self._last_cfg = cfg
         if force:
             self._wifi_force = True
 
@@ -157,6 +172,7 @@ class TelemetryBackgroundProcess:
         lost. Payloads queue up to PENDING_MAX deep so a slow send (a 6 s WiFi
         reconnect attempt, say) cannot swallow readings taken behind it.
         """
+        self._last_cfg = cfg
         if not self._running or not self._thread_alive or self._lock is None:
             return False
         self._lock.acquire()
@@ -200,6 +216,16 @@ class TelemetryBackgroundProcess:
                         # silently strand every later reading.
                         print("[BACKGROUND] send failed:", repr(e))
                         self._safe_enqueue(payload, cfg)
+                elif self._wifi_check_requested and self._last_cfg is not None:
+                    # No payload to piggyback on (e.g. WiFi has been down long
+                    # enough that nothing has built one recently) but a screen
+                    # explicitly asked for connectivity — reconnect and flush
+                    # whatever is already queued to flash so the user actually
+                    # sees the API come back, not just the WiFi icon.
+                    try:
+                        self._check_wifi_and_flush(self._last_cfg)
+                    except Exception as e:
+                        print("[BACKGROUND] wifi check failed:", repr(e))
                 time.sleep_ms(self.LOOP_SLEEP_MS)
         except Exception as e:
             print("[BACKGROUND] Thread crashed:", repr(e))
@@ -406,17 +432,23 @@ class TelemetryBackgroundProcess:
         wait = self.WIFI_RETRY_BASE_MS << streak
         return wait if wait < self.WIFI_RETRY_CAP_MS else self.WIFI_RETRY_CAP_MS
 
-    def _may_attempt_wifi(self, cfg):
-        """True when an association attempt is allowed right now."""
+    def _may_attempt_wifi(self, cfg, requested, forced):
+        """True when an association attempt is allowed right now.
+
+        requested/forced are passed in rather than read off self — the caller
+        (_ensure_wifi_connected) clears _wifi_check_requested/_wifi_force
+        before this runs, so the flags themselves no longer carry the
+        "was a check requested this pass" answer by the time we get here.
+        """
         if not cfg or not cfg.get("wifi_enabled", False):
             return False
         if not str(cfg.get("wifi_ssid") or ""):
             return False
-        if not self._wifi_check_requested:
+        if not requested:
             return False
 
         # A deliberate user action always connects, whatever the mode or backoff.
-        if self._wifi_force:
+        if forced:
             return True
 
         # wifi_manual / lora: never bring the radio up on our own. A launched
@@ -433,6 +465,141 @@ class TelemetryBackgroundProcess:
             if time.ticks_diff(time.ticks_ms(), last) < self._wifi_backoff_ms():
                 return False
         return True
+
+    def _ensure_wifi_connected(self, cfg):
+        """WiFi association, shared by _send() and _check_wifi_and_flush().
+
+        is_connected() is a cheap status read with no radio activity, so it
+        runs every time — it is the guard that keeps an offline device from
+        ever reaching DNS/connect.
+
+        reconnect() is NOT cheap. It runs a full-channel wlan.scan() at full TX
+        power plus a multi-second association attempt. Firing that on every
+        send meant a turtle at sea with wifi_enabled left on paid a scan every
+        auto tick and every manual stamp, with no AP in range to find. It now
+        runs only when a check has been requested (boot, or the waiting /
+        online / wifi screens) and not more often than the backoff floor.
+
+        reconnect() polls on time.sleep_ms(200), which releases the Python
+        mutex, so the main thread keeps running during it.
+
+        Returns wifi_ok (bool) and updates self._result / connection_header.
+        """
+        # Consume the check request up front — a check is "serviced" the
+        # moment we know the current connection state, whether or not that
+        # required an actual reconnect() call. Leaving it set whenever WiFi
+        # was already connected (the common case) meant _run()'s no-payload
+        # branch called _check_wifi_and_flush() again on every 100 ms pass
+        # forever — a busy loop, not a fix.
+        was_requested = self._wifi_check_requested
+        was_forced = self._wifi_force
+        self._wifi_check_requested = False
+        self._wifi_force = False
+
+        wifi_ok = True
+        if self._wifi:
+            try:
+                wifi_ok = self._wifi.is_connected()
+                if not wifi_ok and was_requested and self._may_attempt_wifi(cfg, requested=was_requested, forced=was_forced):
+                    ssid = str(cfg.get("wifi_ssid") or "")
+                    pw = str(cfg.get("wifi_password") or "")
+                    print("[BACKGROUND] WiFi check requested, reconnecting...")
+                    self._last_wifi_attempt_ms = time.ticks_ms()
+                    self._wifi.reconnect(ssid, pw, timeout_s=6)
+                    wifi_ok = self._wifi.is_connected()
+                    if wifi_ok:
+                        self._wifi_fail_streak = 0
+                    elif self._wifi_fail_streak < self.WIFI_FAIL_STREAK_MAX:
+                        self._wifi_fail_streak += 1
+                    print("[BACKGROUND] WiFi attempt {} — next retry in {} min".format(
+                        "ok" if wifi_ok else "failed",
+                        self._wifi_backoff_ms() // 60000,
+                    ))
+            except Exception as _we:
+                print("[BACKGROUND] WiFi err:", repr(_we))
+                wifi_ok = False
+
+        # A fresh association means new DNS servers — drop any resolve
+        # cached against the previous network (including negative entries,
+        # so a working network is not shut out by a stale failure).
+        if wifi_ok and not self._was_connected:
+            try:
+                from src.lib.urequests import invalidate_dns
+                invalidate_dns()
+            except Exception:
+                pass
+        self._was_connected = bool(wifi_ok)
+
+        # Push wifi status to connection_header cache so the main thread never
+        # has to call wlan.isconnected() (which blocks on the WiFi driver mutex
+        # while WPA2 auth is in progress on this thread).
+        self._set_result(wifi_ok=wifi_ok)
+        try:
+            from src.ui.connection_header import set_wifi_ok, set_wifi_rssi
+            set_wifi_ok(wifi_ok)
+            set_wifi_rssi(self._wifi.rssi() if wifi_ok else None)
+        except Exception:
+            pass
+
+        return wifi_ok
+
+    def _check_wifi_and_flush(self, cfg):
+        """Reconnect (if requested/due) and flush the flash-backed queue.
+
+        Runs when the bg thread has no new payload to send but a screen asked
+        for connectivity anyway — otherwise a wifi-check request made while
+        nothing has built a payload recently (the common "been offline a
+        while" case) would set a flag that is never consumed, and the user
+        would see WiFi come up but the API/queue never follow.
+        """
+        self._set_result(sending=True)
+        try:
+            from src.ui.connection_header import _api_sending_raw
+            _api_sending_raw[0] = 1
+        except Exception:
+            pass
+        self._start_blink(hz=2)
+
+        ok = None
+        sent = 0
+        msg = ""
+        try:
+            wifi_ok = self._ensure_wifi_connected(cfg)
+            if not wifi_ok:
+                msg = "wifi offline"
+                return
+            if self._wifi is not None:
+                try:
+                    self._wifi._apply_pm_performance(quiet=True)
+                except Exception:
+                    pass
+            _gc()
+            client = self._ensure_client(cfg)
+            ok, sent = client.flush_queue()
+            msg = "flushed %d" % sent if ok else "flush failed"
+        except Exception as e:
+            ok = False
+            msg = "EXC " + repr(e)
+        finally:
+            self._stop_blink()
+            # Only stamp api_state.ok when the flush actually talked to the
+            # API (sent > 0) — an empty queue means nothing was attempted, so
+            # leave the Online screen's last-known status alone rather than
+            # claiming a connection that was never exercised.
+            if sent > 0:
+                self._set_result(sending=False, ok=bool(ok), msg=msg, last_ms=time.ticks_ms())
+                try:
+                    from src.ui.connection_header import set_api_ok
+                    set_api_ok(bool(ok))
+                except Exception:
+                    pass
+            else:
+                self._set_result(sending=False)
+            _gc()
+            if ok:
+                print("[BACKGROUND] wifi check + flush:", msg)
+            else:
+                print("[BACKGROUND] wifi check:", msg)
 
     def _send(self, payload, cfg):
         """Execute WiFi reconnect + HTTP send + queue flush on the background thread."""
@@ -453,70 +620,8 @@ class TelemetryBackgroundProcess:
 
         ok = False
         msg = ""
-        wifi_ok = True
         try:
-            # WiFi association.
-            #
-            # is_connected() is a cheap status read with no radio activity, so
-            # it stays on every send — it is the guard that keeps an offline
-            # device from ever reaching DNS/connect.
-            #
-            # reconnect() is NOT. It runs a full-channel wlan.scan() at full TX
-            # power plus a multi-second association attempt. Firing that on
-            # every send meant a turtle at sea with wifi_enabled left on paid a
-            # scan every auto tick and every manual stamp, with no AP in range
-            # to find. It now runs only when a check has been requested (boot,
-            # or the waiting / online / wifi screens) and not more often than
-            # WIFI_RETRY_FLOOR_MS. Offline sends just queue to flash, which is
-            # what they did anyway.
-            #
-            # reconnect() polls on time.sleep_ms(200), which releases the
-            # Python mutex, so the main thread keeps running during it.
-            if self._wifi:
-                try:
-                    wifi_ok = self._wifi.is_connected()
-                    if not wifi_ok and self._may_attempt_wifi(cfg):
-                        ssid = str(cfg.get("wifi_ssid") or "")
-                        pw = str(cfg.get("wifi_password") or "")
-                        print("[BACKGROUND] WiFi check requested, reconnecting...")
-                        self._last_wifi_attempt_ms = time.ticks_ms()
-                        self._wifi_check_requested = False
-                        self._wifi_force = False
-                        self._wifi.reconnect(ssid, pw, timeout_s=6)
-                        wifi_ok = self._wifi.is_connected()
-                        if wifi_ok:
-                            self._wifi_fail_streak = 0
-                        elif self._wifi_fail_streak < self.WIFI_FAIL_STREAK_MAX:
-                            self._wifi_fail_streak += 1
-                        print("[BACKGROUND] WiFi attempt {} — next retry in {} min".format(
-                            "ok" if wifi_ok else "failed",
-                            self._wifi_backoff_ms() // 60000,
-                        ))
-                except Exception as _we:
-                    print("[BACKGROUND] WiFi err:", repr(_we))
-                    wifi_ok = False
-
-            # A fresh association means new DNS servers — drop any resolve
-            # cached against the previous network (including negative entries,
-            # so a working network is not shut out by a stale failure).
-            if wifi_ok and not self._was_connected:
-                try:
-                    from src.lib.urequests import invalidate_dns
-                    invalidate_dns()
-                except Exception:
-                    pass
-            self._was_connected = bool(wifi_ok)
-
-            # Push wifi status to connection_header cache so the main thread never
-            # has to call wlan.isconnected() (which blocks on the WiFi driver mutex
-            # while WPA2 auth is in progress on this thread).
-            self._set_result(wifi_ok=wifi_ok)
-            try:
-                from src.ui.connection_header import set_wifi_ok, set_wifi_rssi
-                set_wifi_ok(wifi_ok)
-                set_wifi_rssi(self._wifi.rssi() if wifi_ok else None)
-            except Exception:
-                pass
+            wifi_ok = self._ensure_wifi_connected(cfg)
 
             if not wifi_ok:
                 _gc()

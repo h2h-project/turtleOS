@@ -4,7 +4,7 @@
     "wifi_enabled": true,
     "wifi_ssid": "MAVI_MARMARA",
     "wifi_password": "Mavimarmara@2010",
-    "gps_enabled": false,
+    "gps_enabled": true,
     "api_base": "http://hopeturtles.org",
     "device_id": "18",
     "device_key": "119209285457a6f7d14979d0df1dcd6da32b732b81c8db00418c7b6f4dd3236f",
