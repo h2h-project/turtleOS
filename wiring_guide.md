@@ -13,20 +13,53 @@ The pin chart below matches this board orientation:
 We highly recommend following the wire color schema below. Future hope turtle wiring guides and diagrams will use the same color convention.
 
 ---
-
 ## XIAO ESP32-S3 Pin Usage
 
 | Left Side (Top → Bottom) | Right Side (Top → Bottom) |
 |---|---|
-| 🟨 **1** GPIO1 / Button LED | 🟥 **1** 5V — 5V input from bq25185 |
-| ⬜ **2** GPIO2 / A1 / D1 — spare | ⚫ **2** GND → shared ground |
-| ⬜ **3** GPIO3 / A2 / D2 — spare | 🟥 **3** 3V3 → OLED VCC, RTC VCC, QMC5883L VCC, AS5600 VCC, INA219 VCC |
-| 🟪 **4** GPIO4 / A3 / D3 → BUTTON | ⬜ **4** GPIO9 / A10 / D10 / MOSI — spare |
-| 🟩 **5** GPIO5 / A4 / D4 / SDA → OLED SDA, RTC SDA, QMC5883L SDA, AS5600 SDA, INA219 SDA | ⬜ **5** GPIO8 / A9 / D9 / MISO — spare |
-| 🟨 **6** GPIO6 / A5 / D5 / SCL → OLED SCL, RTC SCL, QMC5883L SCL, AS5600 SCL, INA219 SCL | 🟨 **6** GPIO7 / A8 / D8 / SCK → SERVO signal |
+| ⬛ **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V — 5V input from bq25185; also feeds GY-87 VCC_IN |
+| 🟨 **2** GPIO2 / A1 / D1 → BUTTON LED (active HIGH, LED + resistor to GND) | ⚫ **2** GND → shared ground |
+| 🟨 **3** GPIO3 / A2 / D2 → **I2C_EXT SCL** → GY-87 SCL | 🟥 **3** 3V3 → OLED VCC, RTC VCC, AS5600 VCC, INA219 VCC, AHT20 VCC |
+| 🟪 **4** GPIO4 / A3 / D3 → BUTTON | ⬛ **4** GPIO9 / A10 / D10 / MOSI — RESERVED: GPS_RESET (stacked L76K GNSS module) |
+| 🟩 **5** GPIO5 / A4 / D4 / SDA → **I2C_SYS SDA** → OLED SDA, RTC SDA, AS5600 SDA, INA219 SDA, AHT20 SDA | 🟩 **5** GPIO8 / A9 / D9 / MISO → **I2C_EXT SDA** → GY-87 SDA |
+| 🟨 **6** GPIO6 / A5 / D5 / SCL → **I2C_SYS SCL** → OLED SCL, RTC SCL, AS5600 SCL, INA219 SCL, AHT20 SCL | 🟨 **6** GPIO7 / A8 / D8 / SCK → SERVO signal |
 | 🔵 **7** GPIO43 / D6 / TX → GPS RX | 🟠 **7** GPIO44 / D7 / RX ← GPS TX |
 
 > **Important:** The XIAO 5V pin is used as a regulated 5V input from the bq25185 boost board. The MG996R servo is **not** powered from the XIAO. The servo has its own 6V regulator and only shares ground and a PWM signal with the XIAO.
+
+> **Button LED is GPIO2 (D1), not GPIO1.** The stacked L76K GNSS module owns D0/GPIO1 (GPS_WAKEUP) and D10/GPIO9 (GPS_RESET). Do not reuse either pin while the module is stacked. This matches `BTN_LED_PIN = 2` in `src/hal/board_xiao_esp32_s3.py`.
+
+---
+
+## I2C Buses
+
+turtleShell v3.0 splits I2C into two buses. As of turtleOS 2.4 only the GY-87 has m remaining sensors migrate as the v3.0 PCB develops.
+
+| Bus | Peripheral | SDA | SCL | Speed | Devices | Notes |
+|---|---|---|---|---|---|---|
+| **I2C_SYS** | I2C(0) | GPIO5 (D4) | GPIO6 (D5) | 400 kHz | OLED 0x3C, DS3231 0x68HT20 0x38 | Onboard/system bus. `init_i2c()` in firmware. |
+| **I2C_EXT** | I2C(1) | GPIO8 (D9) | GPIO3 (D2) | 400 kHz | GY-87: MPU6050 0x68, HMC5883L 0x1E / QMC5883L 0x0D (after bypass), BMP180 0x77 | External/plug-in bus. `init_i2c_ext()` in firmware.
+GPIO9 was rejected for SCL because the GNSS module drives it as GPS_RESET. |
+
+**Why two buses:** the GY-87's MPU6050 answers at 0x68, the same address as the DS3 does not expose AD0 on its header. Giving it its own bus avoids the collisionwithout board surgery and takes the GY-87's 2.2 kΩ pull-ups off the system bus.
+
+**Pull-ups:** each I2C_SYS module brings its own pull-ups. Keep the parallel total above about 1 kΩ (measure SDA to 3V3 with power off). On the v3.0 PCB, add 4.7 kΩ pull-ups to 3V3 on I2C_EXT; for
+bench work the GY-87's onboard pull-ups suffice.
+
+---
+
+## GY-87 10DOF IMU Wiring (I2C_EXT)
+
+| GY-87 pin | XIAO pin | Note |
+|---|---|---|
+| VCC_IN | 5V | The GY-87 has its own 3.3 V regulator. Do not feed 3.3 V into VCC_I
+| 3.3V | not connected | Regulator output, not an input. |
+| GND | GND | |
+| SCL | D2 (GPIO3) | I2C_EXT SCL |
+| SDA | D9 (GPIO8) | I2C_EXT SDA |
+| FSYNC, INTA, DRDY | not connected | |
+
+Mount the board with the silkscreen **X arrow pointing to the bow** so pitch is nose-up positive and roll is starboard-down positive.
 
 ---
 
@@ -36,13 +69,14 @@ We highly recommend following the wire color schema below. Future hope turtle wi
 |---|---|
 | 🟥 Red | Power |
 | ⚫ Black | Ground |
-| 🟩 Green | I2C SDA |
-| 🟨 Yellow | I2C SCL / button LED |
+| 🟩 Green | I2C SDA (both buses) |
+| 🟨 Yellow | I2C SCL (both buses) / button LED / servo PWM |
 | 🔵 Blue | UART TX from XIAO to GPS RX |
 | 🟠 Orange | UART RX on XIAO from GPS TX |
 | 🟪 Purple | Button signal |
-| 🟨 Yellow | Servo PWM signal |
-| ⬜ White | Spare / unused GPIO |
+| ⬛ Dark | Reserved by stacked GNSS module (do not use) |
+| ⬜ White | Spare / unused GPIO |     
+
 
 ---
 
