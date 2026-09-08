@@ -10,7 +10,7 @@ The pin chart below matches this board orientation:
 - **component side visible**
 - pins read from **top to bottom** on each side
 
-We highly recommend following the wire color schema below. Future hope turtle wiring guides and diagrams will use the same color convention.
+We highly recommend following the wire color schema below and using our color conventions with your actual wires.  We'll do our best to stick to these colors in future versions.
 
 ---
 ## XIAO ESP32-S3 Pin Usage
@@ -26,24 +26,18 @@ We highly recommend following the wire color schema below. Future hope turtle wi
 | 🔵 **7** GPIO43 / D6 / TX → GPS RX | 🟠 **7** GPIO44 / D7 / RX ← GPS TX |
 
 
-> **Button LED is GPIO2 (D1), not GPIO1.** The stacked L76K GNSS module owns D0/GPIO1 (GPS_WAKEUP) and D10/GPIO9 (GPS_RESET). Do not reuse either pin while the module is stacked. This matches `BTN_LED_PIN = 2` in `src/hal/board_xiao_esp32_s3.py`.
-
 ---
 
 ## I2C Buses
 
-turtleShell v3.0 splits I2C into two buses. As of turtleOS 2.4 only the GY-87 has m remaining sensors migrate as the v3.0 PCB develops.
+The latest version of turtleOS (v2.4) lays the foundation for forthcoming turtleShell v3 PCB by establishing two I2C buses. We'll have one for sensors and components that are hardwired to the PCB (i.e our OLED, INA219, AHT20, etc.) and one for "external" sensors that are wired in to the PCBs built in JST ports.  We'll call these the system and external buses (I2C_SYS and I2C_EXT respectively). As of turtleOS 2.4 only the GY-87 has m remaining sensors migrate as the v3.0 PCB develops.
 
 | Bus | Peripheral | SDA | SCL | Speed | Devices | Notes |
 |---|---|---|---|---|---|---|
 | **I2C_SYS** | I2C(0) | GPIO5 (D4) | GPIO6 (D5) | 400 kHz | OLED 0x3C, DS3231 0x68HT20 0x38 | Onboard/system bus. `init_i2c()` in firmware. |
-| **I2C_EXT** | I2C(1) | GPIO8 (D9) | GPIO3 (D2) | 400 kHz | GY-87: MPU6050 0x68, HMC5883L 0x1E / QMC5883L 0x0D (after bypass), BMP180 0x77 | External/plug-in bus. `init_i2c_ext()` in firmware.
-GPIO9 was rejected for SCL because the GNSS module drives it as GPS_RESET. |
+| **I2C_EXT** | I2C(1) | GPIO8 (D9) | GPIO3 (D2) | 400 kHz | GY-87: MPU6050 0x68, HMC5883L 0x1E / QMC5883L 0x0D (after bypass), BMP180 0x77 | External/plug-in bus. `init_i2c_ext()` in firmware.|
 
-**Why two buses:** the GY-87's MPU6050 answers at 0x68, the same address as the DS3 does not expose AD0 on its header. Giving it its own bus avoids the collisionwithout board surgery and takes the GY-87's 2.2 kΩ pull-ups off the system bus.
-
-**Pull-ups:** each I2C_SYS module brings its own pull-ups. Keep the parallel total above about 1 kΩ (measure SDA to 3V3 with power off). On the v3.0 PCB, add 4.7 kΩ pull-ups to 3V3 on I2C_EXT; for
-bench work the GY-87's onboard pull-ups suffice.
+**Why two buses?** Alas the GY-87's MPU6050 answers at 0x68, the same address as the DS3 Clcok we're using. Giving each their own bus avoids the collision without board surgery and takes the GY-87's 2.2 kΩ pull-ups off the system bus.  But more significantly, we're starting to max out pull-up resistance on the baord by having 6+ I2C components.  Each I2C_SYS module brings its own pull-ups.  This works fine for a few, but after 5-6 on one set of pins it starts causing problems.  So with two buses, we weep the parallel total above about 1 kΩ (measure SDA to 3V3 with power off).
 
 ---
 
