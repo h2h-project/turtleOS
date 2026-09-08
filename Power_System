@@ -1,0 +1,46 @@
+# Turtle Power System
+
+The Hope Turtle uses **two electrically separate battery systems**:
+
+1. A **1S system battery** for TurtleShell, the XIAO ESP32-S3, sensors, GPS, display, telemetry, and other low-voltage electronics.
+2. A dedicated **2S servo battery pack** for the MG996R sail servo.
+
+This is a major change from the original architecture, where one 3.7V battery supplied both the electronics and servo through separate regulators.
+
+Separating the two power systems prevents the high and rapidly changing current demand of the servo from disturbing the XIAO, GPS, I²C buses, OLED, and navigation sensors.
+
+---
+
+## Power Architecture Overview
+
+```text
+SYSTEM POWER DOMAIN
+===================
+
+                    Solar panel
+                        │
+                        ▼
+                 Solar charger
+                        │
+                        ▼
+                    VIN- SIDE
+                        │
+                        │
+System Battery + ── VIN+│
+                   ┌────┴────┐
+                   │ INA219  │
+                   └────┬────┘
+                        │ VIN-
+                        │
+                        ├──── Solar charger BATT+
+                        │
+                        └──── Main power switch
+                                  │
+                                  ▼
+                            XIAO BAT+
+                                  │
+                            TurtleShell
+                                  │
+                         sensors / GPS / OLED
+
+System Battery - ───────────────────────── Shared system GND
