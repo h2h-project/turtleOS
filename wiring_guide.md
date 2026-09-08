@@ -17,7 +17,7 @@ We highly recommend following the wire color schema below. Future hope turtle wi
 
 | Left Side (Top → Bottom) | Right Side (Top → Bottom) |
 |---|---|
-| ⬛ **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V — 5V input from bq25185; also feeds GY-87 VCC_IN |
+| ⬛ **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V — No input |
 | 🟨 **2** GPIO2 / A1 / D1 → BUTTON LED (active HIGH, LED + resistor to GND) | ⚫ **2** GND → shared ground |
 | 🟨 **3** GPIO3 / A2 / D2 → **I2C_EXT SCL** → GY-87 SCL | 🟥 **3** 3V3 → OLED VCC, RTC VCC, AS5600 VCC, INA219 VCC, AHT20 VCC |
 | 🟪 **4** GPIO4 / A3 / D3 → BUTTON | ⬛ **4** GPIO9 / A10 / D10 / MOSI — RESERVED: GPS_RESET (stacked L76K GNSS module) |
@@ -25,7 +25,6 @@ We highly recommend following the wire color schema below. Future hope turtle wi
 | 🟨 **6** GPIO6 / A5 / D5 / SCL → **I2C_SYS SCL** → OLED SCL, RTC SCL, AS5600 SCL, INA219 SCL, AHT20 SCL | 🟨 **6** GPIO7 / A8 / D8 / SCK → SERVO signal |
 | 🔵 **7** GPIO43 / D6 / TX → GPS RX | 🟠 **7** GPIO44 / D7 / RX ← GPS TX |
 
-> **Important:** The XIAO 5V pin is used as a regulated 5V input from the bq25185 boost board. The MG996R servo is **not** powered from the XIAO. The servo has its own 6V regulator and only shares ground and a PWM signal with the XIAO.
 
 > **Button LED is GPIO2 (D1), not GPIO1.** The stacked L76K GNSS module owns D0/GPIO1 (GPS_WAKEUP) and D10/GPIO9 (GPS_RESET). Do not reuse either pin while the module is stacked. This matches `BTN_LED_PIN = 2` in `src/hal/board_xiao_esp32_s3.py`.
 
@@ -147,32 +146,5 @@ The button uses a pull-up input in software:
 This is intended for a the LED indicator built into the button.
 
 
-## First Power-Up Checklist
 
-Before powering the complete hope turtle:
-
-1. Confirm battery polarity.
-2. Confirm the on/off switch interrupts battery positive.
-3. Confirm the bq25185 output is 5V before connecting it to XIAO 5V/VBUS.
-4. Confirm the Pololu regulator output is 6V before connecting the MG996R.
-5. Confirm all grounds are common.
-6. Confirm the servo red wire is **not** connected to the XIAO.
-7. Confirm GPIO7 / D8 goes only to the servo signal wire.
-8. Start with the servo unloaded and test small movements only.
-
----
-
-## Power Summary
-
-```text
-1 × 21700 3.7V battery
-   │
-   ├── bq25185 charger + 5V boost
-   │       └── XIAO 5V/VBUS
-   │
-   └── Pololu S13V25F6 6V regulator
-           └── MG996R servo power
-
-XIAO GPIO7 / D8 → MG996R signal
-All grounds connected together
 ```
