@@ -37,7 +37,7 @@ Ready to build your own hope turtle? These guides will take you from components 
 
 - **[Hardware Stack](hardware_stack.md)** — full component list with links to example listings. Every part is chosen to be inexpensive and globally sourceable.
 - **[Wiring Guide](wiring_guide.md)** — step-by-step wiring reference for the XIAO ESP32-S3, covering power architecture, I2C sensors, GPS, servo, and button.
-- **[Power Sytem][Power_System.md]** — The Turtle's power archetecture, batteries, charging and sensing.
+- **[Power Sytem](Power_System.md)** — The Turtle's power archetecture, batteries, charging and sensing.
 - **[Turtle Shells](https://github.com/h2h-project/turtle_Shells/blob/main/README.md)** — STL files and carpentry plans for the physical hull, cage, and chassis that make up the turtle body. Parts can be 3D printed or built by a local carpenter.
 
 
