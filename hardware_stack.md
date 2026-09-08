@@ -5,25 +5,25 @@ The hope turtle is built from **globally accessible, inexpensive components**. E
 The links in the Example column point to web listings as a convenient reference. In most cases identical or equivalent parts are available through local marketplaces (AliExpress, Shopee, Mercado Libre, local electronics shops) for even less. Wherever possible, standard I²C and UART modules are used so that builders can substitute equivalent boards without rewriting firmware.
 
 ---
-
 ## Hardware stack
 
-| Component                                 | Role | Dev Status    | Example |
-|-------------------------------------------|---|---------------|---|
-| Seeed Studio XIAO ESP32-S3                | Main MCU — runs turtleOS, built-in WiFi for telemetry | Core          | <a href="https://www.amazon.co.uk/ESP32S3-2-4GHz-Wi-Fi-Dual-core-Supported-Efficiency-Interface/dp/B0BYSB66S5" target="_blank">🔗</a> |
-| MG996R sail servo                         | Sail actuator — PWM-driven boom control at 50 Hz | Testing        | <a href="https://www.amazon.co.uk/Towerpro-MG996R-Servo-10kg-0-20sec/dp/B00URCIGBQ" target="_blank">🔗</a> |
-| GPS Tracker                               | GNSS add on Module for XIAO | Core          | <a href="https://thepihut.com/products/gnss-add-on-module-for-seeed-studio-xiao" target="_blank">🔗</a> |
-| AS5600 magnetic angle encoder             | Sail boom position feedback — closed-loop servo control | Core        | <a href="https://www.amazon.co.uk/HALJIA-Induction-Measurement-Magnetized-Precision/dp/B08BCB899Q" target="_blank">🔗</a> |
-| INA219 current/power monitor              | Battery voltage, current, and charge estimation over I2C | Core        | <a href="https://www.amazon.co.uk/INA219-Bi-directional-Current-Supply-Monitor/dp/B07YDH2PCY" target="_blank">🔗</a> |
-| SSD1306 / SH1106 OLED (128×64)            | Navigation display — heading, GPS state, battery, turtle animation | Core          | <a href="https://www.amazon.co.uk/AZDelivery-0-96-inch-Display-Parent/dp/B081NFJP68" target="_blank">🔗</a> |
-| DS3231 RTC                                | UTC timekeeping — survives power-off without network sync | CORE          | <a href="https://www.amazon.co.uk/Wishiot-AT24C32-Raspberry-Mega2560-Leonardo/dp/B0BTM8HHX2" target="_blank">🔗</a> |
-| Xiao Grove Shield                         | Main circuit board and sensor port | CORE          | <a href="[https://www.amazon.co.uk/Seeeduino-Expansion-Peripherals-Expandable-Interfaces/dp/B08NDZ3WCP](https://thepihut.com/products/grove-shield-for-seeeduino-xiao)" target="_blank">🔗</a> |
-| AHT21 + ENS160 circuit                    | One circuit that does temp, humidity and TVOC | Core        | <a href="https://www.amazon.co.uk/ARCELI-Quality-Temperature-Humidity-Purification/dp/B0CRTVMM7N" target="_blank">🔗</a> |
-| ICM-20948                                 | 9-DOF heading, pitch, roll — accurate orientation independent of magnetic interference | Testing | <a href="https://www.amazon.co.uk/9DOF-IMU-BREAKOUT-ICM-20948-Q/dp/B07VNV3WKL" target="_blank">🔗</a> |
-| Pololu S13V25F6 voltage regulator         | Regulated 6V 2.5A output — stable power to servo and MCU from variable battery voltage | CORE - In dev | <a href="https://www.pololu.com/product/4981" target="_blank">🔗</a> |
-| Adafruit bq25185 solar charger            | USB / DC / solar charging with 5V boost — LiPo charge management and regulated power delivery | CORE - In dev | <a href="https://www.amazon.co.uk/Adafruit-bq25185-Charging-Module-6106/dp/B0DXK6YZX8" target="_blank">🔗</a> |
-| 21700 Li-ion cell (4200mAh 3.7V 30A)      | Primary energy storage — high-capacity, high-discharge cell for extended voyages | CORE          | <a href="https://www.amazon.co.uk/Vapcell-4200mAh-21700-Rechargeable-Battery/dp/B0DFCZHQ6L" target="_blank">🔗</a> |
-| Xiao Wio-SX1262 Kit for Meshtastic & LoRa | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future        | <a href="https://www.amazon.co.uk/XIAO-ESP32S3-Wio-SX1262-Development-Meshtastic/dp/B0DZCQ1FG3" target="_blank">🔗</a> |
+| Component | Role | Dev Status | Example |
+|---|---|---|---|
+| Seeed Studio XIAO ESP32-S3 | Main MCU — runs turtleOS, built-in WiFi for telemetry | Core | <a href="https://www.amazon.co.uk/ESP32S3-2-4GHz-Wi-Fi-Dual-core-Supported-Efficiency-Interface/dp/B0BYSB66S5" target="_blank">🔗</a> |
+| TurtleShell PCB | Main carrier PCB — mounts the XIAO, provides power routing, dual I²C buses, battery monitoring, sensor ports, GPS, servo and peripheral connections | Core | <a href="https://github.com/h2h-project/turtle_Shells" target="_blank">🔗</a> |
+| MG996R sail servo | Sail actuator — PWM-driven sail control at 50 Hz | Testing | <a href="https://www.amazon.co.uk/Towerpro-MG996R-Servo-10kg-0-20sec/dp/B00URCIGBQ" target="_blank">🔗</a> |
+| GPS Tracker | GNSS add-on module for XIAO — position, speed and navigation data | Core | <a href="https://thepihut.com/products/gnss-add-on-module-for-seeed-studio-xiao" target="_blank">🔗</a> |
+| AS5600 magnetic angle encoder | Sail/cage position feedback — magnetic absolute angle sensing | Core | <a href="https://www.amazon.co.uk/HALJIA-Induction-Measurement-Magnetized-Precision/dp/B08BCB899Q" target="_blank">🔗</a> |
+| INA219 current/power monitor | Bidirectional main-battery current and voltage monitoring — measures net battery charge/discharge over onboard I²C | Core | <a href="https://www.amazon.co.uk/INA219-Bi-directional-Current-Supply-Monitor/dp/B07YDH2PCY" target="_blank">🔗</a> |
+| SSD1306 / SH1106 OLED (128×64) | Navigation display — heading, GPS state, battery, sensor data and turtle animation | Core | <a href="https://www.amazon.co.uk/AZDelivery-0-96-inch-Display-Parent/dp/B081NFJP68" target="_blank">🔗</a> |
+| DS3231 RTC | UTC timekeeping — survives power-off without network sync | Core | <a href="https://www.amazon.co.uk/Wishiot-AT24C32-Raspberry-Mega2560-Leonardo/dp/B0BTM8HHX2" target="_blank">🔗</a> |
+| DHT20 / AHT20 temperature & humidity sensor | Environmental temperature and relative-humidity sensing over I²C | Core | <a href="https://thepihut.com/products/dht20-aht20-pin-module-i2c-temperature-and-humidity-sensor?variant=40509865164995" target="_blank">🔗</a> |
+| CN3065 solar Li-ion charger | Dedicated solar charging of the main 1S 3.7V battery from the 5V solar panel; remains connected while TurtleShell electronics are switched off | Core - In dev | <a href="https://www.robotistan.com/mini-solar-lipo-charge-module" target="_blank">🔗</a> |
+| LM2596 buck regulator | Steps the separate 2S servo battery pack down from ~7.4V nominal to the regulated voltage required by the MG996R servo | Core - In dev | <a href="https://www.amazon.co.uk/Converter-Regulator-Efficiency-1-25V-35V-Electronic/dp/B0FY34NK2K" target="_blank">🔗</a> |
+| 21700 Li-ion cell (4200mAh 3.7V 30A) | Main TurtleShell energy storage — powers the XIAO and electronics and is charged by USB-C / solar | Core | <a href="https://www.amazon.co.uk/Vapcell-4200mAh-21700-Rechargeable-Battery/dp/B0DFCZHQ6L" target="_blank">🔗</a> |
+| 2 × Power-Xtra 18650 Li-ion cells (2000mAh 3.7V) | Dedicated 2S servo battery pack — approximately 7.4V nominal, supplying the LM2596 and MG996R independently of the main electronics battery | Core - In dev | <a href="https://www.robotistan.com/powerxtra-px18650-20b-37v-2000mah-liion-rechargeable-battery-flattop-en" target="_blank">🔗</a> |
+| XIAO Wio-SX1262 Kit for Meshtastic & LoRa | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future | <a href="https://www.amazon.co.uk/XIAO-ESP32S3-Wio-SX1262-Development-Meshtastic/dp/B0DZCQ1FG3" target="_blank">🔗</a> |
+
 
 ## Key Components
 
