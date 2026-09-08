@@ -48,8 +48,11 @@ class TelemetryState:
     MemoryError at import-time.
     """
 
-    def __init__(self, air_sensor, rtc_info_getter, wifi_manager, gps=None, battery_sensor=None):
+    def __init__(self, air_sensor, rtc_info_getter, wifi_manager, gps=None, battery_sensor=None,
+                 imu=None, heading_getter=None):
         self.air_sensor = air_sensor
+        self.imu = imu                        # shared GY87 (baro + pitch/roll) or None
+        self.heading_getter = heading_getter  # callable -> heading deg (offset applied) or None
         self.rtc_info_getter = rtc_info_getter
         self.wifi_manager = wifi_manager
         self.gps = gps
@@ -75,6 +78,8 @@ class TelemetryState:
                 wifi_manager=self.wifi_manager,
                 gps=self.gps,
                 battery_sensor=self.battery_sensor,
+                imu=self.imu,
+                heading_getter=self.heading_getter,
             )
             print("[TELEMETRY] scheduler ready")
             return True

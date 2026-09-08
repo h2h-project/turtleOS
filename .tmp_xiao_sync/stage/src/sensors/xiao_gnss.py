@@ -124,13 +124,13 @@ class GnssModule:
         read was the oldest one queued and staleness grew without bound —
         that, not the fix rate, was the multi-second lag on manual stamps.
 
-        1 Hz is also enough on the merits: heading comes from the QMC5883L
-        (see nav/heading.py), the luff sweep runs off the AS5600, and at
+        1 Hz is also enough on the merits: heading comes from the GY-87's
+        magnetometer (see nav/heading.py), the luff sweep runs off the AS5600, and at
         turtle speeds (~0.5-1 m/s) a second of travel is well inside the
         receiver's ~2.5 m CEP. Raising the rate only resamples that noise.
 
         If GPS course-over-ground is ever needed (e.g. damping magnetometer
-        drift for the planned ICM-20948), raise the baud with PMTK251 first —
+        drift for the GY-87 magnetometer), raise the baud with PMTK251 first —
         do not go back to 5 Hz at 9600.
         """
         # PMTK314 field order: GLL, RMC, VTG, GGA, GSA, GSV, ...

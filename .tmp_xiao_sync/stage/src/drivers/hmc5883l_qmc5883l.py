@@ -1,10 +1,13 @@
 # src/drivers/hmc5883l_qmc5883l.py
 # MicroPython drivers for HMC5883L and QMC5883L 3-axis magnetometers
 #
-# Back in the runtime path: the Phase 0 MPU-9250 units on hand turned out
-# to be duds, so compass.py and nav/heading.py probe the MPU-9250 first
-    # (for forward compatibility) but fall back to QMC5883L/HMC5883L here when
-# it's absent — see the fallback logic in each file's _get_mag().
+# Two roles in turtleOS 2.4+:
+#   * the magnetometer on the GY-87 10DOF board, which sits on the MPU6050's
+#     auxiliary I2C bus and appears at 0x0D/0x1E once bypass is enabled
+#     (src/drivers/gy87.py does that and owns the instance);
+#   * a standalone GY-271 compass wired straight to the bus, found by
+#     HeadingSource's fallback ladder (src/nav/heading.py) when no GY-87 is
+#     present.
 #
 # HMC5883L (genuine):
 #   I2C address : 0x1E (fixed)

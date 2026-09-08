@@ -1,25 +1,47 @@
 {
+    "_comment": "Full parameter list — every key in device/config.py DEFAULTS. Values below are this device's settings; where not customised they match the firmware default shown in the comment.",
 
     "board_type": "xiao_esp32s3",
+
+    "gps_enabled": true,
+    "gps_module": "l76k",
+    "oled_col_offset": 2,
+
     "wifi_enabled": true,
     "wifi_ssid": "MAVI_MARMARA",
     "wifi_password": "Mavimarmara@2010",
-    "gps_enabled": true,
+
+    "mission_connection_mode": "wifi_auto",
+
+    "telemetry_mode": "auto",
+    "telemetry_enabled": true,
+    "telemetry_post_every_s": 120,
+    "morse_bless": true,
+
     "api_base": "http://hopeturtles.org",
     "device_id": "18",
     "device_key": "119209285457a6f7d14979d0df1dcd6da32b732b81c8db00418c7b6f4dd3236f",
-    "telemetry_enabled": true,
-    "telemetry_mode": "auto",
-    "telemetry_post_every_s": 120,
+
     "timezone_offset_min": 180,
-    "oled_col_offset": 2,
+
     "compass_offset_deg": -80,
+
     "turtle_mode": true,
     "joke_mode": true,
-    "morse_bless": true,
     "servo_present": true,
 
-    "waypoints": [],
+    "mission_dest_full_name": "Al Mawasi, Gaza",
+    "mission_dest_short_name": "",
+    "mission_destination": [31.35, 34.27],
+    "mission_waypoints": [],
+
+    "set_destination": null,
+    "set_departure": null,
+    "set_arrival": null,
+    "set_waypoints": [],
+    "set_short_name": "",
+    "set_full_name": "",
+
     "nav_cycle_ms": 300,
     "arrival_radius_m": 300,
     "luff_sweep_dps": 8,

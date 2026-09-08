@@ -96,6 +96,7 @@
   }
   .badge.now { background: var(--shell-mist); color: var(--shell); }
   .badge.next { background: var(--sand-mist); color: var(--sand); }
+  .badge.done { background: var(--shell-mist); color: var(--shell); }
   .badge.later { background: var(--plum-mist); color: var(--plum); }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 24px 0; }
   @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
@@ -520,8 +521,8 @@ solution can save a sweep entirely.</p>
 <h3>What else is already working</h3>
 <div class="two-col">
   <div class="mini-card"><h4>🧭 Compass heading</h4>
-  <p>A magnetometer (the GY-271 board) tells the turtle which way it's pointing,
-  corrected for local magnetic declination.</p></div>
+  <p>A magnetometer (on the GY-87 board, or a stand-alone GY-271) tells the turtle
+  which way it's pointing, corrected for local magnetic declination.</p></div>
   <div class="mini-card"><h4>📍 Waypoint bearing</h4>
   <p>The turtle carries a list of GPS waypoints, computes the great-circle bearing
   to the next one, and advances waypoints on arrival — progress is saved so a
@@ -548,34 +549,30 @@ timestamps — every experiment logs straight through it.</p>
 </div>
 
 <!-- ================================================================ -->
-<h2><span class="kicker">Part Two</span>The new hardware: our IMU <span class="badge next">Sourced &amp; wired</span></h2>
+<h2><span class="kicker">Part Two</span>The new hardware: our IMU <span class="badge done">Installed in 2.4</span></h2>
 
-<p class="lede">The big July decision: every turtle gets an <strong>IMU</strong>
+<p class="lede">Every turtle now carries an <strong>IMU</strong>
 (Inertial Measurement Unit) — a fingernail-sized motion sensor, the same kind of
-chip that lets your phone know when you rotate it. It gives the turtle heading,
-heel (tilt), turn rate, and a feel for wave disturbance — the senses everything
-in Part Three builds on.</p>
+chip that lets your phone know when you rotate it — plus a barometer, on one
+small board called the <strong>GY-87</strong>. It gives the turtle heading, heel
+(tilt), turn rate, a feel for wave disturbance, and air pressure — the senses
+everything in Part Three builds on.</p>
 
 <div class="callout good">
-<p><strong>Phase 0 — do this before anything else.</strong> The IMU is sourced,
-wired, and already sitting at a free address (0x69) — the only thing left is
-code, so it jumps the queue ahead of AOELL, ahead of the sailing experiments,
-ahead of everything. Four concrete steps:</p>
+<p><strong>A change of plan, for the better.</strong> The first IMU we sourced
+(an MPU-9250 module) turned out to be a batch of duds: the chip would not
+reliably answer its own "who are you?" question, and its built-in compass
+never showed up. Meanwhile the turtles kept sailing on the older stand-alone
+GY-271 compass. In turtleOS 2.4 we switched to the GY-87, a board that puts
+three well-known chips together:</p>
 <ol style="margin:8px 0 0; padding-left:20px;">
-<li>Confirm the chip on the bench (it answers <code>0x71</code> to a
-"who are you?" register read) and write the MPU-9250 driver — its register map
-is different from the plainer MPU6050 some listings confuse it with.</li>
-<li>Pick it up automatically at boot: scan for it alongside the other sensors,
-log <code>[BOOT] MPU-9250 found</code>, and confirm whether it needs any
-settle time before its first reading can be trusted (to be measured, not
-assumed).</li>
-<li><strong>Ditch the old parts, don't run two in parallel.</strong> The
-old GY-271 compass board and the old 6-degree-of-freedom sensing path get
-retired in favor of this one integrated 9-measurement chip — gyroscope,
-accelerometer, and compass together.</li>
-<li>Wire the new driver straight into the screens that already exist —
-the compass and sailpoint screens — so the swap is visible and testable on
-the bench immediately, before any of the fancier fusion math is written.</li>
+<li>An <strong>MPU6050</strong> — gyroscope and accelerometer, the workhorse
+motion chip of a million hobby projects.</li>
+<li>A <strong>compass</strong> (HMC5883L or its QMC5883L clone) — the very same
+part family as the GY-271 we already trusted, so the heading code barely
+changed.</li>
+<li>A <strong>BMP180 barometer</strong> — air pressure and temperature, which
+also gives a rough altitude and, over hours, a weather trend.</li>
 </ol>
 </div>
 
@@ -587,29 +584,40 @@ the bench immediately, before any of the fancier fusion math is written.</li>
   <div class="mini-card"><h4>📉 Accelerometer</h4>
   <p>"Which way is down?" Tells us how much the boat is heeled (tilted) — essential
   for correcting the compass on a leaning sailboat — and how roughly the waves
-  are shaking it.</p></div>
+  are shaking it. Its pitch and roll already ride along in every telemetry
+  record.</p></div>
   <div class="mini-card"><h4>🧲 Magnetometer</h4>
   <p>"Which way is north?" Truthful on average but noisy moment-to-moment — and
   wrong when tilted, unless we correct it with the accelerometer.</p></div>
-  <div class="mini-card"><h4>🤝 Together: sensor fusion</h4>
-  <p>Blend the gyro's smoothness with the compass's honesty and the accelerometer's
-  sense of "down", and you get a heading that is smooth, true, <em>and</em>
-  tilt-proof.</p></div>
+  <div class="mini-card"><h4>🌡️ Barometer</h4>
+  <p>"How heavy is the air?" Pressure falling over a few hours is the oldest
+  storm warning there is. Reported as pressure, temperature and an estimated
+  altitude.</p></div>
 </div>
 
-<h3>Wiring — already resolved</h3>
-<p>All our sensors share a single two-wire party line called the I2C bus, and each
-device on it needs a unique address, like houses on a street. The IMU's factory
-address (0x68) collided with the clock chip, which already lived there — so the
-module is strapped, on its own board, from its address-select pin (AD0) to its own
-3.3&nbsp;V supply. That moves it to <strong>0x69</strong>, which is free. This is
-done and wired; nothing here is an open question anymore, and Phase 0 above is
-where the remaining work — the code side — actually lives.</p>
+<h3>Wiring — a second street</h3>
+<p>Our sensors share a two-wire party line called the I2C bus, and each device on
+it needs a unique address, like houses on a street. The MPU6050's factory address
+(0x68) collides with the clock chip, which already lives there, and the GY-87 gives
+us no way to change it. So the turtleShell v3.0 design does what a town does when
+one street is full: it builds a second one. The XIAO now runs <strong>two I2C
+buses</strong> — <strong>I2C_SYS</strong> for everything onboard (screen, clock,
+battery monitor) and <strong>I2C_EXT</strong> for plug-in sensors. The GY-87 is the
+first resident of the new street, keeps its factory address, and takes its
+pull-up resistors off the crowded old one. More sensors move over as the v3.0
+board develops.</p>
 
-<p>Bonus: the MPU-9250's built-in compass appears on the bus at its own address
-(0x0C), which doesn't clash with anything — including the old GY-271 compass at
-0x0D. That lets us run both side by side on the bench for one last comparison
-before the GY-271 is retired for good, per Phase 0.</p>
+<p>The wrinkle: the compass on the GY-87 is not wired to our street at all. It lives
+on a private side-street behind the MPU6050. At boot the firmware asks the MPU6050
+to open a gate ("I2C bypass"), and only then does the compass appear on the main bus
+at its own address — 0x0D for the QMC clone, 0x1E for the genuine Honeywell part.
+The barometer answers at 0x77, an address it happens to share with a different
+weather chip (the BME280) used on the air-quality builds; the firmware reads each
+chip's ID before deciding which driver owns it.</p>
+
+<p>Bonus: because the on-board compass is the same family as the old GY-271, a
+stand-alone GY-271 still works as a fallback on any turtle that has no GY-87
+fitted — one driver, two roles.</p>
 
 <!-- ================================================================ -->
 <h2><span class="kicker">Part Three</span>The genuine upgrade: a heading you can trust <span class="badge next">For review</span></h2>
@@ -1207,8 +1215,8 @@ proposal.</strong></p>
   checksummed upload — so every experiment after this one explains itself.
   <em>Gate: one cycle reconstructable from logs; delayed and duplicate uploads
   produce one ordered server record.</em></li>
-  <li><strong>Sensor fusion.</strong> Verify the IMU's identity, write the
-  MPU-9250 driver, fuse gyro + compass + tilt into one trustworthy heading; spin
+  <li><strong>Sensor fusion.</strong> With the GY-87 installed and its raw
+  readings in hand, fuse gyro + compass + tilt into one trustworthy heading; spin
   detection as a reported event only. <em>Gate: heading drift under 2°/min on the
   bench, correct at 30° of heel.</em></li>
   <li><strong>Luff validation.</strong> Measure the wind sweep's real accuracy
@@ -1392,8 +1400,8 @@ documents describe the same plan at different zoom levels.</p>
   <dt>I2C bus</dt><dd>A two-wire "party line" that lets many sensors share the
   same pair of wires, each answering to its own address.</dd>
   <dt>IMU (Inertial Measurement Unit)</dt><dd>A chip that senses rotation
-  (gyroscope), tilt and motion (accelerometer), and — on our MPU-9250 — magnetic
-  north (magnetometer).</dd>
+  (gyroscope), tilt and motion (accelerometer), and — on our GY-87 — magnetic
+  north (magnetometer) and air pressure (barometer).</dd>
   <dt>AOELL</dt><dd>The onboard cycle — Act, Observe, Evaluate, Log, Learn. Every
   action, even "hold the sail," becomes a recorded experiment with a prediction
   and an honestly scored outcome.</dd>

@@ -486,9 +486,12 @@ echo "Most OLED modules need no offset. If your display is slightly misaligned"
 echo "horizontally (SH1106 variant), try an offset of 2."
 OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
 
-# Navigation mission (destination + waypoints) is assigned per turtle on
-# hopeturtles.org and synced to the device, so it is not prompted here.
-# Emit a neutral placeholder destination; the server value takes precedence.
+# Navigation mission destination is assigned per turtle on hopeturtles.org
+# and pushed to the device on every boot by the Device API step
+# (GET /v1/device -> mission_target_* -> config mission_destination), so it
+# is not prompted here. Emit a neutral placeholder; the server value wins on
+# the first online boot. Operator pond/field tests use the set_* fields,
+# captured on the Destination screen, not these.
 DEST_NAME="Unassigned"
 DEST_LAT="0.0"
 DEST_LON="0.0"
@@ -544,9 +547,16 @@ cat > "$TMP_CONFIG" <<EOF
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
   "timezone_offset_min": $TZ_JSON,
   "compass_offset_deg": $COMPASS_OFFSET_DEG,
-  "dest_name": "$(escape_json_string "$DEST_NAME")",
-  "dest_coord": [$DEST_LAT, $DEST_LON],
-  "waypoints": [],
+  "mission_dest_full_name": "$(escape_json_string "$DEST_NAME")",
+  "mission_dest_short_name": "",
+  "mission_destination": [$DEST_LAT, $DEST_LON],
+  "mission_waypoints": [],
+  "set_destination": null,
+  "set_departure": null,
+  "set_arrival": null,
+  "set_waypoints": [],
+  "set_short_name": "",
+  "set_full_name": "",
   "arrival_radius_m": $ARRIVAL_RADIUS_M,
   "gps_loss_safe_s": $GPS_LOSS_SAFE_S,
   "low_batt_pct": $LOW_BATT_PCT,

@@ -660,8 +660,8 @@ def sensor_carousel(
     _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
     # Air sensors are optional in turtle_mode — the single-click carousel there
-    # is navigation screens (sailpoint/servo/destination), which don't need
-    # the ENS160/AHT21. Only block on missing sensors in airOS mode.
+    # is navigation screens (destination/compass/sailpoint/servo), which don't
+    # need the ENS160/AHT21. Only block on missing sensors in airOS mode.
     reading = None
     if air is None:
         if not _turtle_mode:
@@ -702,7 +702,7 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    _all_screens = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) \
+    _all_screens = (["destination", "compass", "sailpoint", "servo"] if _turtle_mode else []) \
                    + _sensor_screens \
                    + (["summary"] if _sensor_screens else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
@@ -710,14 +710,68 @@ def sensor_carousel(
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
+    _preload = (["destination", "compass", "sailpoint", "servo"] if _turtle_mode else []) + _sensor_screens + ["summary"]
     for _n in _preload:
         get_screen(_n)
         _gc()
     reset_and_flush(btn, flush_ms, poll_ms)
 
     if _turtle_mode:
-        # ---- SAILPOINT (first in single-click carousel, turtle mode only) ----
+        # ---- DESTINATION (first in single-click carousel, turtle mode only) ----
+        _gc()
+        dest_scr = get_screen("destination")
+        try:
+            _c = cfg or {}
+            _d_name = str(_c.get("set_full_name") or _c.get("mission_dest_full_name") or "")
+            _d_coord = _c.get("set_destination") or _c.get("mission_destination") or [None, None]
+            _d_lat = _d_coord[0] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 0 else None
+            _d_lon = _d_coord[1] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 1 else None
+            if _d_name or _d_lat is not None:
+                _log_screen("destination", "name='{}' lat={} lon={}".format(_d_name, _d_lat, _d_lon))
+            else:
+                _log_screen("destination", "no destination set")
+        except Exception:
+            _log_screen("destination")
+        if dest_scr and hasattr(dest_scr, "show_live"):
+            try:
+                a = dest_scr.show_live(btn, gps=gps, cfg=cfg, tick_fn=tick_fn)
+            except Exception:
+                a = None
+        else:
+            draw_text(oled, "Destination", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        if a not in ("single", None):
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- COMPASS (second in single-click carousel, turtle mode only) ----
+        _gc()
+        compass_scr2 = get_screen("compass")
+        try:
+            _hdg = compass_scr2.read_heading() if compass_scr2 else None
+            if _hdg is not None:
+                _log_screen("compass", "heading={:.1f} deg".format(_hdg))
+            else:
+                _log_screen("compass", err="IMU not connected")
+        except Exception:
+            _log_screen("compass")
+        if compass_scr2 and hasattr(compass_scr2, "show_live"):
+            try:
+                a = compass_scr2.show_live(btn, tick_fn=tick_fn)
+            except Exception:
+                a = None
+        else:
+            draw_text(oled, "Compass", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        if a not in ("single", None):
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- SAILPOINT (third in single-click carousel, turtle mode only) ----
         _gc()
         compass_scr = get_screen("sailpoint")
         try:
@@ -742,7 +796,7 @@ def sensor_carousel(
             return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- SERVO (second in single-click carousel, turtle mode only) ----
+        # ---- SERVO (fourth in single-click carousel, turtle mode only) ----
         _gc()
         servo_scr = get_screen("servo")
         try:
@@ -757,59 +811,6 @@ def sensor_carousel(
                 a = None
         else:
             draw_text(oled, "Servo", y=24)
-            a = wait_for_single(btn, tick_fn=tick_fn)
-
-        if a not in ("single", None):
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return a
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-        # ---- COMPASS (third in single-click carousel, turtle mode only) ----
-        _gc()
-        compass_scr2 = get_screen("compass")
-        try:
-            _hdg = compass_scr2._read() if compass_scr2 else None
-            if _hdg is not None:
-                _log_screen("compass", "heading={:.1f} deg".format(_hdg))
-            else:
-                _log_screen("compass", err="IMU not connected")
-        except Exception:
-            _log_screen("compass")
-        if compass_scr2 and hasattr(compass_scr2, "show_live"):
-            try:
-                a = compass_scr2.show_live(btn, tick_fn=tick_fn)
-            except Exception:
-                a = None
-        else:
-            draw_text(oled, "Compass", y=24)
-            a = wait_for_single(btn, tick_fn=tick_fn)
-
-        if a not in ("single", None):
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return a
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-        # ---- DESTINATION (fourth in single-click carousel, turtle mode only) ----
-        _gc()
-        dest_scr = get_screen("destination")
-        try:
-            _d_name = str((cfg or {}).get("dest_name", "") or "")
-            _d_coord = (cfg or {}).get("dest_coord") or [None, None]
-            _d_lat = _d_coord[0] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 0 else None
-            _d_lon = _d_coord[1] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 1 else None
-            if _d_name or _d_lat is not None:
-                _log_screen("destination", "name='{}' lat={} lon={}".format(_d_name, _d_lat, _d_lon))
-            else:
-                _log_screen("destination", "no destination set")
-        except Exception:
-            _log_screen("destination")
-        if dest_scr and hasattr(dest_scr, "show_live"):
-            try:
-                a = dest_scr.show_live(btn, tick_fn=tick_fn)
-            except Exception:
-                a = None
-        else:
-            draw_text(oled, "Destination", y=24)
             a = wait_for_single(btn, tick_fn=tick_fn)
 
         if a not in ("single", None):

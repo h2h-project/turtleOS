@@ -4,6 +4,15 @@
 #   1. A file named "debug_mode" exists on flash.
 #   2. The button is held for HOLD_MS at power-on.
 #
+# The button MUST be sampled early. check_hold_early() is called at the very
+# top of device/main.py — before board detection, the two I2C bus scans and
+# init_oled() — so the 2 s hold window lines up with power-on instead of
+# starting seconds later once all that work is done (which is why "hold at
+# power-on" used to do nothing: by the time the pin was first read, the user
+# had already let go). It has no OLED at that point, so it logs to serial
+# only and returns a bool. enter_debug() runs afterwards, once the OLED
+# exists, to show the screen and wait.
+#
 # In debug mode the OLED shows "De-Bug Mode / Click to reboot".
 # Boot stops; a polling loop waits:
 #   - Button click  → machine.reset() (normal boot)
@@ -23,6 +32,23 @@ def _btn_gpio():
         return btn_pin()
     except Exception:
         return _BTN_GPIO
+
+
+def _make_btn():
+    try:
+        from machine import Pin
+        return Pin(_btn_gpio(), Pin.IN, Pin.PULL_UP)
+    except Exception:
+        return None
+
+
+def _debug_file_present():
+    try:
+        import os as _os
+        _os.stat(_DEBUG_FILE)
+        return True
+    except OSError:
+        return False
 
 
 def _show(oled, line1, line2=None):
@@ -82,49 +108,58 @@ def _debug_loop(btn):
                                           # not caught by main.py's except Exception → REPL
 
 
-def check(oled=None):
+def check_hold_early():
     """
-    Returns True if debug mode was triggered.
-    Caller should raise SystemExit to hand the REPL to the user.
-    """
-    gpio = _btn_gpio()
-    try:
-        from machine import Pin
-        btn = Pin(gpio, Pin.IN, Pin.PULL_UP)
-    except Exception:
-        btn = None
+    Earliest boot-guard test — call at the very top of device/main.py, before
+    imports / I2C scans / OLED init. No OLED (it does not exist yet); serial
+    only. Returns True if debug mode should be entered.
 
-    # --- trigger 1: debug_mode file on flash ---
-    try:
-        import os as _os
-        _os.stat(_DEBUG_FILE)
-        print("[BOOT] debug_mode file — debug mode, click to reboot")
-        _show(oled, "De-Bug Mode", "Click to reboot")
-        if btn is not None:
-            _debug_loop(btn)
+    Blocks ONLY while the button is physically held (up to _HOLD_MS); a normal
+    boot with the button untouched returns instantly.
+    """
+    if _debug_file_present():
+        print("[BOOT] debug_mode file present — entering debug mode")
         return True
-    except OSError:
-        pass
 
-    # --- trigger 2: button held at power-on ---
+    btn = _make_btn()
     if btn is None or btn.value() != 0:
-        return False   # button not pressed — fast path, no delay
+        return False   # button not pressed at boot — fast path, no delay
 
-    _show(oled, "Hold...", "Release to cancel")
-    print("[BOOT] Button held — waiting {}ms...".format(_HOLD_MS))
-
+    print("[BOOT] button held at boot — keep holding {} ms for debug mode".format(_HOLD_MS))
     start = time.ticks_ms()
-    held = True
     while time.ticks_diff(time.ticks_ms(), start) < _HOLD_MS:
         if btn.value() != 0:
-            held = False
-            break
+            print("[BOOT] button released early — normal boot")
+            return False
         time.sleep_ms(_POLL_MS)
 
-    if not held:
-        return False
+    print("[BOOT] debug mode armed — release the button")
+    return True
 
+
+def enter_debug(oled=None):
+    """
+    Show the debug screen and run the wait loop. Call after check_hold_early()
+    has returned True and the OLED has been initialised.
+
+    Returns only if a button Pin could not be created; otherwise it exits via
+    machine.reset() (click) or by propagating KeyboardInterrupt (Ctrl-C).
+    """
     print("[BOOT] Debug mode — click to reboot, Ctrl-C for REPL")
     _show(oled, "De-Bug Mode", "Click to reboot")
-    _debug_loop(btn)
+    btn = _make_btn()
+    if btn is not None:
+        _debug_loop(btn)
+
+
+def check(oled=None):
+    """
+    Backwards-compatible one-shot: early sample + screen + wait, all in one.
+    device/main.py now splits this into check_hold_early() (before the slow
+    boot work) and enter_debug() (after init_oled()); kept here for any other
+    caller. Returns True if debug mode was triggered.
+    """
+    if not check_hold_early():
+        return False
+    enter_debug(oled)
     return True

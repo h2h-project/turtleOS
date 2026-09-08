@@ -27,6 +27,12 @@ class BME280:
         self._calib_T = None
         self._calib_P = None
         self._calib_H = None
+        # 0x77 is shared with the BMP180 (GY-87 barometer): refuse anything
+        # that isn't BME280 (0x60) / BMP280 (0x58) silicon so AirSensor never
+        # reads a BMP180's calibration block as BME280 coefficients.
+        cid = self._read(_REG_CHIP_ID, 1)[0]
+        if cid not in (0x60, 0x58):
+            raise OSError("BME280: chip ID 0x{:02X} at 0x{:02X} is not BME280/BMP280".format(cid, addr))
         self._load_calibration()
         self._apply_settings()
 

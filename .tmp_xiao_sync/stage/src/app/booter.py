@@ -6,7 +6,7 @@ from src.ui.thermobar import ThermoBar
 # Single source of truth for the firmware version.  Referenced by the Booter
 # instance for the OLED label, and importable by the headless boot path in
 # main.py so the version is logged even when no OLED is present.
-VERSION_NUM = "2.3.11"
+VERSION_NUM = "2.4.0"
 VERSION = "turtleOS version " + VERSION_NUM
 
 
@@ -296,6 +296,9 @@ class Booter:
         Dots animate at the same 0.5s cadence as DotTicker, and the first
         dot is likewise held off for interval_ms so the bare label gets a
         beat on screen before dots start.
+
+        A label containing "\n" is drawn as stacked centered lines; the
+        animated dots are appended to the last line only.
         """
         h = int(getattr(self.oled, "height", 64))
         writer = self.f_footer or self.f_brand
@@ -306,11 +309,17 @@ class Booter:
                 _, fh = writer.size("A")
             except Exception:
                 fh = 11
-        y = max(0, (h - fh) // 2)
+
+        lines = str(label).split("\n")
+        line_gap = 2
+        block_h = len(lines) * fh + (len(lines) - 1) * line_gap
+        y0 = max(0, (h - block_h) // 2)
 
         def _frame(dots):
             self._clear()
-            self._draw_centered_text_shadow(writer, label + "." * dots, y)
+            for i, ln in enumerate(lines):
+                txt = ln + ("." * dots if i == len(lines) - 1 else "")
+                self._draw_centered_text_shadow(writer, txt, y0 + i * (fh + line_gap))
             self._show_fb()
 
         _frame(0)
@@ -389,7 +398,7 @@ class Booter:
             result_hold_ms=0,
             # Label for the final full-screen transition shown once every
             # step has run (replaces the old static "Locked & loaded!").
-            finishing_label="Initiating Nav",
+            finishing_label="Initiating Navigation",
     ):
         if logger is None:
             logger = print
@@ -420,8 +429,15 @@ class Booter:
 
         for idx, item in enumerate(steps):
             show_footer = True
+            step_hold_ms = None  # optional 4th tuple element: dwell (ms) for
+                                 # THIS step's result footer, overriding
+                                 # result_hold_ms (e.g. RTC clock -> show the
+                                 # synced time long enough to read).
             try:
-                if len(item) >= 3:
+                if len(item) >= 4:
+                    label, fn, show_footer, step_hold_ms = (
+                        item[0], item[1], bool(item[2]), item[3])
+                elif len(item) >= 3:
                     label, fn, show_footer = item[0], item[1], bool(item[2])
                 else:
                     label, fn = item
@@ -505,8 +521,10 @@ class Booter:
             if self._detail_is_error(detail):
                 if error_hold_ms and int(error_hold_ms) > 0:
                     time.sleep_ms(int(error_hold_ms))
-            elif result_hold_ms and int(result_hold_ms) > 0:
-                time.sleep_ms(int(result_hold_ms))
+            else:
+                hold = step_hold_ms if step_hold_ms is not None else result_hold_ms
+                if hold and int(hold) > 0:
+                    time.sleep_ms(int(hold))
 
             p_prev = p_next
 

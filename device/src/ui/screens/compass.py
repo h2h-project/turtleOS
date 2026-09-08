@@ -11,11 +11,12 @@ _LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
 
 class CompassScreen:
-    def __init__(self, oled, i2c=None, mag=None, offset_deg=0):
+    def __init__(self, oled, heading_src=None, i2c=None, offset_deg=0):
         self.oled = oled
         self._i2c = i2c
-        self._mag = mag        # pre-shared MPU9250 instance (optional)
-        self._mag_probed = mag is not None  # skip probe if a sensor was injected
+        # Shared HeadingSource from NavController (preferred) — one probe, one
+        # offset. Built lazily as a fallback only when nothing was injected.
+        self._src = heading_src
         self._offset_deg = float(offset_deg)
         self._refresh_ms = 200
 
@@ -23,14 +24,11 @@ class CompassScreen:
     # Sensor access
     # ------------------------------------------------------------------
 
-    def _get_mag(self):
-        if self._mag is not None:
-            return self._mag
-        if self._mag_probed:
-            return None  # already probed once — no hardware present
+    def _get_src(self):
+        if self._src is not None:
+            return self._src
         if self._i2c is None:
             return None
-        self._mag_probed = True
         # Reinitialize the I2C peripheral before probing.  finish_sampling() can
         # leave the ESP32 I2C state machine stuck (slave held SDA low during clock
         # stretching), causing silent 0x00 reads and OSError(19) writes on the next
@@ -40,40 +38,24 @@ class CompassScreen:
             self._i2c = _init_i2c()
         except Exception:
             pass
-        # MPU-9250 (0x69) with the AK8963 magnetometer behind I2C bypass (0x0C).
-        # WHO_AM_I can succeed while bypass fails, so both must check out.
         try:
-            from src.drivers.mpu9250 import MPU9250
-            m = MPU9250(self._i2c)
-            if m.is_present and m.mag is not None:
-                self._mag = m
-                return self._mag
+            from src.nav.heading import HeadingSource
+            self._src = HeadingSource(i2c=self._i2c, offset_deg=self._offset_deg)
         except Exception:
-            pass
-        # MPU-9250 units on hand turned out to be duds — fall back to the
-        # QMC5883L/HMC5883L (GY-271 clone, 0x0D/0x1E), the compass actually in service.
-        try:
-            from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
-            m = QMC5883L(self._i2c)
-            if not m.is_present:
-                m = HMC5883L(self._i2c)
-            if m.is_present:
-                self._mag = m
-        except Exception:
-            pass
-        return self._mag
+            self._src = None
+        return self._src
 
-    def _read(self):
-        mag = self._get_mag()
-        if mag is None or not getattr(mag, "is_present", False):
+    def read_heading(self):
+        """Current heading in degrees [0, 360) with offset applied, or None."""
+        src = self._get_src()
+        if src is None:
             return None
         try:
-            raw = mag.heading()
-            if raw is None:
-                return None
-            return (raw + self._offset_deg) % 360.0
+            return src.heading_deg()
         except Exception:
             return None
+
+    _read = read_heading   # legacy alias
 
     # ------------------------------------------------------------------
     # Helpers

@@ -48,12 +48,18 @@ def _gc_free_kb():
 
 
 class TelemetryScheduler:
-    def __init__(self, air_sensor, rtc_info_getter=None, wifi_manager=None, gps=None, battery_sensor=None):
+    def __init__(self, air_sensor, rtc_info_getter=None, wifi_manager=None, gps=None, battery_sensor=None,
+                 imu=None, heading_getter=None):
         self.air = air_sensor
         self.get_rtc = rtc_info_getter
         self.wifi = wifi_manager
         self.gps = gps
         self._ina = battery_sensor
+        # GY-87 10DOF (src/drivers/gy87.py): BMP180 baro + MPU6050 pitch/roll.
+        # heading_getter returns NavController's heading (compass_offset_deg
+        # applied) so telemetry reports exactly what the compass screen shows.
+        self._imu = imu
+        self._heading_getter = heading_getter
 
         self._client = None
         self._next_send_ms = time.ticks_add(time.ticks_ms(), 30000)
@@ -73,7 +79,10 @@ class TelemetryScheduler:
         self._gps_reject_streak = 0
 
         # Public state for UI (Online screen reads this instead of making its own HTTP)
-        self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None}
+        # last_ms stamps every send *attempt* (success or failure); last_ok_ms
+        # stamps only a successful one, so "last sent" on the Online screen can
+        # report actual connectivity instead of the most recent retry.
+        self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None, "last_ok_ms": None}
         self._send_now = False
 
         # One-shot: set by send_manual() so the next payload is flagged as a
@@ -564,6 +573,50 @@ class TelemetryScheduler:
         except Exception:
             return None
 
+    def _read_baro(self):
+        """BMP180 fields from the shared GY87: pressure (hPa), temp (°C) and a
+        derived ISA altitude (m). None when no barometer is attached."""
+        if self._imu is None or getattr(self._imu, "baro", None) is None:
+            return None
+        try:
+            r = self._imu.baro_read()
+            if r is None:
+                return None
+            t, p, alt = r
+            out = {}
+            if p is not None and float(p) > 0.0:
+                out["bmp_pressure"] = round(float(p), 1)
+                if alt is not None:
+                    out["bmp_alt_m"] = round(float(alt), 1)
+            if t is not None:
+                out["bmp_temp"] = round(float(t), 1)
+            return out if out else None
+        except Exception:
+            return None
+
+    def _read_imu(self):
+        """Attitude fields: imu_heading (deg, offset applied), imu_pitch and
+        imu_roll (deg, accelerometer-derived). A 0.0 is a real reading and is
+        sent — the server only drops a packet when EVERY value is zero."""
+        out = {}
+        if self._heading_getter is not None:
+            try:
+                h = self._heading_getter()
+                if h is not None:
+                    out["imu_heading"] = round(float(h), 1)
+            except Exception:
+                pass
+        if self._imu is not None:
+            try:
+                pr = self._imu.pitch_roll()
+                if pr is not None:
+                    # "+ 0.0" folds -0.0 into 0.0 so a level board doesn't serialize as "-0.0"
+                    out["imu_pitch"] = round(float(pr[0]), 1) + 0.0
+                    out["imu_roll"] = round(float(pr[1]), 1) + 0.0
+            except Exception:
+                pass
+        return out if out else None
+
     # Mirrors TelemetryBackgroundProcess — see the rationale there.
     WIFI_RETRY_BASE_MS = 900000      # 15 min
     WIFI_RETRY_CAP_MS = 43200000     # 12 h
@@ -638,6 +691,13 @@ class TelemetryScheduler:
         batt = self._read_battery()
         if batt:
             values.update(batt)
+
+        baro = self._read_baro()
+        if baro:
+            values.update(baro)
+        att = self._read_imu()
+        if att:
+            values.update(att)
 
         # GPS is read before the "no values" gate: a hand-taken registry stamp
         # on a turtle with no air sensor carries a position and nothing else,
@@ -756,6 +816,8 @@ class TelemetryScheduler:
                         self.api_state["ok"] = bool(bp_result["ok"])
                         self.api_state["msg"] = str(bp_result.get("msg", ""))
                         self.api_state["last_ms"] = bp_result["last_ms"]
+                        if bp_result.get("last_ok_ms") is not None:
+                            self.api_state["last_ok_ms"] = bp_result["last_ok_ms"]
                         self.write_last_sent(payload["recorded_at"], ok=bool(bp_result["ok"]))
             except Exception:
                 pass
@@ -864,6 +926,8 @@ class TelemetryScheduler:
             self.api_state["ok"] = bool(ok)
             self.api_state["msg"] = str(msg)
             self.api_state["last_ms"] = time.ticks_ms()
+            if ok:
+                self.api_state["last_ok_ms"] = self.api_state["last_ms"]
             _gc_collect()
 
         if do_print:

@@ -102,17 +102,22 @@ class OnlineScreen:
             status_text = status_text + ("." * self._dots)
         o.f_med.write(status_text[:18], 0, status_y)
 
-        # Second line: last sent elapsed, or device ID
+        # Second line: elapsed time since the last SUCCESSFUL send, or device ID.
+        # last_ok_ms (unlike last_ms) is only stamped when a send actually
+        # reached the API, so a stretch of failed retries doesn't make this
+        # line look freshly-sent.
         if api_state is not None:
-            last_ms = api_state.get("last_ms")
-            if last_ms is not None:
-                elapsed_s = max(0, time.ticks_diff(time.ticks_ms(), last_ms) // 1000)
+            last_ok_ms = api_state.get("last_ok_ms")
+            if last_ok_ms is not None:
+                elapsed_s = max(0, time.ticks_diff(time.ticks_ms(), last_ok_ms) // 1000)
                 if elapsed_s < 60:
                     age = "%ds ago" % elapsed_s
                 elif elapsed_s < 3600:
                     age = "%dm ago" % (elapsed_s // 60)
+                elif elapsed_s < 86400:
+                    age = "%dh ago" % (elapsed_s // 3600)
                 else:
-                    age = ">1h ago"
+                    age = ">1d ago"
                 o.f_med.write("sent " + age, 0, status_y + line_h)
             else:
                 did = (self.device_id or "---")[:14]

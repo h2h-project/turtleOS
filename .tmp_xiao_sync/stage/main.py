@@ -19,6 +19,23 @@ import time
 from src.hal.board import init_i2c, gps_pins
 
 # ----------------------------
+# Boot guard — EARLY sample
+# ----------------------------
+# Sample the button here, before board detection, the two I2C bus scans and
+# init_oled() — all of which used to run first, so "hold the button at
+# power-on" was really "hold it through MicroPython startup + imports + I2C
+# scans + 2 s more", with no on-screen feedback until well after the user
+# had let go. This early call blocks ONLY while the button is actually held
+# (instant return otherwise), so a normal boot pays nothing. The OLED debug
+# screen + wait loop still run later, once init_oled() exists.
+_bg_debug = False
+try:
+    from src.app.boot_guard import check_hold_early
+    _bg_debug = bool(check_hold_early())
+except Exception as _bg_e:
+    print("[BOOT] boot_guard early check error:", repr(_bg_e))
+
+# ----------------------------
 # Boot pacing
 # ----------------------------
 BOOT_STEP_HOLD_MS = 500  # hold each step so OLED text is readable
@@ -63,6 +80,28 @@ def i2c_scan():
         return []
 
 
+def i2c_scan_ext():
+    """One-shot scan of the I2C_EXT bus (plug-in sensors). [] when the board
+    has no second bus or the scan fails."""
+    try:
+        from src.hal.board import init_i2c_ext
+        i2c = init_i2c_ext()
+        if i2c is None:
+            return []
+        return i2c.scan() or []
+    except Exception:
+        return []
+
+
+def _chip_id(addr, reg=0xD0):
+    """Read a Bosch-style chip-ID register; None on error. Used to tell the
+    BMP180 (0x55) from a BME280 (0x60) / BMP280 (0x58) — they share 0x77."""
+    try:
+        return init_i2c().readfrom_mem(addr, reg, 1)[0]
+    except Exception:
+        return None
+
+
 # Common I2C addresses we care about
 I2C_ADDR_OLED    = 0x3C
 I2C_ADDR_RTC     = 0x68
@@ -71,14 +110,14 @@ I2C_ADDR_AHT2X   = 0x38  # AHT10/AHT20/AHT21
 I2C_ADDR_SCD41   = 0x62  # SCD40/SCD41 true CO2 sensor
 I2C_ADDR_BME280     = 0x76  # BME280 temp + humidity + pressure (SDO=LOW)
 I2C_ADDR_BME280_ALT = 0x77  # BME280 alternate address (SDO=HIGH)
-I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone) — compass fallback, see step_mpu9250()
-I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine) — compass fallback, see step_mpu9250()
+I2C_ADDR_QMC5883 = 0x0D  # QMC5883L — GY-87 on-board mag (via bypass) or standalone GY-271, see step_imu()
+I2C_ADDR_HMC5883 = 0x1E  # HMC5883L — same roles as above (genuine Honeywell part)
 I2C_ADDR_AS5600  = 0x36  # AS5600 magnetic angle sensor (sail position)
-I2C_ADDR_MPU9250 = 0x69  # MPU-9250 IMU (AD0 strapped high — 0x68 is DS3231's)
-I2C_ADDR_AK8963  = 0x0C  # AK8963 magnetometer, visible once MPU-9250 bypass is enabled
+I2C_ADDR_MPU6050 = 0x68  # MPU6050 IMU on the GY-87 — factory address; only probed on I2C_EXT (0x68 on I2C_SYS is the RTC)
+I2C_ADDR_MPU6050_ALT = 0x69  # MPU6050 with AD0 strapped high
+I2C_ADDR_BMP180  = 0x77  # BMP180 barometer on the GY-87 — shares 0x77 with BME280-alt, see step_warmup()
 
 _I2C_NAMES = {
-    0x0C: "AK8963",
     0x0D: "QMC5883L",
     0x1E: "HMC5883L",
     0x36: "AS5600",
@@ -87,10 +126,10 @@ _I2C_NAMES = {
     0x40: "INA219",
     0x53: "ENS160",
     0x62: "SCD41",
-    0x68: "DS3231",
-    0x69: "MPU9250",
+    0x68: "DS3231",       # on I2C_SYS; the same address is the MPU6050 on I2C_EXT
+    0x69: "MPU6050",
     0x76: "BME280",
-    0x77: "BME280",
+    0x77: "BMP180/BME280",
 }
 
 
@@ -452,6 +491,26 @@ def api_device_lookup(cfg, tick_fn=None):
             or data.get("mission_name")
             or ""
         )
+        # Aliases matching the config key names step_api() writes.
+        info["mission_dest_short_name"] = info["mission_short_name"]
+        info["mission_dest_full_name"] = info["mission_full_name"]
+
+        # Mission destination coords (missions_tb.target_*). Tolerant of
+        # nested mission.target_lat / flat mission_target_lat. Only kept when
+        # both are finite numbers and in range.
+        try:
+            _mlat = (mis.get("target_lat") if isinstance(mis, dict) else None)
+            if _mlat is None:
+                _mlat = data.get("mission_target_lat")
+            _mlon = (mis.get("target_lng") if isinstance(mis, dict) else None)
+            if _mlon is None:
+                _mlon = data.get("mission_target_lng")
+            if _mlat is not None and _mlon is not None:
+                _mlat = float(_mlat); _mlon = float(_mlon)
+                if -90.0 <= _mlat <= 90.0 and -180.0 <= _mlon <= 180.0:
+                    info["mission_destination"] = [_mlat, _mlon]
+        except Exception:
+            pass
 
         info["time_zone"] = str(
             data.get("time_zone")
@@ -635,6 +694,7 @@ try:
     _pt = _platform_tag()
     _is_esp32 = _pt in ("esp32", "esp32s3", "xiao_esp32s3")
     _is_pico  = (_pt == "pico")
+    _is_xiao  = (_pt == "xiao_esp32s3")  # 8 MB PSRAM heap — no screen-preload needed
     try:
         import json as _ptj
         with open("config.json") as _ptf:
@@ -654,6 +714,7 @@ except Exception:
     _pt = "unknown"
     _is_esp32 = False  # safe default: skip preload
     _is_pico  = False
+    _is_xiao  = False
     print("[BOOT] Board: unknown")
 
 # Pico W: import the LARGEST modules before OLED+fonts allocate 53 KB of
@@ -721,18 +782,43 @@ try:
 except Exception as _di2c_e:
     print("[BOOT] I2C scan: FAILED", repr(_di2c_e))
 
+# I2C_EXT — the plug-in bus (GY-87). Labels differ from I2C_SYS: 0x68 here
+# is the MPU6050, never the RTC.
+try:
+    from src.hal.board import i2c_ext_pins as _i2c_ext_pins_fn
+    _de = _i2c_ext_pins_fn()
+    if _de is not None:
+        print("[BOOT] I2C_EXT: I2C({}) SDA=GPIO{} SCL=GPIO{} {}kHz".format(
+            _de[0], _de[2], _de[1], _de[3] // 1000))
+        _de_found = i2c_scan_ext()
+        _de_names = {0x68: "MPU6050", 0x69: "MPU6050(AD0)", 0x0D: "QMC5883L", 0x1E: "HMC5883L", 0x77: "BMP180"}
+        if _de_found:
+            print("[BOOT] I2C_EXT scan: [{}]".format(", ".join(
+                "{} {}".format(hex(a), _de_names[a]) if a in _de_names else hex(a) for a in _de_found)))
+        else:
+            print("[BOOT] I2C_EXT scan: no devices (GY-87 not wired?)")
+        del _de_found, _de_names
+    del _de
+except Exception as _de_e:
+    print("[BOOT] I2C_EXT scan: FAILED", repr(_de_e))
+
 oled = init_oled()
 
-# Boot guard: hold button 2 s at power-on, OR create "debug_mode" file on flash.
-# Either triggers a clean halt → MicroPython REPL (for sensor/hardware testing).
-try:
-    from src.app.boot_guard import check as _boot_guard_check
-    if _boot_guard_check(oled):
-        raise SystemExit
-except SystemExit:
-    raise
-except Exception as _bg_e:
-    print("[BOOT] boot_guard error (ignored):", repr(_bg_e))
+# Boot guard part 2: the EARLY sample above (top of file) already decided
+# whether to enter debug mode — hold button 2 s at power-on, OR a "debug_mode"
+# file on flash. Now that the OLED exists, show the screen and wait:
+#   button click → machine.reset()   Ctrl-C → SystemExit → live REPL
+if _bg_debug:
+    try:
+        from src.app.boot_guard import enter_debug
+        enter_debug(oled)
+    except SystemExit:
+        raise
+    except Exception as _bg_e:
+        print("[BOOT] boot_guard error (ignored):", repr(_bg_e))
+    # enter_debug only returns if it couldn't build a button Pin; hand over
+    # the REPL anyway rather than continuing a boot the user tried to stop.
+    raise SystemExit
 
 
 def _preload_screens(oled, is_pico=False, turtle_mode=False):
@@ -972,7 +1058,14 @@ if (_is_esp32 or _is_pico) and _preload_needed:
     _wlan_pre = None
     _net_pre = None
 
-if _preload_needed:
+# XIAO ESP32-S3: the Python heap is in 8 MB PSRAM, so there is no post-WiFi
+# fragmentation to guard against and lazy screen imports at runtime are cheap.
+# The full preload was ~110 KB of module bytecode imported serially with a
+# gc.collect() between each — several seconds of blank OLED before the boot
+# bar could even draw. Skip it here; run()'s screen cache imports each screen
+# on first use instead. WiFi PHY pre-activation above still runs (it's cheap
+# and lets step_wifi connect from an already-active radio).
+if _preload_needed and not _is_xiao:
     _preload_screens(
         oled,
         is_pico=_is_pico,
@@ -1152,6 +1245,32 @@ def step_api():
     ok, detail, info = api_device_lookup(cfg, tick_fn=_tick_fn)
     api_boot = info
 
+    # Persist the mission destination (missions_tb.target_*) into config so
+    # nav has a target even before an operator sets a test-project one, and
+    # so it survives the next offline boot. Update the in-RAM boot `cfg` too
+    # — step_init_runtime() builds the NavController from it.
+    try:
+        if ok and isinstance(info, dict):
+            _md = info.get("mission_destination")
+            _updates = {}
+            if isinstance(_md, (list, tuple)) and len(_md) == 2:
+                _updates["mission_destination"] = [float(_md[0]), float(_md[1])]
+            _fn = info.get("mission_dest_full_name")
+            if _fn:
+                _updates["mission_dest_full_name"] = str(_fn)
+            _sn = info.get("mission_dest_short_name")
+            if _sn:
+                _updates["mission_dest_short_name"] = str(_sn)
+            if _updates and cfg is not None:
+                _changed = any(cfg.get(k) != v for k, v in _updates.items())
+                if _changed:
+                    cfg.update(_updates)
+                    from config import save_config
+                    save_config(cfg)
+                    print("[BOOT] mission destination synced:", _updates.get("mission_destination"))
+    except Exception as e:
+        print("[BOOT] mission destination sync failed:", repr(e))
+
     try:
         from src.ui import connection_header
         connection_header.set_api_ok(bool(ok))
@@ -1228,11 +1347,11 @@ def step_rtc():
             total_min = h * 60 + mi + tz_min
             lh = (total_min // 60) % 24
             lmi = total_min % 60
-            return True, "Ok! Its {:02d}:{:02d}".format(lh, lmi)
+            return True, "Its {:02d}:{:02d}".format(lh, lmi)
         except Exception:
             pass
 
-    return True, "Ok! Its {:02d}:{:02d}".format(h, mi)
+    return True, "Its {:02d}:{:02d}".format(h, mi)
 
 
 def step_warmup():
@@ -1248,10 +1367,14 @@ def step_warmup():
     has_aht   = I2C_ADDR_AHT2X  in addrs   # AHT10/AHT21 — temp + humidity
     has_ens   = I2C_ADDR_ENS160 in addrs   # ENS160       — eco2, tvoc, aqi
     has_scd41 = I2C_ADDR_SCD41  in addrs   # SCD41        — true co2, temp2
-    # BME280: 0x76 (SDO=LOW) or 0x77 (SDO=HIGH — also used by BMP280 at alt addr)
-    _bme_addr = (I2C_ADDR_BME280_ALT if I2C_ADDR_BME280_ALT in addrs
-                 else I2C_ADDR_BME280 if I2C_ADDR_BME280 in addrs
-                 else None)
+    # BME280: 0x76 (SDO=LOW) or 0x77 (SDO=HIGH — also used by BMP280 at alt addr).
+    # 0x77 is ALSO the GY-87's BMP180 barometer (owned by step_imu). Only hand
+    # 0x77 to AirSensor when the chip-ID register says BME280 (0x60) / BMP280 (0x58).
+    _bme_addr = None
+    if I2C_ADDR_BME280_ALT in addrs and _chip_id(I2C_ADDR_BME280_ALT) in (0x60, 0x58):
+        _bme_addr = I2C_ADDR_BME280_ALT
+    elif I2C_ADDR_BME280 in addrs:
+        _bme_addr = I2C_ADDR_BME280
     has_bme   = _bme_addr is not None
 
     if not (has_aht or has_ens or has_scd41 or has_bme):
@@ -1371,22 +1494,47 @@ def step_as5600():
         return True, "ERROR"
 
 
-def step_mpu9250():
-    """Probe the MPU-9250 IMU (0x69) and confirm AK8963 bypass (0x0C).
-    Falls back to the QMC5883L/HMC5883L (GY-271, 0x0D/0x1E) compass when the
-    MPU-9250 or its AK8963 bypass isn't present — see compass.py / nav/heading.py."""
-    addrs = i2c_scan()
+# Built once here, shared by NavController (HeadingSource), the compass screen
+# and the telemetry scheduler via run(imu=...). None when no GY-87 is present.
+_rt_imu = None
 
-    if I2C_ADDR_MPU9250 in addrs:
+
+def step_imu():
+    """Probe the GY-87 10DOF board on I2C_EXT: MPU6050 (0x68 factory, or
+    0x69 with AD0 high), its aux-bus magnetometer (QMC5883L 0x0D / HMC5883L
+    0x1E, visible after bypass) and BMP180 (0x77). The GY87 instance is kept
+    in _rt_imu so nothing else re-probes the bus.
+
+    The IMU is never looked for on I2C_SYS: 0x68 there is the DS3231. A
+    standalone GY-271 compass on I2C_SYS still boots green — HeadingSource
+    finds it itself (src/nav/heading.py)."""
+    global _rt_imu
+
+    ext = i2c_scan_ext()
+    imu_addr = None
+    if I2C_ADDR_MPU6050 in ext:
+        imu_addr = I2C_ADDR_MPU6050
+    elif I2C_ADDR_MPU6050_ALT in ext:
+        imu_addr = I2C_ADDR_MPU6050_ALT
+
+    if imu_addr is not None or I2C_ADDR_BMP180 in ext:
         try:
             _gc()
-            from src.drivers.mpu9250 import MPU9250
-            imu = MPU9250(init_i2c())
-            if imu.is_present and imu.mag is not None:
-                return True, "OK - gyro/accel + AK8963 (0x0C)"
-        except Exception:
-            pass
+            from src.hal.board import init_i2c_ext
+            from src.drivers.gy87 import GY87
+            dev = GY87(init_i2c_ext(), imu_addr=(imu_addr or I2C_ADDR_MPU6050))
+            if dev.is_present or dev.baro is not None:
+                _rt_imu = dev
+                if dev.is_present and dev.mag is None:
+                    return True, "MPU6050 - no mag" + (" + BMP180" if dev.baro else "")
+                return True, "OK - " + dev.summary()
+        except Exception as e:
+            print("[IMU] GY87 probe failed:", repr(e))
+    else:
+        print("[IMU] no GY-87 on I2C_EXT (SDA=GPIO8 SCL=GPIO3)")
 
+    # Standalone compass on I2C_SYS (legacy GY-271 wiring).
+    addrs = i2c_scan()
     try:
         _gc()
         from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
@@ -1394,11 +1542,11 @@ def step_mpu9250():
         if I2C_ADDR_QMC5883 in addrs:
             m = QMC5883L(i2c)
             if m.is_present:
-                return True, "OK - QMC5883L fallback (0x0D)"
+                return True, "QMC5883L standalone (0x0D)"
         if I2C_ADDR_HMC5883 in addrs:
             m = HMC5883L(i2c)
             if m.is_present:
-                return True, "OK - HMC5883L fallback (0x1E)"
+                return True, "HMC5883L standalone (0x1E)"
     except Exception:
         pass
 
@@ -1507,7 +1655,8 @@ def step_init_runtime():
     try:
         from src.nav.controller import NavController
         _rt_nav = NavController(cfg, i2c=_rt_i2c, gps=_rt_gps,
-                                 servo=nav_servo, battery=_rt_ina)
+                                 servo=nav_servo, battery=_rt_ina,
+                                 imu=_rt_imu)
     except Exception as e:
         print("[NAV] controller init failed:", repr(e))
         _rt_nav = None
@@ -1520,6 +1669,7 @@ def step_init_runtime():
                 nav_get=lambda: _rt_nav,
                 mission_get=_rt_mission_name,
                 battery_get=lambda: (_rt_ina.bus_voltage_v() if _rt_ina else None),
+                current_get=lambda: (_rt_ina.current_ma() if _rt_ina else None),
             )
         except Exception as e:
             print("[NAV] turtle_waiting init failed:", repr(e))
@@ -1611,10 +1761,10 @@ steps = [
     ("Loading config", step_load_config),
     ("WiFi connect", step_wifi),
     ("Device API check", step_api),
-    ("RTC clock", step_rtc),
+    ("RTC clock", step_rtc, True, 1500),  # hold the synced time on screen 1.5 s
     ("Warming sensors", step_warmup),
     ("GPS check", step_gps),
-    ("MPU-9250 IMU", step_mpu9250),  # imports MPU9250 driver if found; wakes chip + enables AK8963 bypass
+    ("10DOF IMU", step_imu),  # GY-87: MPU6050 + aux-bus mag (bypass) + BMP180; instance kept in _rt_imu
 ]
 if _turtle_boot:
     steps += [
@@ -1640,12 +1790,14 @@ if booter:
             fps=18,
             settle_ms=BOOT_STEP_HOLD_MS,  # <-- hold each step on OLED
             logger=_log,
-            finishing_label=("Initiating Nav" if _turtle_boot else "Finishing boot"),
+            # "\n" -> stacked centered lines; dots animate on the last line.
+            finishing_label=("Initiating\nNav" if _turtle_boot else "Finishing boot"),
         )
     except Exception as e:
         print("BOOTER error:", repr(e))
 else:
-    for label, fn in steps:
+    for _item in steps:
+        label, fn = _item[0], _item[1]  # steps may be 2-, 3- or 4-tuples
         _log("[BOOT] " + label)
         try:
             ok, detail = fn()
@@ -1745,6 +1897,7 @@ if _btn_hal_ok:
             wifi_manager=_rt_wifi_mgr,
             nav_controller=_rt_nav,
             turtle_waiting_scr=_rt_turtle_scr,
+            imu=_rt_imu,
         )
     except Exception as e:
         # Write crash info with minimal heap — repr(e) is cheap, no traceback capture

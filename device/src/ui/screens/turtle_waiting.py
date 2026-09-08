@@ -238,7 +238,7 @@ class TurtleWaitingScreen:
             txt = "------"
         else:
             sign = "+" if current_ma >= 0 else "-"
-            txt = "{}{}mA".format(sign, int(abs(current_ma)))
+            txt = "{}{:.1f}mA".format(sign, abs(current_ma))
         try:
             tw, _ = o._text_size(o.f_small, txt)
         except Exception:

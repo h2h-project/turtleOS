@@ -262,61 +262,74 @@ the response experiments (Phase T) tell us what a response should be.
 
 ---
 
-## The official IMU: the "MPU6050 module" (MPU-9250 chip)
+## The official IMU: the GY-87 10DOF board (turtleOS 2.4)
 
-**Decision (July 2026):** the sourced and wired IMU module is the official
-motion sensor for the turtles.
+**Decision (September 2026):** the GY-87 10DOF breakout replaces the MPU-9250
+module. The MPU-9250 units on hand were duds (unreliable WHO_AM_I and AK8963
+bypass), and in practice the turtles had been sailing on a standalone GY-271
+compass the whole time. The GY-87 gives us everything the 9250 promised plus a
+barometer, on parts that are cheap, common and known-good.
 
-### One important naming clarification
+### What is on the board
 
-The module is *sold* as an "MPU6050 module", but the supplier's own spec
-sheet says the chip on the board is an **MPU-9250**. These are different
-chips:
+| Chip | Senses | I2C address | Driver |
+|---|---|---|---|
+| **MPU6050** | gyro (±250 °/s) + accelerometer (±2 g) | **0x68** (factory) — on **I2C_EXT** | `src/drivers/mpu6050.py` |
+| **HMC5883L or QMC5883L** | magnetometer (compass) | 0x1E / 0x0D — on the MPU6050's *auxiliary* bus | `src/drivers/hmc5883l_qmc5883l.py` |
+| **BMP180** | barometric pressure + temperature | 0x77 | `src/drivers/bmp180.py` |
 
-| | MPU6050 | **MPU-9250 (what we have)** |
+`src/drivers/gy87.py` composes the three into one `GY87` object that is built
+**once** at boot (`step_imu()` in `device/main.py`) and handed to
+`NavController`, the compass screen and the telemetry scheduler. The chip on a
+given board is whatever the supplier fitted — genuine Honeywell HMC5883L on
+older stock, QMC5883L clones on newer — and both are handled by the same
+driver, so the boot line simply names which one answered.
+
+### Wiring — a second bus, and why the mag needs "bypass"
+
+The MPU6050's factory address (0x68) is the DS3231 clock's, and the GY-87
+does not bring AD0 out to its header (it is tied low on the PCB, under a
+QFN — not something to cut). So instead of fighting the address, the
+turtleShell v3.0 architecture gives the XIAO a second I2C bus:
+
+| Bus | Pins | Purpose |
 |---|---|---|
-| Gyroscope (turn rate) | yes | yes (±250/500/1000/2000 °/s) |
-| Accelerometer (tilt/motion) | yes | yes (±2/4/8/16 g) |
-| Magnetometer (compass) | **no** | **yes** (AK8963 inside, ±4800 µT) |
-| Axes | 6 | 9 |
+| **I2C_SYS** | I2C(0) SDA=GPIO5 (D4), SCL=GPIO6 (D5) | onboard: OLED, DS3231, INA219, AS5600, air sensors |
+| **I2C_EXT** | I2C(1) SDA=GPIO8 (D9), SCL=GPIO3 (D2) | plug-in sensors: the GY-87 |
 
-This is good news — the MPU-9250 is the more capable part, and its
-built-in compass could eventually replace the separate GY-271 board. But
-it means **the driver must be written for the MPU-9250, not the MPU6050**;
-their register maps differ.
+The GY-87 goes on I2C_EXT at 0x68 with nothing to collide with, and its
+2.2 kΩ pull-ups come off the crowded system bus. GPIO9 (D10) was rejected
+for the bus because the stacked L76K GNSS module drives it as GPS_RESET.
+Other sensors migrate from SYS to EXT as the v3.0 PCB develops; 2.4 only
+establishes the architecture. Power the board from the XIAO's 5V pin into
+VCC_IN (it has its own 3.3 V regulator); leave its 3.3V pin unconnected.
 
-First job when a unit is on the bench: confirm which chip is really on the
-board by reading the WHO_AM_I register (address `0x75`). Expected values:
-`0x71` = MPU-9250 ✅, `0x70` = MPU-6500 (9250 without the compass),
-`0x68` = genuine MPU6050. Cheap modules are sometimes mislabeled in *both*
-directions, so verify every batch. `tests/i2c_scan.py` plus a two-line
-register read does this in under a minute.
+The magnetometer is *not* on our bus by default: it hangs off the MPU6050's
+auxiliary I2C pins. `MPU6050.enable_bypass()` clears `I2C_MST_EN` and sets
+`I2C_BYPASS_EN` (`INT_PIN_CFG`, 0x37) so the mag appears on the main bus at its
+own address. Until that happens a scan shows 0x69 and 0x77 only.
 
-### Wiring — resolved, IMU lives at 0x69
+### Updated I2C bus map
 
-The IMU's factory I2C address (0x68) clashed with the DS3231 clock chip,
-which already sat there. **Fixed on the module itself**: AD0 is strapped
-to the module's own VCC pin, which flips the address to **0x69** — free
-on our bus. This is done; no further hardware work is needed here. The
-module is powered from the XIAO's 3V3 pin (never 5 V — AD0 ties straight
-to the 3.3 V-only sensor die).
+| Device | Bus | Address | Notes |
+|---|---|---|---|
+| QMC5883L / HMC5883L (standalone GY-271) | SYS | 0x0D / 0x1E | legacy compass wiring; `HeadingSource` still finds it as a fallback |
+| OLED | SYS | 0x3C | |
+| INA219 battery monitor | SYS | 0x40 | |
+| DS3231 clock | SYS | 0x68 | |
+| **MPU6050** (GY-87) | **EXT** | **0x68** | factory address, no strap |
+| **QMC5883L / HMC5883L** (GY-87 on-board mag) | **EXT** | 0x0D / 0x1E | appears only after bypass |
+| **BMP180** (GY-87) | **EXT** | **0x77** | shares the address with a BME280 wired SDO-high on SYS — `step_warmup()` reads the chip-ID register before deciding |
 
-### Updated I2C bus map with the IMU installed
+### What v2.4 does with it
 
-| Device | Address | Notes |
-|---|---|---|
-| AK8963 compass (inside the MPU-9250) | 0x0C | visible once bypass mode is enabled; **current heading source as of Phase 0** |
-| QMC5883L compass (GY-271) | 0x0D | retired from the runtime path as of Phase 0; no clash with 0x0C |
-| OLED | 0x3C | |
-| INA219 battery monitor | 0x40 | |
-| DS3231 clock | 0x68 | keeps its address; IMU moves instead |
-| **MPU-9250 IMU** | **0x69** | with AD0 strapped high |
-
-The MPU-9250's internal AK8963 compass is normally hidden behind the
-MPU-9250 itself; setting the "I2C bypass" bit (register `INT_PIN_CFG`,
-`0x37`) exposes it directly on our bus at 0x0C. That address does **not**
-collide with the GY-271 at 0x0D, so both compasses can coexist during the
-changeover and be compared against each other on the bench.
+Heading is still the magnetometer's `atan2` plus `compass_offset_deg`, exactly
+as before — the change is *where* it comes from, not how it is computed.
+New in 2.4: the BMP180's pressure, temperature and derived altitude, and the
+accelerometer's pitch and roll, go out in every telemetry record
+(`bmp_pressure`, `bmp_temp`, `bmp_alt_m`, `imu_heading`, `imu_pitch`,
+`imu_roll`). Gyro and accel are exposed on the driver for Phase S; nothing
+consumes them for control yet.
 
 ---
 
@@ -327,7 +340,8 @@ The roadmap runs as an **experimental ladder in three streams**:
 - **Stream A (aboard — turtleOS):** **Phase 0 (IMU bring-up) runs
   immediately, ahead of everything else** — it is a hardware-integration
   task, not an experiment, and every later phase (fusion, luff validation,
-  turning influence) depends on the MPU-9250 being read reliably. AOELL
+  turning influence) depends on the IMU being read reliably — done in 2.4
+  with the GY-87. AOELL
   foundations (A) follow, then the remaining sensing phase (S: fusion
   proper), then L; propulsion (P) and turning influence (T) must be
   demonstrated before any closed-loop heading control (H); tacking (K)
@@ -359,60 +373,33 @@ inch, toward a robust and potent turtle navigation system.
 
 # Stream A — aboard (turtleOS)
 
-## Phase 0 — IMU bring-up (immediate, blocks everything else)
+## Phase 0 — IMU bring-up ✅ (turtleOS 2.4, GY-87)
 
-Plain-language why: the MPU-9250 is sourced, wired, and strapped to a
-free address — the only thing standing between it and the rest of the
-roadmap is code. This is deliberately **not** bundled into Phase A or
-Phase S: it is a short, mechanical hardware-integration task, and every
-later phase (AOELL, fusion, luff validation, turning influence) implicitly
-assumes it is already done. Do this first, before AOELL foundations, and
-before continuing the old GY-271/compass-only path.
+Plain-language why: every later phase (AOELL, fusion, luff validation,
+turning influence) assumes an IMU is wired and readable. This was first
+attempted with an MPU-9250 module whose units turned out to be duds; the
+GY-87 10DOF board replaced it in 2.4 and this phase closed with it.
 
-- [ ] **WHO_AM_I bench check**: read register `0x75` at address `0x69`;
-  expect `0x71` (MPU-9250). `tests/i2c_scan.py` plus `tests/mpu9250_bench.py`
-  (new — plain register pokes, no driver dependency) confirms the chip
-  identity, and also settles the warm-up and axis-convention questions
-  below. **Still needs to be run on real hardware** — not yet confirmed.
-- [x] **`src/drivers/mpu9250.py` driver**: init, gyro/accel raw reads,
-  bypass-mode enable (`INT_PIN_CFG`, `0x37`) so the AK8963 magnetometer
-  answers at `0x0C`. Written; `heading()` matches the existing
-  `QMC5883L`/`HMC5883L` contract so screens/`nav/heading.py` didn't need
-  to change their call sites. **Axis convention (`atan2(y, x)`) is a
-  starting assumption, not yet bench-verified on this breakout** — see
-  `tests/mpu9250_bench.py`.
-- [x] **Boot-time detection and registration**: `main.py`'s `step_mpu9250()`
-  scans for `0x69`, imports the driver, wakes the chip, enables bypass,
-  and reports a found/not-found/bypass-failed tri-state — same pattern as
-  `step_as5600()` — replacing the old `step_compass()`. `I2C_ADDR_MPU9250`/
-  `I2C_ADDR_AK8963` are in the generic `[BOOT] I2C scan: [...]` name table
-  too. **Not yet confirmed on hardware.**
-- [ ] **Warm-up question**: does the MPU-9250 need a settle period before
-  its first reading is trustworthy, the way the ENS160/AHT21 pair does
-  (`warmup_seconds`)? The datasheet suggests gyro/accel data is valid
-  within tens of milliseconds of power-up with no analogous "burn-in";
-  `tests/mpu9250_bench.py` compares an immediate AK8963 read against one
-  taken 1.5 s later to settle this rather than assuming it. If a delay
-  turns out to be needed, it's a short hardcoded `time.sleep_ms()` inside
-  `AK8963.__init__()`, not a `cfg["warmup_seconds"]`-style knob — this is
-  a much smaller ask than the ENS160/AHT21's multi-second thermal warmup.
-- [x] **Retire the GY-271 (QMC5883L) and treat this as the sole IMU**:
-  `compass.py` and `nav/heading.py` (not `sailpoint.py` — that screen is
-  100% AS5600 sail-angle and never touched the compass; this checklist
-  item's original wording was imprecise) now read `mpu9250.py` instead of
-  `hmc5883l_qmc5883l.py`. The old driver file is kept in the tree,
-  unimported, with a comment marking it retired-from-runtime and reserved
-  for the Phase S bench comparison — not deleted, per the "one deliberate
-  exception" wording below.
-- [x] **Wire it into the existing sensor screens**: `compass.py` and
-  `nav/heading.py` (consumed by `nav/controller.py` → the three-circle
-  state screen's heading circle) now show a heading sourced from the new
-  driver with no other behavior change.
-  *Gate: `[BOOT]` reports the IMU found; the compass screen and the
-  three-circle state screen display a live heading read from the
-  MPU-9250, with the old GY-271 path removed rather than left running in
-  parallel. **Code is in place; the gate itself — actually seeing this
-  work on a live board — still needs to be run and confirmed.***
+- [x] **Bench check**: `tests/gy87_bench.py` reads WHO_AM_I at 0x69 (expect
+  `0x68`; clone silicon may say 0x70–0x73 and is accepted), enables bypass
+  and rescans to show the mag appearing, reads the BMP180, then loops
+  accel / gyro / pitch / roll / heading for eyeballing the axis convention.
+- [x] **Drivers**: `src/drivers/mpu6050.py`, `bmp180.py`, and the `gy87.py`
+  composite. `heading()` keeps the `QMC5883L`/`HMC5883L` contract.
+- [x] **Boot-time detection**: `step_imu()` in `device/main.py` builds the
+  single `GY87` and reports `OK - MPU6050 + QMC5883L + BMP180`, `MPU6050 -
+  no mag`, `QMC5883L standalone`, or `Compass not found`. The instance is
+  injected everywhere via `run(imu=...)` — no screen probes the bus.
+- [x] **Warm-up**: the MPU6050 and BMP180 need no burn-in; a 10 ms settle
+  after wake and after bypass is hardcoded in the drivers.
+- [x] **GY-271 kept as fallback, not retired**: `nav/heading.py` finds a
+  standalone compass when no GY-87 is present. The same driver serves
+  both, so there is no second code path to maintain.
+- [x] **Wired into the existing screens**: compass screen and the
+  three-circle state screen read through `NavController.heading_source()`.
+- [ ] **Axis-convention sign-off in the hull**: `pitch_roll()`'s
+  nose-up / starboard-down signs are datasheet assumptions until the
+  board is mounted and `tests/gy87_bench.py` is run in place.
 
 ## Phase A — AOELL foundations aboard
 
@@ -456,7 +443,7 @@ guaranteed path to shore.
   `GET /api/v1/policy/:version` + ack; checksummed, versioned, rollback
   retained; never execute a partial or incompatible download.
 
-## Phase S — Sensor fusion (MPU-9250)
+## Phase S — Sensor fusion (GY-87: MPU6050 + magnetometer)
 
 Plain-language why: today the turtle's sense of direction comes from a
 magnetometer alone. A compass is truthful on average but jittery
@@ -467,37 +454,28 @@ and the accelerometer tells us which way is down so we can un-tilt the
 compass reading on a heeled boat. This phase is pure sensing — nothing in
 it commands the servo.
 
-- [x] **Hardware selected and wired**: MPU-9250 module (see section above).
-  Default address 0x68 collides with the DS3231 RTC — resolved by
-  strapping AD0 to VCC on the module (→ 0x69).
-- [ ] **Bench verification**: WHO_AM_I check (expect `0x71`) and
-  `tests/i2c_scan.py`/`tests/mpu9250_bench.py` showing 0x69 (and 0x0C once
-  bypass is enabled) alongside the existing devices. Same item as Phase 0's
-  bench check above — still needs to be run on real hardware.
-- [x] **`src/drivers/mpu9250.py` driver**: init, gyro/accel/mag reads at
-  the ranges we need (±250 °/s and ±2 g, the chip's power-on defaults —
-  plenty for a sailboat), bypass-mode enable for the AK8963. Built in
-  Phase 0 (`read_gyro()`/`read_accel()`/`heading()`); the raw-read methods
-  exist now specifically so this phase's fusion work can consume the same
-  driver instance without a rewrite.
-- [ ] `Mpu9250HeadingSource` in `nav/heading.py` implementing the
+- [x] **Hardware selected, wired and driven**: GY-87 (see section above).
+  `MPU6050.read_gyro()` / `read_accel()` / `pitch_roll()` exist and the
+  shared instance reaches `HeadingSource` as `imu=`, so fusion drops in
+  without touching NavController or any screen.
+- [x] **Attitude in telemetry**: `imu_pitch` / `imu_roll` (accelerometer
+  only) ship in every record from 2.4, giving a baseline heel dataset
+  before any filtering is written.
+- [ ] `FusedHeadingSource` in `nav/heading.py` implementing the
   complementary filter, sampled at 20–50 Hz per the cadence table:
   `heading = 0.98 × (heading + gyro_yaw_rate × dt) + 0.02 × mag_heading`
-  The `HeadingSource` abstraction already exists so this drops in without
-  touching NavController or any screen.
 - [ ] **Tilt-compensated heading** (mag + accelerometer) — a heeled
   sailboat reads garbage from a flat-mounted magnetometer; this matters
-  more at sea than the gyro fusion does.
+  more at sea than the gyro fusion does. `pitch_roll()` is the input.
 - [ ] **Heel and turn-rate outputs** exposed alongside heading, plus a
   **motion-disturbance metric** (accel variance) for detecting wave
   action and unstable motion. All feed `confidence_json`.
 - [ ] **Rotation/spin detection** at 10–25 Hz: flag persistent excessive
   turn rate as an event (telemetry + state screen). **Detection only** —
   no automatic sail response until Phase T tells us whether one helps.
-- [ ] **Compass changeover decision**: run the AK8963 (inside the IMU) and
-  the GY-271 side by side on the bench; if the AK8963 is as good or
-  better, retire the GY-271 and free the board space. Keep the GY-271 as
-  the fallback path in `heading.py` either way.
+- [ ] **Barometer as a weather cue**: `bmp_pressure` trend over hours is
+  the cheapest storm-warning we have; decide whether a falling-pressure
+  rate should feed the SAFE gate.
 - [ ] `is_stable()` gate for BOOT→ACQUIRE: heading drift < 2°/min over a
   bench window.
 
@@ -1022,11 +1000,10 @@ question — it is bring-up work, and it blocks every later phase, so it
 runs first regardless of anything else in flight.
 
 **turtleOS (this repo):**
-- Bench-verify the MPU-9250 at 0x69 (`WHO_AM_I` = `0x71`).
-- Write `src/drivers/mpu9250.py` (init, raw gyro/accel reads, AK8963
-  bypass).
-- Add boot-time detection + logging (`[BOOT] MPU-9250 found`), same
-  pattern as the existing ENS160/AHT21 announce.
+- Bench-verify the GY-87 at 0x69 (`tests/gy87_bench.py`). *Done in 2.4.*
+- Write `src/drivers/mpu6050.py`, `bmp180.py`, `gy87.py`. *Done in 2.4.*
+- Add boot-time detection + logging (`10DOF IMU -> OK - MPU6050 + ...`),
+  same pattern as the existing ENS160/AHT21 announce. *Done in 2.4.*
 - Settle the warm-up question empirically (read-immediately vs.
   read-after-delay comparison).
 - Cut over `compass.py` / `sailpoint.py` to the new driver; retire the
@@ -1135,7 +1112,7 @@ proven system act safely on what it *does* know.
 - [ ] **Magnetometer hard/soft-iron calibration**: rotate-the-boat routine
   storing offsets/scales in config; an on-device calibration screen.
   Compass error is the dominant navigation error source right now.
-  Applies to the MPU-9250's AK8963 exactly as it did to the GY-271 — the
+  Applies to the GY-87's magnetometer exactly as it did to the GY-271 — the
   new hardware does not remove the need to calibrate.
 - [ ] **Bench simulation harness**: the host-side fakes used to verify the
   sweep/controller (FakeServo/FakeEnc/clock shim) should be committed

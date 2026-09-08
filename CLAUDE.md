@@ -69,9 +69,9 @@ device/               ← everything deployed to the microcontroller
     │       ├── — turtleOS screens —
     │       ├── turtle_waiting.py ← animated turtle idle screen (turtle_mode=true)
     │       ├── servo.py          ← sail servo status + test sweep
-    │       ├── compass.py        ← live heading from QMC5883L
+    │       ├── compass.py        ← live heading via the shared HeadingSource (GY-87 mag)
     │       ├── sailpoint.py      ← sail-angle overlay on compass reading
-    │       ├── destination.py    ← destination/waypoint screen
+    │       ├── destination.py    ← mission/operator target display + GPS capture flow
     │       ├── battery.py        ← INA219 voltage/current/charge screen
     │       ├── — airOS screens (turtle_mode=false) —
     │       ├── co2.py            ← raw CO2 reading (ENS160)
@@ -98,7 +98,10 @@ device/               ← everything deployed to the microcontroller
     │   ├── ds3231.py             ← RTC driver
     │   ├── aht10.py              ← temp/humidity driver
     │   ├── servo.py              ← MG996R sail servo driver (PWM, 50 Hz)
-    │   ├── hmc5883l_qmc5883l.py  ← compass driver (GY-271 QMC5883L clone)
+    │   ├── gy87.py               ← GY-87 10DOF composite: MPU6050 + aux-bus mag + BMP180 (one shared instance)
+    │   ├── mpu6050.py            ← MPU6050 accel/gyro (0x69), I2C bypass, pitch/roll
+    │   ├── bmp180.py             ← BMP180 barometer (0x77): temp, pressure, ISA altitude
+    │   ├── hmc5883l_qmc5883l.py  ← HMC5883L/QMC5883L magnetometer — the GY-87's mag, or a standalone GY-271
     │   ├── ina219.py             ← battery / power monitor
     │   ├── as5600.py             ← magnetic angle encoder
     │   ├── scd4x.py              ← SCD41 CO2 sensor (alternate)
@@ -139,7 +142,7 @@ MicroPython runs `boot.py` then `main.py` automatically on power-on.
 - On ESP32 only: calls `esp.osdebug(None)` to suppress C-level log noise.
 
 ### Stage 2 — `main.py` (boot pipeline)
-Sequential steps run inside an animated `Booter` progress bar on the OLED (`device/main.py`'s `steps` list; `Booter.boot_pipeline()` in `src/app/booter.py`). Each step's label is held on screen for `BOOT_STEP_HOLD_MS` (500 ms) before it runs. The **result** line is held afterward only if it looks like a failure (`error_hold_ms`, 700 ms) — a successful step's result is not held (`result_hold_ms=0`), so a healthy boot doesn't pay to display text nobody needs to read.
+Sequential steps run inside an animated `Booter` progress bar on the OLED (`device/main.py`'s `steps` list; `Booter.boot_pipeline()` in `src/app/booter.py`). Each step's label is held on screen for `BOOT_STEP_HOLD_MS` (500 ms) before it runs. The **result** line is held afterward only if it looks like a failure (`error_hold_ms`, 700 ms) — a successful step's result is not held (`result_hold_ms=0`), so a healthy boot doesn't pay to display text nobody needs to read. A step tuple may carry an optional 4th element `(label, fn, show_footer, hold_ms)` to override the success dwell for that one step — the **RTC clock** step uses `1500` so the synced local time is readable.
 
 | # | Step | What it does |
 |---|------|-------------|
@@ -149,8 +152,8 @@ Sequential steps run inside an animated `Booter` progress bar on the OLED (`devi
 | 4 | **RTC clock** | Reads DS3231 (I2C 0x68). Syncs `machine.RTC()` to UTC. DS3231 is always kept in UTC. |
 | 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
-| 7 | **MPU-9250 / compass probe, AS5600 sailpoint** (turtle_mode) | Probes the IMU/compass and, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
-| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr` kwargs) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
+| 7 | **10DOF IMU, AS5600 sailpoint** (turtle_mode) | `step_imu()` probes the GY-87 **on I2C_EXT** (MPU6050 at 0x68, or 0x69 if AD0 is high; enables I2C bypass, finds the on-board QMC5883L/HMC5883L, then the BMP180 at 0x77) and keeps the single `GY87` instance in `_rt_imu` — NavController, the compass screen and the telemetry scheduler all receive it via `run(imu=...)`; nothing re-probes. A standalone GY-271 with no IMU still reports green (`QMC5883L standalone`). Then, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
+| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu` kwargs) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
 
 After the pipeline, `main.py`:
 1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`) — in turtle_mode this is just a blank fill, since `TurtleWaitingScreen` (built in step 8) draws the real first frame itself once `run()`'s main loop starts.
@@ -159,6 +162,8 @@ After the pipeline, `main.py`:
 
 ### Debug mode gate (`boot_guard.py`)
 Hold the button **at power-on for 2 seconds** → boot halts and drops to the MicroPython REPL instead of running the app. A file named `debug_mode` on the flash also triggers this. To exit: `import os, machine; os.remove('debug_mode'); machine.reset()`.
+
+The button is sampled by `check_hold_early()` as the **first executable line of `device/main.py`** — before the HAL board-detection block, the two I2C bus scans and `init_oled()`. Those used to run first, so the 2 s hold window only started once they finished (seconds after power-on, with no screen feedback), and "hold at power-on" reliably missed. `check_hold_early()` returns a bool over serial only; `enter_debug(oled)` runs later (after `init_oled()`) to draw "De-Bug Mode / Click to reboot" and wait. A normal boot with the button untouched pays nothing — it returns on the first `btn.value()` read. This early sample also means a brownout/crash **boot-loop** can be caught: hold the button and the next loop iteration halts within a few hundred ms.
 
 ---
 
@@ -173,7 +178,8 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | **`board_xiao_esp32_s3.py`** |
 | Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
 | Button LED | GP18 | GPIO18 | GPIO48 | GPIO2 (D1) — moved off D0, see GNSS note |
-| I2C bus | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
+| I2C bus (I2C_SYS) | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
+| I2C_EXT (plug-in bus) | — | — | — | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-87 IMU; see the "Two I2C buses" note below |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
 | Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
@@ -184,17 +190,22 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 
 > **Note:** GPIO43/44 are also the ESP32-S3 UART0 console pins (`U0TXD`/`U0RXD`). A device continuously driving GPIO44 can, on some firmware builds, leak bytes into the REPL — see [Critical gotcha #16](#16-gps-uart-shares-gpio4344-with-the-esp32-s3-uart0-console-pins).
 
+**Two I2C buses: I2C_SYS and I2C_EXT.** The turtleShell v3.0 architecture splits I2C into a system bus for onboard devices and an external bus for plug-in sensors. As of firmware 2.4 only the GY-87 has moved: it sits on I2C_EXT because its MPU6050 answers at the factory address 0x68, which is the DS3231's address on I2C_SYS. The remaining sensors migrate as the v3.0 PCB develops. `init_i2c()` / `i2c_pins()` are I2C_SYS; `init_i2c_ext()` / `i2c_ext_pins()` are I2C_EXT and return `None` on boards without one. GPIO9 (D10) was deliberately not used for I2C_EXT because the stacked GNSS module drives it as GPS_RESET. `[BOOT]` logs a scan of each bus separately.
+
 **I2C devices on the shared bus** (addresses the same across all ESP32-S3 variants):
 
 | Device | I2C Address | Mode |
 |--------|------------|------|
-| QMC5883L (compass — GY-271 clone) | 0x0D | turtleOS |
+| QMC5883L / HMC5883L (magnetometer — the GY-87's own mag once bypass is on, or a standalone GY-271) | 0x0D / 0x1E | turtleOS |
 | AHT10 / AHT21 (temp/humidity) | 0x38 | airOS |
 | OLED (SSD1306/SH1106) | 0x3C | shared |
 | INA219 (battery/current monitor) | 0x40 | turtleOS |
 | ENS160 (CO2/TVOC) | 0x53 | airOS |
 | SCD41 (CO2 — alternate sensor) | 0x62 | airOS |
 | DS3231 (RTC) | 0x68 | shared |
+| MPU6050 (GY-87 IMU) — **on I2C_EXT**, factory address; 0x68 on I2C_SYS is the RTC | 0x68 (0x69 if AD0 high) | turtleOS |
+| QMC5883L / HMC5883L (GY-87 on-board mag) — **on I2C_EXT**, appears after bypass | 0x0D / 0x1E | turtleOS |
+| BMP180 (GY-87 barometer) — **on I2C_EXT**; shares 0x77 with BME280-alt, see gotcha 17 | 0x77 | turtleOS |
 
 **Platform detection** (`src/hal/platform.py`):
 ```python
@@ -243,17 +254,11 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 
 ### turtleOS sensor carousel (turtle_mode=true)
 
-Single-click enters `sensor_carousel()` configured for navigation screens:
-1. **Sailpoint** screen — sail-angle overlay on heading.
-2. **Servo** screen — sail servo status; double-click runs a raw-PWM test selected by `SERVO_TEST_MODE` in `screens/servo.py`:
-   - `"endpoints"` (default) — bang-bang: jump to 0°, hold 1.5 s, jump to 180°, hold, ×3 cycles. Each move is a single pulse-width change so the servo slews at its own max rate. This is the most aggressive command a servo can be given and is therefore the **decisive diagnostic**: if the horn doesn't reach its stops under this, no command shape will and the fault is mechanical or electrical, not in this file.
-   - `"ramp"` — timed 45°→135° over `SERVO_LEG_MS` (4 s) and back. Increments are sized by `SERVO_STEP_DEG` (3°, ~17 µs), deliberately above the MG996R's ~5-10 µs analogue deadband; a finer ramp makes the motor hunt in place, which at the ~250:1-reduced horn reads as "the servo isn't moving" even though the pinion is clearly spinning. Use once the servo is known good.
-
-   **Nothing else runs during a move** — no OLED writes, no I2C, no button poll — so timing is exact; the screen draws between moves only, and every commanded position is `print()`ed as `[SERVO]` for REPL diagnosis. `_make_pwm()` sets the frequency in the `PWM()` constructor: a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz, 50 % duty) until `.freq()` lands, which is garbage to a servo. The INA219 rail-voltage/current/peak readout was removed from this screen entirely; note the sweep is a far larger excursion than the old ±10° one, so a sagging battery rail will show up as stutter — reduce `SERVO_BANG_HI_DEG`/`SERVO_SWEEP_DEG` if so.
-
-   The idle loop polls the button every 2 ms with **no periodic redraw** (the screen is static once probed). A refresh tick costs a 50-100 ms font render plus I2C flush during which the button isn't sampled — landing one in the gap between two clicks broke doubles into two singles. See the sampling note under [the button](#user-interaction--the-button).
-3. **Compass** screen — live heading from the MPU-9250 (via its AK8963 magnetometer, I2C bypass at 0x0C). Registered in `get_screen()` and preloaded since early on, but only wired into this carousel slot as of Phase 0 — see `docs/navigation_roadmap.md`.
-4. **Destination** screen — active waypoint.
+Single-click enters `sensor_carousel()` configured for navigation screens (order set in `flows.py`; single-click always advances):
+1. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
+2. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
+3. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
+4. **Servo** screen — sail servo status. **Single click advances; double click** waits 2 s then runs one full luff wind-finder sweep (`screens/wind_finder.py::WindFinder`, driven through `ServoScreen`'s raw-PWM callbacks). The result (wind angle + 180° alternate + jitter/confidence) stays on screen until the next action. `_make_pwm()` sets the frequency in the `PWM()` constructor — a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz) until `.freq()` lands, which is garbage to a servo. Idle loop polls the button every 2 ms with no periodic redraw (screen is static once probed) — see the sampling note under [the button](#user-interaction--the-button).
 
 The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
 lives in the hold flow instead, so hand-taken position stamps are one hold away from
@@ -378,6 +383,73 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **Auth:** sends `X-Device-Id` and `X-Device-Key` headers on every request.
 
+**GY-87 fields (turtleOS 2.4+):** `_read_baro()` adds `bmp_pressure` (hPa), `bmp_temp` (°C) and `bmp_alt_m` (ISA altitude from 1013.25 hPa — a sanity number, it drifts with the weather); `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart.
+
+---
+
+## The backend API server (`hopeturtles.org`)
+
+In turtle_mode the firmware talks to the Hope Turtle tracking platform
+(`api_base: "http://hopeturtles.org"`; airOS talks to `http://air.earthen.io`
+instead — a different codebase). **The server that hosts this API is checked out
+on this same machine** at:
+
+```
+/home/russs/WebstormProjects/hopeTurtles.org      ← Node/Express app, the API host
+/home/russs/WebstormProjects/turtle_body          ← sibling project (hardware/body)
+```
+
+Consult it directly when a question is about the wire protocol, what the server
+sends back, or the database. Key files there:
+
+| What | File (relative to `hopeTurtles.org/`) |
+|------|----------------------------------------|
+| DB schema (base) | `hopeturtle_schema_v1.1.sql` |
+| DB migrations (run manually — app does **not** auto-migrate) | `sql/migrations/*.sql` |
+| Device-facing v1 API routes | `routes/api/v1/index.js` |
+| Device API controller (telemetry ingest + `GET`/`PATCH /device`) | `controllers/deviceApiController.js` |
+| Turtle model / `getDeviceInfo` + `updateSetFields` | `models/turtlesModel.js` |
+| Turtle-set-fields migration | `sql/migrations/20260907_turtle_set_fields.sql` |
+
+**Endpoints the firmware uses:** `POST /v1/telemetry`, `POST /v1/telemetry/batch`
+(offline-queue drain, ≤1000 readings), `GET /v1/device` (boot info + RTC/tz sync
++ mission destination), `PATCH /v1/device` (pushes the operator-set `set_*` nav
+fields up for the dashboard). Mounted at both `/api/v1` and `/v1`. Any 2xx =
+success; responses carry `server_now` (Unix seconds) for clock-drift display.
+
+### Mission vs. operator-set destination
+
+Two independent navigation targets:
+
+- **Mission** — the grand-mission target, stored server-side in
+  **`missions_tb.target_lat` / `target_lng`** (`DECIMAL(10,7)`), reached from a
+  turtle via `turtles_tb.mission_id`. `GET /v1/device` now returns it as
+  `mission_target_lat` / `mission_target_lng`; the boot Device API step
+  (`step_api()` in `device/main.py`) writes it into config as
+  `mission_destination` (+ `mission_dest_full_name` / `mission_dest_short_name`)
+  on every online boot, so it survives the next offline boot.
+- **Operator-set** — a per-turtle pond/field test target, captured by hand on the
+  Destination screen and stored in config as `set_destination` / `set_departure`
+  / `set_arrival` (`[lat, lon]` or `null`), `set_waypoints`, `set_short_name`,
+  `set_full_name`. It is **best-effort mirrored** to `turtles_tb.set_*` columns
+  via `PATCH /v1/device` (`src/net/device_client.py`) — for the dashboard only;
+  the local `config.json` is authoritative for navigation.
+
+`WaypointSequencer` (`src/nav/waypoints.py`) resolves the active target in this
+order: `set_waypoints` → `set_destination` → `mission_waypoints` →
+`mission_destination`. `nav_state.json` stores a signature of the resolved route
+so a changed target resets the waypoint index instead of resuming a stale one.
+
+The Destination screen carousel slot (single-click still advances): **double-click
+→ menu** (1× target = here, GPS-stamped into `set_destination` · 2× target =
+mission, copies `mission_destination` · 3× cancel). A here-stamp then walks
+through **Set Departure** and **Set Arrival** (1× stamp into `set_departure` /
+`set_arrival`, 2× skip). Stamps flash "… Set!", cancels flash "Cancelled", and
+no fix flashes "Sorry, no GPS!"; every outcome is also printed as `[DEST]`. The
+stamp is the single click on purpose — a slow double must never silently back
+out of the menu. `set_waypoints` exists in schema + config but has no
+on-device writer yet.
+
 ---
 
 ## Configuration (`config.py` / `config.json`)
@@ -404,8 +476,25 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |
+| `mission_dest_full_name` | str | `"Al Mawasi, Gaza"` | grand-mission label; overwritten each online boot from `GET /v1/device` |
+| `mission_dest_short_name` | str | `""` | grand-mission short label; overwritten from API |
+| `mission_destination` | `[lat,lon]` | `[31.35, 34.27]` | grand-mission target; overwritten from API (`mission_target_*`) |
+| `mission_waypoints` | list | `[]` | grand-mission route of `[lat,lon]` pairs |
+| `set_destination` | `[lat,lon]`\|`null` | `null` | operator test-project target; set on the Destination screen |
+| `set_departure` | `[lat,lon]`\|`null` | `null` | operator start point; set on the Destination screen's "Set Departure" step |
+| `set_arrival` | `[lat,lon]`\|`null` | `null` | operator arrival point; set on the Destination screen's "Set Arrival" step |
+| `set_waypoints` | list | `[]` | operator route; **no on-device writer yet** |
+| `set_short_name` | str | `""` | operator label (`"SET"` after a here-stamp) |
+| `set_full_name` | str | `""` | operator label (`"User Set"` after a here-stamp) |
 
-Legacy key migration handled automatically: `"api-base"` → `"api_base"`, boolean strings normalized.
+Legacy key migration handled automatically: `"api-base"` → `"api_base"`;
+`dest_name` → `mission_dest_full_name`, `dest_coord` → `mission_destination`,
+`waypoints` → `mission_waypoints`; boolean strings normalized.
+
+The `set_*` fields are best-effort mirrored to `turtles_tb` via `PATCH
+/v1/device` (`src/net/device_client.py`) so the hopeturtles.org dashboard can
+display them; `config.json` stays authoritative for navigation. See
+[Mission vs. operator-set destination](#mission-vs-operator-set-destination).
 
 ---
 
@@ -585,6 +674,8 @@ Do not add top-level imports to screen files or flow modules. Import inside func
 ### 4. Pre-load screen modules before WiFi (`_preload_screens`)
 On small-heap boards, module bytecode imports can fail after WiFi fragments the heap, so `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen used in any carousel, add it to the `_preload_screens()` list — it keeps boot deterministic and costs ~nothing.
 
+**The XIAO ESP32-S3 skips the full preload entirely** (`_is_xiao` gate in `device/main.py`). On its 8 MB PSRAM heap there is no post-WiFi fragmentation to guard against, and the serial import-with-`gc.collect()` marathon (~110 KB of bytecode) added several seconds of blank OLED before the boot bar could draw. `run()`'s screen cache imports each screen lazily on first use instead. WiFi PHY pre-activation still runs. The Pico path is unchanged.
+
 ### 5. Font pre-warming
 Font writers have lazy internal caches. Calling `w.size("A")` once during boot warms those caches. `_preload_screens()` does this for all fonts.
 
@@ -622,6 +713,12 @@ The idle screen object (`turtle_waiting_scr`) is instantiated once at startup. C
 ### 16. GPS UART shares GPIO43/44 with the ESP32-S3 UART0 console pins
 The GPS UART is on `TX=43, RX=44` (D6/D7), which are **also the ESP32-S3's default UART0 console pins** (`U0TXD`/`U0RXD`). If a build leaves UART0 active as a secondary console with input enabled, a device that continuously drives GPIO44 (e.g. a GNSS module's TXD streaming NMEA at power-up) can inject bytes into the REPL's stdin — showing as garbage at the prompt, and a stray `0x03` reads as Ctrl-C (`KeyboardInterrupt`). This is a latent pin/console overlap to keep in mind when a "crash" correlates with the harness being wired up; note it has **not** been confirmed as the cause of any specific field issue, and `os.dupterm(None, 1)` does not address it (the console is at the IDF level, not a Python dupterm slot). If it is ever confirmed, the clean fix is to reflash MicroPython with the UART0 console disabled (console on USB-Serial-JTAG only), which frees GPIO43/44 entirely.
 
+### 17. 0x77 is both the BMP180 and the BME280's alternate address
+The GY-87's BMP180 barometer sits at 0x77, which is also where a BME280 with SDO high answers. `step_warmup()` only hands 0x77 to `AirSensor` when the Bosch chip-ID register (0xD0) reads 0x60 (BME280) or 0x58 (BMP280); the `BME280` driver refuses any other ID, and the `BMP180` driver requires 0x55. Never decide which driver owns 0x77 from the scan alone.
+
+### 18. The GY-87 is probed once — inject it, don't re-probe
+`step_imu()` builds the one `GY87` instance. It reaches `NavController(imu=)` → `HeadingSource(mag=, imu=)`, `CompassScreen(heading_src=)` and `TelemetryScheduler(imu=, heading_getter=)`. Re-probing from a screen re-runs the MPU6050 init and bypass sequence mid-bus and was the source of the old triplicated probe ladders. The GY-87 is only ever probed on **I2C_EXT**: its MPU6050 uses the factory address 0x68, which on I2C_SYS is the DS3231. The driver reads WHO_AM_I before writing anything, so a wrong-bus probe is a harmless read, but `step_imu()` never asks I2C_SYS for an IMU at all.
+
 ---
 
 ## Key file locations at a glance
@@ -644,6 +741,8 @@ The GPS UART is on `TX=43, RX=44` (D6/D7), which are **also the ESP32-S3's defau
 | Turtle idle screen | `device/src/ui/screens/turtle_waiting.py` |
 | Sail servo screen | `device/src/ui/screens/servo.py` |
 | Compass screen | `device/src/ui/screens/compass.py` |
+| GY-87 10DOF composite driver | `device/src/drivers/gy87.py` (+ `mpu6050.py`, `bmp180.py`) |
+| Heading abstraction | `device/src/nav/heading.py` |
 | Battery screen | `device/src/ui/screens/battery.py` |
 | Telemetry scheduler | `device/src/app/telemetry_scheduler.py` |
 | Air sensor + reading | `device/src/sensors/air.py` |

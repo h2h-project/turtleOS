@@ -89,7 +89,8 @@ class TelemetryBackgroundProcess:
             "ok": None,
             "sending": False,
             "msg": "",
-            "last_ms": None,
+            "last_ms": None,      # stamped on every send attempt, success or failure
+            "last_ok_ms": None,   # stamped only on a successful send
             "wifi_ok": None,   # set after each reconnect; main thread reads this
         }
 
@@ -587,7 +588,11 @@ class TelemetryBackgroundProcess:
             # leave the Online screen's last-known status alone rather than
             # claiming a connection that was never exercised.
             if sent > 0:
-                self._set_result(sending=False, ok=bool(ok), msg=msg, last_ms=time.ticks_ms())
+                _now_ms = time.ticks_ms()
+                _result_kwargs = dict(sending=False, ok=bool(ok), msg=msg, last_ms=_now_ms)
+                if ok:
+                    _result_kwargs["last_ok_ms"] = _now_ms
+                self._set_result(**_result_kwargs)
                 try:
                     from src.ui.connection_header import set_api_ok
                     set_api_ok(bool(ok))
@@ -656,12 +661,11 @@ class TelemetryBackgroundProcess:
             if morse_bless:
                 self._wait_morse_done(timeout_ms=6000)
             self._stop_blink()   # clears _api_sending_raw, _api_morse_*, LED off
-            self._set_result(
-                sending=False,
-                ok=ok,
-                msg=msg,
-                last_ms=time.ticks_ms(),
-            )
+            _now_ms = time.ticks_ms()
+            _result_kwargs = dict(sending=False, ok=ok, msg=msg, last_ms=_now_ms)
+            if ok:
+                _result_kwargs["last_ok_ms"] = _now_ms
+            self._set_result(**_result_kwargs)
             _gc()
 
             # Update connection header API icon from background thread.

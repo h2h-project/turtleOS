@@ -82,8 +82,11 @@ def run(
         wifi_manager=None,
         nav_controller=None,
         turtle_waiting_scr=None,
+        imu=None,
 ):
     BTN_PIN = _resolve_btn_pin_default()
+    # Shared GY-87 10DOF instance built by device/main.py step_imu() (or None).
+    _imu_dev = imu
     from config import load_config
     from src.input.button import AirBuddyButton
     from src.ui.waiting import WaitingScreen
@@ -408,6 +411,8 @@ def run(
                 wifi_manager=wifi,
                 gps=gps,
                 battery_sensor=_ina_dev,
+                imu=_imu_dev,
+                heading_getter=lambda: (_nav_cell[0].heading_deg() if _nav_cell[0] else None),
             )
             telemetry_started = True
             print("[TELEMETRY] Started.")
@@ -605,8 +610,12 @@ def run(
 
             elif name == "compass":
                 from src.ui.screens.compass import CompassScreen
-                screens[name] = CompassScreen(oled, i2c=i2c,
-                                              offset_deg=cfg.get("compass_offset_deg", 0))
+                _nav_for_compass = _get_nav()
+                screens[name] = CompassScreen(
+                    oled,
+                    heading_src=(_nav_for_compass.heading_source() if _nav_for_compass else None),
+                    i2c=i2c,
+                    offset_deg=cfg.get("compass_offset_deg", 0))
 
             elif name == "sailpoint":
                 from src.ui.screens.sailpoint import SailpointScreen
@@ -620,7 +629,12 @@ def run(
                     _sp = _servo_pin()
                 except Exception:
                     _sp = None
-                screens[name] = ServoScreen(oled, servo_pin=_sp)
+                screens[name] = ServoScreen(
+                    oled,
+                    servo_pin=_sp,
+                    i2c=i2c,
+                    ina=_ina_dev,
+                )
 
             elif name == "battery":
                 from src.ui.screens.battery import BatteryScreen
@@ -717,7 +731,7 @@ def run(
                     print("[NAV] servo init failed:", repr(e))
             _nav_cell[0] = NavController(
                 cfg_now, i2c=i2c, gps=gps,
-                servo=nav_servo, battery=_ina_dev,
+                servo=nav_servo, battery=_ina_dev, imu=_imu_dev,
             )
             _gc()
             print("[NAV] controller ready")

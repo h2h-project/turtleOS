@@ -74,6 +74,8 @@ DEFAULTS = {
     "timezone_offset_min": None,
 
     # --- Compass calibration ---
+    # Applied by src/nav/heading.py to the raw magnetometer heading (the
+    # GY-87's on-board QMC5883L/HMC5883L, or a standalone GY-271 fallback).
     # Degrees to add to raw heading so that the reading matches true North.
     # Example: if raw=80 when pointing North, set compass_offset_deg to -80.
     "compass_offset_deg": 0,
@@ -93,16 +95,31 @@ DEFAULTS = {
     # is the only reliable way to know if a servo is actually present.
     "servo_present": False,
 
-    # --- Destination (turtle mode) ---
-    # Target waypoint shown on the Destination screen.
-    # dest_coord: [lat_float, lon_float] in decimal degrees.
-    "dest_name": "Al Mawasi, Gaza",
-    "dest_coord": [31.35, 34.27],
+    # --- Mission destination (turtle mode) ---
+    # The grand-mission target, assigned on hopeturtles.org and pushed to the
+    # device by the Device API boot step (GET /v1/device -> mission_target_*).
+    # mission_destination: [lat_float, lon_float] in decimal degrees.
+    "mission_dest_full_name": "Al Mawasi, Gaza",
+    "mission_dest_short_name": "",
+    "mission_destination": [31.35, 34.27],
+    # mission_waypoints: ordered mission list of [lat, lon] pairs; when empty
+    # the sequencer falls back to a single-waypoint mission at
+    # mission_destination.
+    "mission_waypoints": [],
+
+    # --- Operator-set test project (turtle mode) ---
+    # Set by hand on the Destination screen for pond/field tests, independent
+    # of the grand mission above. WaypointSequencer prefers these when set.
+    # Each *_destination/departure/arrival is [lat, lon] or None (not set).
+    # Mirrored to turtles_tb via PATCH /v1/device for the dashboard.
+    "set_destination": None,
+    "set_departure": None,
+    "set_arrival": None,
+    "set_waypoints": [],
+    "set_short_name": "",
+    "set_full_name": "",
 
     # --- Navigation (turtle mode, src/nav/) ---
-    # waypoints: ordered mission list of [lat, lon] pairs; when empty the
-    # sequencer falls back to a single-waypoint mission at dest_coord.
-    "waypoints": [],
     "nav_cycle_ms": 300,          # autopilot cycle (PDF spec: 200-500 ms)
     "arrival_radius_m": 300,      # waypoint arrival radius
     "luff_sweep_dps": 8,          # sweep speed, deg/s (PDF spec: 5-10)
@@ -140,6 +157,23 @@ def load_config():
     if "api_base" not in cfg and "api-base" in cfg:
         cfg["api_base"] = cfg.get("api-base")
         changed = True
+
+    # dest_* / waypoints -> mission_* (clarity: mission_ = grand mission,
+    # set_ = operator test project). Copy the value across, then drop the
+    # old key so it does not linger in config.json.
+    for _old, _new in (
+        ("dest_name", "mission_dest_full_name"),
+        ("dest_coord", "mission_destination"),
+        ("waypoints", "mission_waypoints"),
+    ):
+        if _old in cfg:
+            if _new not in cfg:
+                cfg[_new] = cfg.get(_old)
+            try:
+                del cfg[_old]
+            except Exception:
+                pass
+            changed = True
 
     for k in LEGACY_KEYS_TO_REMOVE:
         if k in cfg:
@@ -339,45 +373,60 @@ def _normalize_types(cfg):
         cfg["compass_offset_deg"] = compass_offset
         changed = True
 
-    # --- Destination name ---
-    dest_name = str(cfg.get("dest_name", DEFAULTS["dest_name"]) or "").strip()
-    if cfg.get("dest_name") != dest_name:
-        cfg["dest_name"] = dest_name
-        changed = True
+    # --- Destination name strings (mission + operator-set) ---
+    for _key in ("mission_dest_full_name", "mission_dest_short_name",
+                 "set_short_name", "set_full_name"):
+        _s = str(cfg.get(_key, DEFAULTS[_key]) or "").strip()
+        if cfg.get(_key) != _s:
+            cfg[_key] = _s
+            changed = True
 
-    # --- Destination coordinates ---
-    dest_coord = cfg.get("dest_coord", DEFAULTS["dest_coord"])
-    _coord_ok = False
-    if isinstance(dest_coord, list) and len(dest_coord) == 2:
-        try:
-            _lat = float(dest_coord[0])
-            _lon = float(dest_coord[1])
-            if -90.0 <= _lat <= 90.0 and -180.0 <= _lon <= 180.0:
-                _coord_ok = True
-        except Exception:
-            pass
-    if not _coord_ok:
-        cfg["dest_coord"] = DEFAULTS["dest_coord"]
-        changed = True
-
-    # --- Waypoint list (nav) ---
-    # Keep only well-formed [lat, lon] pairs; a malformed list degrades to
-    # the dest_coord fallback inside WaypointSequencer rather than crashing.
-    wps = cfg.get("waypoints", DEFAULTS["waypoints"])
-    if not isinstance(wps, list):
-        cfg["waypoints"] = []
-        changed = True
-    else:
-        _clean = []
-        for wp in wps:
+    # --- Destination coordinates (mission + operator-set) ---
+    # A point is [lat, lon] with lat in +/-90, lon in +/-180. mission_
+    # destination falls back to the default; the set_ points fall back to
+    # None (meaning "not set"), so an invalid value can't masquerade as a
+    # target.
+    def _valid_pair(val):
+        if isinstance(val, (list, tuple)) and len(val) == 2:
             try:
-                _lat = float(wp[0]); _lon = float(wp[1])
-                if -90.0 <= _lat <= 90.0 and -180.0 <= _lon <= 180.0:
-                    _clean.append([_lat, _lon])
+                _la = float(val[0]); _lo = float(val[1])
+                if -90.0 <= _la <= 90.0 and -180.0 <= _lo <= 180.0:
+                    return [_la, _lo]
             except Exception:
                 pass
-        if len(_clean) != len(wps):
-            cfg["waypoints"] = _clean
+        return None
+
+    _md = _valid_pair(cfg.get("mission_destination", DEFAULTS["mission_destination"]))
+    if _md is None:
+        _md = list(DEFAULTS["mission_destination"])
+    if cfg.get("mission_destination") != _md:
+        cfg["mission_destination"] = _md
+        changed = True
+
+    for _key in ("set_destination", "set_departure", "set_arrival"):
+        _p = _valid_pair(cfg.get(_key))
+        if cfg.get(_key) != _p:
+            cfg[_key] = _p
+            changed = True
+
+    # --- Waypoint lists (mission + operator-set) ---
+    # Keep only well-formed [lat, lon] pairs; a malformed list degrades to
+    # the *_destination fallback inside WaypointSequencer rather than
+    # crashing.
+    for _key in ("mission_waypoints", "set_waypoints"):
+        _wps = cfg.get(_key, DEFAULTS[_key])
+        if not isinstance(_wps, list):
+            if cfg.get(_key) != []:
+                cfg[_key] = []
+                changed = True
+            continue
+        _clean = []
+        for _wp in _wps:
+            _cp = _valid_pair(_wp)
+            if _cp is not None:
+                _clean.append(_cp)
+        if _clean != _wps:
+            cfg[_key] = _clean
             changed = True
 
     # --- Mission link mode ---

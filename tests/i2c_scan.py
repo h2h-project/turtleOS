@@ -15,22 +15,25 @@ except Exception:
     SDA_PIN = 5
 
 KNOWN = {
-    0x0D: "QMC5883L (magnetometer clone / GY-271)",
-    0x1E: "HMC5883L (magnetometer genuine)",
+    0x0D: "QMC5883L (GY-87 on-board mag via bypass, or standalone GY-271)",
+    0x1E: "HMC5883L (GY-87 on-board mag via bypass, or standalone)",
     0x36: "AS5600 (magnetic angle encoder)",
     0x38: "AHT10/AHT21 (temp/humidity)",
     0x3C: "OLED (SSD1306/SH1106)",
     0x40: "INA219 (battery monitor)",
     0x53: "ENS160 (CO2/TVOC)",
     0x62: "SCD41 (CO2)",
-    0x68: "DS3231 (RTC)",
+    0x68: "DS3231 (RTC) — on I2C_EXT this is the MPU6050 (GY-87)",
+    0x69: "MPU6050 (GY-87 IMU, AD0 high)",
+    0x76: "BME280 (temp/humidity/pressure)",
+    0x77: "BMP180 (GY-87 barometer) or BME280 alt — check chip ID 0xD0",
 }
 
 print("=" * 48)
 print("  I2C bus scan  SCL={} SDA={}".format(SCL_PIN, SDA_PIN))
 print("=" * 48)
 
-i2c = I2C(0, scl=Pin(SCL_PIN), sda=Pin(SDA_PIN), freq=400000)
+i2c = I2C(_id if '_id' in globals() else 0, scl=Pin(SCL_PIN), sda=Pin(SDA_PIN), freq=400000)
 
 devices = i2c.scan()
 if not devices:
@@ -39,6 +42,31 @@ else:
     for addr in sorted(devices):
         label = KNOWN.get(addr, "unknown")
         print("  0x{:02X}  {}".format(addr, label))
+
+# I2C_EXT — the plug-in bus (GY-87 IMU). Only on XIAO ESP32-S3.
+try:
+    from src.hal.board import i2c_ext_pins as _i2c_ext_pins
+    _ext = _i2c_ext_pins()
+except Exception:
+    _ext = None
+if _ext:
+    _eid, ESCL, ESDA, _efreq = _ext
+    print("=" * 48)
+    print("  I2C_EXT scan  I2C({}) SCL={} SDA={}".format(_eid, ESCL, ESDA))
+    print("=" * 48)
+    try:
+        ext_bus = I2C(_eid, scl=Pin(ESCL), sda=Pin(ESDA), freq=_efreq)
+        ext_devices = ext_bus.scan()
+    except Exception as e:
+        ext_devices = []
+        print("  scan failed:", repr(e))
+    EXT_KNOWN = {0x68: "MPU6050 (GY-87)", 0x69: "MPU6050 (GY-87, AD0 high)",
+                 0x0D: "QMC5883L (GY-87 mag, after bypass)", 0x1E: "HMC5883L (GY-87 mag, after bypass)",
+                 0x77: "BMP180 (GY-87)"}
+    if not ext_devices:
+        print("  No devices — GY-87 not wired, or no VCC_IN")
+    for addr in sorted(ext_devices):
+        print("  0x{:02X}  {}".format(addr, EXT_KNOWN.get(addr, KNOWN.get(addr, "unknown"))))
 
 print()
 

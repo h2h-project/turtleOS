@@ -27,6 +27,9 @@ KNOWN = {
     0x53: "ENS160",
     0x62: "SCD41",
     0x68: "DS3231",
+    0x69: "MPU6050 (GY-87)",
+    0x76: "BME280",
+    0x77: "BMP180/BME280-alt",
 }
 
 # RP2040 (Pico / Pico W) I2C pin map:

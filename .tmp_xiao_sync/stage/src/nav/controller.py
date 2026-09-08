@@ -13,7 +13,7 @@ from src.nav import gpsfix
 
 
 class NavController:
-    def __init__(self, cfg, i2c=None, gps=None, servo=None, battery=None):
+    def __init__(self, cfg, i2c=None, gps=None, servo=None, battery=None, imu=None):
         self._gps = gps
         self._servo = servo
         self._ina = battery
@@ -27,9 +27,15 @@ class NavController:
         self._feather_applied = False
         self.fault = None
 
+        # imu: the shared GY87 built at boot (src/drivers/gy87.py). Its mag is
+        # injected so HeadingSource never re-probes; with no GY-87 it falls
+        # back to a standalone compass on the bus.
         from src.nav.heading import HeadingSource
         self._heading = HeadingSource(
-            i2c=i2c, offset_deg=cfg.get("compass_offset_deg", 0))
+            i2c=i2c,
+            mag=(getattr(imu, "mag", None) if imu is not None else None),
+            imu=imu,
+            offset_deg=cfg.get("compass_offset_deg", 0))
 
         self._enc = None
         if i2c is not None:
@@ -82,6 +88,11 @@ class NavController:
     def heading_deg(self):
         """Light accessor for overlays (no snapshot cost)."""
         return self._heading.heading_deg()
+
+    def heading_source(self):
+        """The shared HeadingSource — screens and telemetry read through it
+        so offset handling lives in exactly one place."""
+        return self._heading
 
     def seconds_to_next_sweep(self):
         """Seconds until the next scheduled luff re-sweep, or None when not

@@ -50,6 +50,8 @@ elif _TAG == "xiao_esp32s3":
         servo_pwm_config,
         user_led_pin,
         user_led_active_value,
+        init_i2c_ext,
+        i2c_ext_pins,
     )
 
 else:
@@ -81,6 +83,20 @@ try:
     servo_pwm_config
 except NameError:
     def servo_pwm_config():
+        return None
+
+# I2C_EXT (second bus for plug-in sensors) exists only on XIAO ESP32-S3.
+# Stubs return None so callers can skip the bus when it isn't there.
+try:
+    init_i2c_ext
+except NameError:
+    def init_i2c_ext():
+        return None
+
+try:
+    i2c_ext_pins
+except NameError:
+    def i2c_ext_pins():
         return None
 
 # user_led_pin / user_led_active_value are only defined on XIAO ESP32-S3.
