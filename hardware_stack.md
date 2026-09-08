@@ -18,12 +18,13 @@ The links in the Example column point to web listings as a convenient reference.
 | SSD1306 / SH1106 OLED (128×64) | Navigation display — heading, GPS state, battery, sensor data and turtle animation | Core | <a href="https://www.amazon.co.uk/AZDelivery-0-96-inch-Display-Parent/dp/B081NFJP68" target="_blank">🔗</a> |
 | DS3231 RTC | UTC timekeeping — survives power-off without network sync | Core | <a href="https://www.amazon.co.uk/Wishiot-AT24C32-Raspberry-Mega2560-Leonardo/dp/B0BTM8HHX2" target="_blank">🔗</a> |
 | DHT20 / AHT20 temperature & humidity sensor | Environmental temperature and relative-humidity sensing over I²C | Core | <a href="https://thepihut.com/products/dht20-aht20-pin-module-i2c-temperature-and-humidity-sensor?variant=40509865164995" target="_blank">🔗</a> |
-| CN3065 solar Li-ion charger | Dedicated solar charging of the main 1S 3.7V battery from the 5V solar panel; remains connected while TurtleShell electronics are switched off | Core - In dev | <a href="https://www.robotistan.com/mini-solar-lipo-charge-module" target="_blank">🔗</a> |
+| CN3065 solar Li-ion charger | Dedicated solar charging of the main 1S 3.7V battery; remains connected while TurtleShell electronics are switched off | Core - In dev | <a href="https://www.robotistan.com/mini-solar-lipo-charge-module" target="_blank">🔗</a> |
+| Voltaic P126 6V 2W solar panel | Main solar source — charges the 1S system battery through the CN3065 solar charger | Core - In dev | <a href="https://thepihut.com/products/6v-2w-solar-panel-etfe-voltaic-p126" target="_blank">🔗</a> |
 | LM2596 buck regulator | Steps the separate 2S servo battery pack down from ~7.4V nominal to the regulated voltage required by the MG996R servo | Core - In dev | <a href="https://www.amazon.co.uk/Converter-Regulator-Efficiency-1-25V-35V-Electronic/dp/B0FY34NK2K" target="_blank">🔗</a> |
 | 21700 Li-ion cell (4200mAh 3.7V 30A) | Main TurtleShell energy storage — powers the XIAO and electronics and is charged by USB-C / solar | Core | <a href="https://www.amazon.co.uk/Vapcell-4200mAh-21700-Rechargeable-Battery/dp/B0DFCZHQ6L" target="_blank">🔗</a> |
 | 2 × Power-Xtra 18650 Li-ion cells (2000mAh 3.7V) | Dedicated 2S servo battery pack — approximately 7.4V nominal, supplying the LM2596 and MG996R independently of the main electronics battery | Core - In dev | <a href="https://www.robotistan.com/powerxtra-px18650-20b-37v-2000mah-liion-rechargeable-battery-flattop-en" target="_blank">🔗</a> |
 | XIAO Wio-SX1262 Kit for Meshtastic & LoRa | Long-range mesh radio — field telemetry and command relay without WiFi infrastructure | Future | <a href="https://www.amazon.co.uk/XIAO-ESP32S3-Wio-SX1262-Development-Meshtastic/dp/B0DZCQ1FG3" target="_blank">🔗</a> |
-
+| 2S 7.4V / 8.4V balance charger + BMS | OPTIONAL — allows safe charging and balancing of the dedicated 2S servo battery pack rather than requiring the pack to be removed and externally charged | Optional | <a href="https://www.amazon.co.uk/s?k=2S+8.4V+18650+BMS+balance+charger" target="_blank">🔗</a> |
 
 ## Key Components
 
