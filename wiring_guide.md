@@ -17,10 +17,10 @@ We highly recommend following the wire color schema below and using our color co
 
 | Left Side (Top → Bottom) | Right Side (Top → Bottom) |
 |---|---|
-| ⬛ **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V — No input |
+| 🔲 **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V — No input |
 | 🟨 **2** GPIO2 / A1 / D1 → BUTTON LED (active HIGH, LED + resistor to GND) | ⚫ **2** GND → shared ground |
 | 🟨 **3** GPIO3 / A2 / D2 → **I2C_EXT SCL** → GY-87 SCL | 🟥 **3** 3V3 → OLED VCC, RTC VCC, AS5600 VCC, INA219 VCC, AHT20 VCC |
-| 🟪 **4** GPIO4 / A3 / D3 → BUTTON | ⬛ **4** GPIO9 / A10 / D10 / MOSI — RESERVED: GPS_RESET (stacked L76K GNSS module) |
+| 🟪 **4** GPIO4 / A3 / D3 → BUTTON | 🔲 **4** GPIO9 / A10 / D10 / MOSI — RESERVED: GPS_RESET (stacked L76K GNSS module) |
 | 🟩 **5** GPIO5 / A4 / D4 / SDA → **I2C_SYS SDA** → OLED SDA, RTC SDA, AS5600 SDA, INA219 SDA, AHT20 SDA | 🟩 **5** GPIO8 / A9 / D9 / MISO → **I2C_EXT SDA** → GY-87 SDA |
 | 🟨 **6** GPIO6 / A5 / D5 / SCL → **I2C_SYS SCL** → OLED SCL, RTC SCL, AS5600 SCL, INA219 SCL, AHT20 SCL | 🟨 **6** GPIO7 / A8 / D8 / SCK → SERVO signal |
 | 🔵 **7** GPIO43 / D6 / TX → GPS RX | 🟠 **7** GPIO44 / D7 / RX ← GPS TX |
