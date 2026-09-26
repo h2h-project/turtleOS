@@ -1,9 +1,9 @@
 # src/drivers/hmc5883l_qmc5883l.py
-# MicroPython drivers for HMC5883L and QMC5883L 3-axis magnetometers
+# MicroPython drivers for HMC5883L / QMC5883L / QMC5883P 3-axis magnetometers
 #
 # Two roles in turtleOS 2.4+:
 #   * the magnetometer on the GY-87 10DOF board, which sits on the MPU6050's
-#     auxiliary I2C bus and appears at 0x0D/0x1E once bypass is enabled
+#     auxiliary I2C bus and appears at 0x0D/0x1E/0x2C once bypass is enabled
 #     (src/drivers/gy87.py does that and owns the instance);
 #   * a standalone GY-271 compass wired straight to the bus, found by
 #     HeadingSource's fallback ladder (src/nav/heading.py) when no GY-87 is
@@ -18,7 +18,14 @@
 #   I2C address : 0x0D (fixed)
 #   Data order  : X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB  (little-endian, XYZ)
 #
-# Both: heading = atan2(Y, X) — hold sensor flat, X pointing North = 0°
+# QMC5883P (newer QST part on GY-87/GY-271 clones — NOT register-compatible
+#   with the QMC5883L despite the name):
+#   I2C address : 0x2C (fixed)
+#   Chip-ID reg : 0x00 must read 0x80
+#   Data regs   : 0x01..0x06 — X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB
+#   Must-write  : 0x29 <- 0x06 (axis sign), then CTRL2 (0x0B), CTRL1 (0x0A)
+#
+# All: heading = atan2(Y, X) — hold sensor flat, X pointing North = 0°
 
 import time
 import math
@@ -53,6 +60,15 @@ _QMC_REG_CTRL1 = const(0x09)
 _QMC_REG_CTRL2 = const(0x0A)
 _QMC_REG_RST   = const(0x0B)
 _QMC_REG_ID    = const(0x0D)
+
+# --- QMC5883P constants (distinct chip, distinct register map) ---
+_QMCP_ADDR      = const(0x2C)
+_QMCP_REG_ID    = const(0x00)   # reads 0x80
+_QMCP_REG_DATA  = const(0x01)   # X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB
+_QMCP_REG_STAT  = const(0x09)   # bit0 = DRDY
+_QMCP_REG_CTRL1 = const(0x0A)
+_QMCP_REG_CTRL2 = const(0x0B)
+_QMCP_REG_SIGN  = const(0x29)
 
 
 class HMC5883L:
@@ -190,5 +206,72 @@ class QMC5883L:
     def is_data_ready(self):
         try:
             return bool(self._i2c.readfrom_mem(self._addr, _QMC_REG_STAT, 1)[0] & 0x01)
+        except Exception:
+            return False
+
+
+class QMC5883P:
+    """QST QMC5883P — the 0x2C part fitted to newer GY-87/GY-271 clones.
+
+    Same public surface as QMC5883L (is_present, read_raw, heading,
+    is_data_ready) so HeadingSource / GY87 can use either interchangeably.
+    """
+
+    is_present = False
+
+    def __init__(self, i2c, addr=_QMCP_ADDR):
+        self._i2c  = i2c
+        self._addr = int(addr)
+
+        try:
+            chip_id = self._i2c.readfrom_mem(self._addr, _QMCP_REG_ID, 1)[0]
+            if chip_id != 0x80:
+                print("[QMC5883P] unexpected chip ID: 0x{:02X}".format(chip_id))
+                return
+        except Exception as e:
+            print("[QMC5883P] not found:", repr(e))
+            return
+
+        try:
+            # 0x29 <- 0x06 : axis-sign register (datasheet-mandated write)
+            self._i2c.writeto_mem(self._addr, _QMCP_REG_SIGN, bytes([0x06]))
+            # CTRL2 (0x0B): set/reset mode on, ±8 G range
+            self._i2c.writeto_mem(self._addr, _QMCP_REG_CTRL2, bytes([0x08]))
+            # CTRL1 (0x0A) = 0b1100_0011: continuous mode, ODR 10 Hz,
+            # OSR1 x8 (oversample), OSR2 x8 (downsample) — low-noise, plenty
+            # fast for a heading.
+            self._i2c.writeto_mem(self._addr, _QMCP_REG_CTRL1, bytes([0xC3]))
+            time.sleep_ms(10)
+        except Exception as e:
+            print("[QMC5883P] init write failed:", repr(e))
+            return
+
+        self.is_present = True
+        print("[QMC5883P] ready at 0x2C, 10Hz, +/-8G")
+
+    def read_raw(self):
+        """Return (x, y, z) as signed 16-bit counts, or None on error.
+        Register order: X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB."""
+        try:
+            d = self._i2c.readfrom_mem(self._addr, _QMCP_REG_DATA, 6)
+        except Exception:
+            return None
+        def s16(lo, hi):
+            v = (hi << 8) | lo
+            return v - 65536 if v >= 32768 else v
+        return (s16(d[0], d[1]), s16(d[2], d[3]), s16(d[4], d[5]))
+
+    def heading(self, declination_deg=0.0):
+        """Return magnetic heading in degrees [0, 360). Returns None on error."""
+        raw = self.read_raw()
+        if raw is None:
+            return None
+        x, y, _ = raw
+        h = math.atan2(y, x) * (180.0 / math.pi) + float(declination_deg)
+        return h % 360.0
+
+    def is_data_ready(self):
+        try:
+            return bool(self._i2c.readfrom_mem(self._addr, _QMCP_REG_STAT, 1)[0] & 0x01)
         except Exception:
             return False

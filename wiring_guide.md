@@ -30,20 +30,36 @@ We highly recommend following the wire color schema below. Future hope turtle wi
 
 ---
 
-## I2C Buses
+## I2C Buses — the two-bus foundation
 
-turtleShell v3.0 splits I2C into two buses. As of turtleOS 2.4 only the GY-87 has m remaining sensors migrate as the v3.0 PCB develops.
+**This is a new, still-forming architecture.** The turtleShell v3.0 PCB will split
+I2C cleanly into two buses — a **system bus (I2C_SYS)** for the onboard peripherals
+that are always present, and an **external bus (I2C_EXT)** for plug-in sensors that
+come and go. On the current hand-wired hardware that split has only *begun*: as of
+turtleOS 2.4 the **GY-87 10DOF IMU is the only device on I2C_EXT**, and every other
+I2C peripheral still shares I2C_SYS. The remaining sensors will migrate onto I2C_EXT
+as the v3.0 board is laid out and the connector scheme is finalized; treat the table
+below as the target layout, partially realized.
 
-| Bus | Peripheral | SDA | SCL | Speed | Devices | Notes |
-|---|---|---|---|---|---|---|
-| **I2C_SYS** | I2C(0) | GPIO5 (D4) | GPIO6 (D5) | 400 kHz | OLED 0x3C, DS3231 0x68HT20 0x38 | Onboard/system bus. `init_i2c()` in firmware. |
-| **I2C_EXT** | I2C(1) | GPIO8 (D9) | GPIO3 (D2) | 400 kHz | GY-87: MPU6050 0x68, HMC5883L 0x1E / QMC5883L 0x0D (after bypass), BMP180 0x77 | External/plug-in bus. `init_i2c_ext()` in firmware.
-GPIO9 was rejected for SCL because the GNSS module drives it as GPS_RESET. |
+The GY-87 was moved first because it forces the issue: its MPU6050 answers at 0x68,
+the exact address the DS3231 RTC already occupies on I2C_SYS, and the GY-87 breakout
+does not expose AD0 on its header, so it cannot be re-addressed to 0x69 without board
+surgery. Giving it a private bus resolves the collision and also lifts the GY-87's
+2.2 kΩ pull-ups off the system bus.
 
-**Why two buses:** the GY-87's MPU6050 answers at 0x68, the same address as the DS3 does not expose AD0 on its header. Giving it its own bus avoids the collisionwithout board surgery and takes the GY-87's 2.2 kΩ pull-ups off the system bus.
+| Bus | Peripheral | SDA | SCL | Speed | Devices | Firmware | Notes |
+|---|---|---|---|---|---|---|---|
+| **I2C_SYS** | I2C(0) | GPIO5 (D4) | GPIO6 (D5) | 400 kHz | OLED 0x3C, DS3231 RTC 0x68, INA219 0x40, AS5600 0x36, QMC5883L/HMC5883L 0x0D/0x1E (standalone GY-271), AHT20 0x38 (airOS) | `init_i2c()` / `i2c_pins()` | Onboard "always there" system bus. |
+| **I2C_EXT** | I2C(1) | GPIO8 (D9) | GPIO3 (D2) | 400 kHz | **GY-87 only** — MPU6050 0x68, HMC5883L 0x1E / QMC5883L 0x0D (after bypass), BMP180 0x77 | `init_i2c_ext()` / `i2c_ext_pins()` | Plug-in external bus. Returns `None` on boards without one. GPIO9 (D10) was rejected for SCL because the stacked GNSS module drives it as GPS_RESET. |
 
-**Pull-ups:** each I2C_SYS module brings its own pull-ups. Keep the parallel total above about 1 kΩ (measure SDA to 3V3 with power off). On the v3.0 PCB, add 4.7 kΩ pull-ups to 3V3 on I2C_EXT; for
-bench work the GY-87's onboard pull-ups suffice.
+**Roadmap:** onboard-only devices (OLED, DS3231, INA219, AS5600) stay on I2C_SYS.
+Anything that plugs into the turtleShell as a module — starting with the GY-87, then
+the compass/GY-271 and future add-ons — moves to I2C_EXT as the v3.0 PCB brings up
+proper dedicated headers and pull-ups for it.
+
+**Pull-ups:** each I2C_SYS module brings its own pull-ups. Keep the parallel total
+above about 1 kΩ (measure SDA to 3V3 with power off). On the v3.0 PCB, add 4.7 kΩ
+pull-ups to 3V3 on I2C_EXT; for bench work the GY-87's onboard pull-ups suffice.
 
 ---
 
@@ -51,7 +67,7 @@ bench work the GY-87's onboard pull-ups suffice.
 
 | GY-87 pin | XIAO pin | Note |
 |---|---|---|
-| VCC_IN | 5V | The GY-87 has its own 3.3 V regulator. Do not feed 3.3 V into VCC_I
+| VCC_IN | 5V | The GY-87 has its own 3.3 V regulator. Do not feed 3.3 V into VCC_IN. |
 | 3.3V | not connected | Regulator output, not an input. |
 | GND | GND | |
 | SCL | D2 (GPIO3) | I2C_EXT SCL |
@@ -79,9 +95,11 @@ Mount the board with the silkscreen **X arrow pointing to the bow** so pitch is 
 
 ---
 
-## I2C Sensor Bus
+## I2C_SYS Sensor Bus
 
-All I2C modules share the same four wires:
+The system bus modules share the same four wires (see
+[I2C Buses](#i2c-buses--the-two-bus-foundation) for the full two-bus picture — the
+GY-87 IMU is **not** on this bus, it lives on I2C_EXT):
 
 | Sensor Pin | XIAO ESP32-S3 Pin |
 |---|---|
@@ -90,13 +108,14 @@ All I2C modules share the same four wires:
 | SDA | GPIO5 / D4 / SDA |
 | SCL | GPIO6 / D5 / SCL |
 
-Current turtleOS I2C modules:
+Current I2C_SYS modules:
 
 - OLED display
-- RTC module
-- QMC5883L compass
+- RTC module (DS3231)
+- QMC5883L / HMC5883L compass (standalone GY-271 — the GY-87's own mag is on I2C_EXT)
 - AS5600 magnetic angle encoder
 - INA219 voltage/current monitor
+- AHT20 temp/humidity (airOS mode only)
 
 
 ---

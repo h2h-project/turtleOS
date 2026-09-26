@@ -35,6 +35,8 @@ _TURTLE_REST = (
 
 _SWIM_FRAMES = (_TURTLE_1, _TURTLE_2)
 
+_COMPASS_LETTERS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
 
 def _prerender(lines, display_w, display_h):
     """
@@ -101,6 +103,13 @@ class TurtleWaitingScreen:
     REST_MS = 2000
     SWIM_CYCLES = 6
 
+    # Top-left nav cluster: flèche glyph + compass reading ("NE 28°").
+    # The flèche is 9px tall so the f_small reading it sits beside gets 1px
+    # of clearance above and below; text + degree ring follow to its right.
+    _FLECHE_X = 0
+    _FLECHE_TEXT_GAP = 4
+    _READING_Y = 1
+
     # Space to reserve left of the mission text for the target glyph
     # (7px glyph + 4px gap).
     _TARGET_GAP = 11
@@ -116,7 +125,15 @@ class TurtleWaitingScreen:
     # nudges it down onto the mission/current-draw baseline; _BATT_TEXT_GAP is
     # the space between it and the current-draw text on its left.
     _BATT_DY = 1
-    _BATT_TEXT_GAP = 6
+    _BATT_TEXT_GAP = 3
+
+    # Gap between the battery current number and the charge/discharge marker
+    # glyph on its right (bolt when charging, minus bar when discharging).
+    _CURR_MARK_GAP = 2
+
+    # Bottom-left label config is re-read from flash at most this often — the
+    # overlay redraws at ~1 Hz and load_config() is a file read + JSON parse.
+    _CFG_TTL_MS = 1500
 
     def __init__(self, oled, nav_get=None, mission_get=None, battery_get=None, current_get=None):
         self.oled = oled
@@ -124,6 +141,8 @@ class TurtleWaitingScreen:
         self._mission_get = mission_get  # callable -> mission name str or None
         self._battery_get = battery_get  # callable -> bus voltage (float) or None
         self._current_get = current_get  # callable -> INA219 current in mA (float) or None
+        self._cfg_cache = None         # load_config() result, refreshed on _CFG_TTL_MS
+        self._cfg_cache_ms = 0
         w, h = oled.width, oled.height
         f1_fb,  f1_buf,  f1_x,  f1_y  = _prerender(_TURTLE_1,    w, h)
         f2_fb,  f2_buf,  f2_x,  f2_y  = _prerender(_TURTLE_2,    w, h)
@@ -152,6 +171,40 @@ class TurtleWaitingScreen:
         if not name:
             return None
         return str(name).strip() or None
+
+    def _cfg(self):
+        """Config dict, cached for _CFG_TTL_MS so the 1 Hz overlay isn't
+        parsing config.json every frame."""
+        now = time.ticks_ms()
+        if self._cfg_cache is not None and \
+                time.ticks_diff(now, self._cfg_cache_ms) < self._CFG_TTL_MS:
+            return self._cfg_cache
+        try:
+            from config import load_config
+            self._cfg_cache = load_config() or {}
+        except Exception:
+            self._cfg_cache = self._cfg_cache or {}
+        self._cfg_cache_ms = now
+        return self._cfg_cache
+
+    def _journey_active(self):
+        try:
+            from src.app import journey
+            return bool(journey.active())
+        except Exception:
+            return False
+
+    def _operator_label(self):
+        """Bottom-left label while an operator journey is open AND a custom
+        destination is set: the operator's short name ("SET" by default),
+        shown in place of the grand-mission name. None otherwise."""
+        if not self._journey_active():
+            return None
+        cfg = self._cfg()
+        if not cfg or not cfg.get("set_destination"):
+            return None
+        sn = cfg.get("set_short_name")
+        return (str(sn).strip().upper() or "SET") if sn else "SET"
 
     def _battery_volts(self):
         if self._battery_get is None:
@@ -200,14 +253,45 @@ class TurtleWaitingScreen:
         h = o.height
         ty = h - 8                     # bottom text row (f_small is 7 px)
 
-        # Top-left: machine state (BOOT / ACQUIRE / SAIL-NAV / ...)
-        try:
-            from src.nav.state_machine import display_name
-            o.f_small.write(display_name(), 0, 1)
-        except Exception:
-            pass
-
         nav = self._nav()
+
+        # Top-left: navigation flèche (machine state) + compass reading.
+        # Hollow flèche while acquiring, filled once the mission is under way;
+        # the heading ("NE 28°") sits on the f_small row to its right, with
+        # the degree ring drawn as a glyph after the number.
+        ry = self._READING_Y
+        try:
+            from src.nav.state_machine import is_mission_active
+            from src.ui.glyphs import draw_nav_fleche, NAV_FLECHE_W
+            draw_nav_fleche(dst, self._FLECHE_X, ry, filled=is_mission_active())
+            fleche_w = NAV_FLECHE_W
+        except Exception:
+            fleche_w = 11
+
+        hdg = None
+        if nav is not None:
+            try:
+                hdg = nav.heading_deg()
+            except Exception:
+                hdg = None
+
+        rx = self._FLECHE_X + fleche_w + self._FLECHE_TEXT_GAP
+        if hdg is None:
+            o.f_small.write("--", rx, ry)
+        else:
+            hdg = float(hdg) % 360.0
+            letter = _COMPASS_LETTERS[int((hdg + 22.5) / 45.0) % 8]
+            txt = "{} {}".format(letter, int(hdg))
+            o.f_small.write(txt, rx, ry)
+            try:
+                tw, _ = o._text_size(o.f_small, txt)
+            except Exception:
+                tw = len(txt) * 5
+            try:
+                from src.ui.glyphs import draw_degree_sm
+                draw_degree_sm(dst, rx + tw + 1, ry + 1)
+            except Exception:
+                pass
 
         # Bottom-right corner: battery charge-level icon, flush to the right edge.
         try:
@@ -227,24 +311,47 @@ class TurtleWaitingScreen:
         except Exception:
             pass
 
-        # Battery current draw/charge like "+104mA" (charging) or "-52mA"
-        # (drawing), right-aligned against the battery icon. INA219 raw
-        # current_ma() sign: positive = charging, negative = discharging.
-        # Track the total width consumed from the right edge so the
-        # bottom-left mission text can steer clear.
-        current_right = batt_x - self._BATT_TEXT_GAP
+        # Battery current draw/charge. INA219 raw current_ma() sign on this rig:
+        # negative = charging (current flowing into the pack), positive =
+        # discharging (the XIAO drawing from it). Layout from the right edge:
+        #   [ number "104mA" ] gap [ marker ] gap [ battery icon ]
+        # The marker is a solid lightning bolt when charging and a minus bar
+        # when discharging; both glyphs are BOLT_W wide, so the marker slot is
+        # fixed width and the number's position never shifts when the sign
+        # flips. No decimal either way. right_w tracks the width consumed from
+        # the right edge so the bottom-left mission text can steer clear.
+        try:
+            from src.ui.glyphs import BOLT_W as _mark_w
+        except Exception:
+            _mark_w = 5
+        mark_x = batt_x - self._BATT_TEXT_GAP - _mark_w
         current_ma = self._battery_current_ma()
+        charging = current_ma is not None and current_ma <= 0
         if current_ma is None:
             txt = "------"
+            marker = None
         else:
-            sign = "+" if current_ma >= 0 else "-"
-            txt = "{}{:.1f}mA".format(sign, abs(current_ma))
+            txt = "{:d}mA".format(int(round(abs(current_ma))))
+            marker = "bolt" if charging else "minus"
         try:
             tw, _ = o._text_size(o.f_small, txt)
         except Exception:
             tw = len(txt) * 5
-        tx = current_right - tw
+        tx = mark_x - self._CURR_MARK_GAP - tw
         o.f_small.write(txt, tx, ty)
+        # Marker glyph flush to the bottom screen line (y = h - glyph height).
+        if marker == "bolt":
+            try:
+                from src.ui.glyphs import draw_bolt, BOLT_H
+                draw_bolt(dst, mark_x, h - BOLT_H)
+            except Exception:
+                pass
+        elif marker == "minus":
+            try:
+                from src.ui.glyphs import draw_minus, MINUS_H
+                draw_minus(dst, mark_x, h - MINUS_H)
+            except Exception:
+                pass
         right_w = w - tx
 
         # Bottom-left: the luff-sweep countdown takes precedence during
@@ -263,12 +370,17 @@ class TurtleWaitingScreen:
                 else:
                     bl_txt = "{}:{:02d}".format(secs // 60, secs % 60)
         if bl_txt is None:
-            name = self._mission()
+            # Operator journey with a custom destination -> "SET" (or the
+            # operator's short name); otherwise the grand-mission name.
+            name = self._operator_label()
+            if name is None:
+                m = self._mission()
+                name = m.upper() if m is not None else None
             if name is not None:
                 # Uppercase so the mission reads at the same visual size as the
                 # other all-caps bottom text (heading / SWEEP).
                 # Reserve room on the left for the target glyph + a 5px gap.
-                bl_txt = self._fit(name.upper(), w - right_w - 4 - self._TARGET_GAP)
+                bl_txt = self._fit(name, w - right_w - 4 - self._TARGET_GAP)
                 bl_is_mission = bool(bl_txt)
         if bl_txt:
             if bl_is_mission:

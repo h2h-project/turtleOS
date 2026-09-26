@@ -738,6 +738,19 @@ class TelemetryScheduler:
             "flags": {"auto_log": not _manual, "manual_registry": _manual},
         }
 
+        # Journey tag: while an operator journey is open (src/app/journey.py,
+        # driven by the Journey screen), stamp its id into flags so the
+        # hopeturtles.org my-turtle map can highlight this leg's GPS points.
+        # The server stores `flags` verbatim in raw_data, so no ingest change
+        # is needed for this to land.
+        try:
+            from src.app.journey import active_id as _journey_active_id
+            _jid = _journey_active_id()
+            if _jid:
+                payload["flags"]["journey_id"] = _jid
+        except Exception:
+            pass
+
         # Machine state (BOOT/ACQUIRE/SAIL_NAV/ARRIVAL/SAFE) — top-level so
         # the server maps it to a real column.
         try:

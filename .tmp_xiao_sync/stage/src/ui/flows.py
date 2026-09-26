@@ -702,7 +702,21 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    _all_screens = (["destination", "compass", "sailpoint", "servo"] if _turtle_mode else []) \
+    # Journey leads the turtle carousel, but ONLY while a journey is open —
+    # otherwise it stays out of the way. Starting a journey is done from the
+    # Destination screen's menu (which hands off to the same Journey screen).
+    _journey_open = False
+    if _turtle_mode:
+        try:
+            from src.app.journey import active as _journey_active
+            _journey_open = bool(_journey_active())
+        except Exception:
+            _journey_open = False
+
+    _nav_screens = ((["journey"] if _journey_open else []) + ["destination", "compass", "sailpoint", "servo"]) \
+                   if _turtle_mode else []
+
+    _all_screens = _nav_screens \
                    + _sensor_screens \
                    + (["summary"] if _sensor_screens else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
@@ -710,13 +724,32 @@ def sensor_carousel(
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = (["destination", "compass", "sailpoint", "servo"] if _turtle_mode else []) + _sensor_screens + ["summary"]
+    _preload = _nav_screens + _sensor_screens + ["summary"]
     for _n in _preload:
         get_screen(_n)
         _gc()
     reset_and_flush(btn, flush_ms, poll_ms)
 
     if _turtle_mode:
+        # ---- JOURNEY (only present while a journey is open; leads the carousel) ----
+        if _journey_open:
+            _gc()
+            journey_scr = get_screen("journey")
+            _log_screen("journey", "trip in progress")
+            if journey_scr and hasattr(journey_scr, "show_live"):
+                try:
+                    a = journey_scr.show_live(btn, gps=gps, cfg=cfg, tick_fn=tick_fn)
+                except Exception:
+                    a = None
+            else:
+                draw_text(oled, "Journey", y=24)
+                a = wait_for_single(btn, tick_fn=tick_fn)
+
+            if a not in ("single", None):
+                reset_and_flush(btn, flush_ms, poll_ms)
+                return a
+            _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
         # ---- DESTINATION (first in single-click carousel, turtle mode only) ----
         _gc()
         dest_scr = get_screen("destination")

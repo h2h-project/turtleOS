@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turtle Wrangler — Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Aleo:wght@400;700&family=Mulish:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --color-primary: #017919;
+    --color-light: #c0e3cb;
+    --color-dark: #1f3b22;
+    --color-background: #f2f9f3;
+    --color-surface: #ffffff;
+    --color-text: #1f2521;
+    --color-text-muted: #6b7280;
+    --color-accent: #23b053;
+    --color-pink: #ec8fc0;
+    --color-pink-dark: #b8508e;
+    --color-pink-tint: #fdf1f8;
+    --card-border: #dbe6dd;
+    --font-primary: "Mulish", "Helvetica Neue", Arial, sans-serif;
+    --font-heading: "Aleo", Georgia, "Times New Roman", serif;
+    --topo-pattern-mockup: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='90' viewBox='0 0 140 90'%3E%3Cg fill='none' stroke='%23e2e5e3' stroke-width='1' stroke-opacity='0.9'%3E%3Cpath d='M0,9 C17.5,1 17.5,17 35,9 C52.5,1 52.5,17 70,9 C87.5,1 87.5,17 105,9 C122.5,1 122.5,17 140,9'/%3E%3Cpath d='M0,27 C17.5,19 17.5,35 35,27 C52.5,19 52.5,35 70,27 C87.5,19 87.5,35 105,27 C122.5,19 122.5,35 140,27'/%3E%3Cpath d='M0,45 C17.5,37 17.5,53 35,45 C52.5,37 52.5,53 70,45 C87.5,37 87.5,53 105,45 C122.5,37 122.5,53 140,45'/%3E%3Cpath d='M0,63 C17.5,55 17.5,71 35,63 C52.5,55 52.5,71 70,63 C87.5,55 87.5,71 105,63 C122.5,55 122.5,71 140,63'/%3E%3Cpath d='M0,81 C17.5,73 17.5,89 35,81 C52.5,73 52.5,89 70,81 C87.5,73 87.5,89 105,81 C122.5,73 122.5,89 140,81'/%3E%3C/g%3E%3C/svg%3E");
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--font-primary);
+    color: var(--color-text);
+    background: #ffffff;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  .hero {
+    background: linear-gradient(180deg, var(--color-dark) 0%, var(--color-primary) 100%);
+    color: #fff;
+    padding: 72px 0 56px;
+  }
+  .hero .wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+  .eyebrow {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-light);
+    font-weight: 600;
+  }
+  .hero h1 {
+    font-family: var(--font-heading);
+    font-size: 40px;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .hero p.tagline {
+    font-size: 19px;
+    color: var(--color-light);
+    max-width: 560px;
+    margin: 0;
+  }
+  .status-pill {
+    display: inline-block;
+    margin-top: 10px;
+    background: rgba(255,255,255,0.14);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 999px;
+  }
+
+  section { padding: 56px 0; }
+  section.alt { background: var(--color-background); }
+  h2 {
+    font-family: var(--font-heading);
+    font-size: 26px;
+    margin: 0 0 8px;
+    font-weight: 700;
+    color: var(--color-dark);
+  }
+  p.lead {
+    font-size: 16px;
+    color: var(--color-text-muted);
+    max-width: 640px;
+    margin: 0 0 32px;
+  }
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .compare .card {
+    border-radius: 14px;
+    padding: 24px;
+    border: 1px solid var(--card-border);
+  }
+  .compare .card.today { background: #fff; }
+  .compare .card.new { background: var(--color-background); border-color: var(--color-light); }
+  .compare .card h3 {
+    margin: 0 0 12px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .compare .card ul { margin: 0; padding-left: 20px; }
+  .compare .card li { margin-bottom: 8px; color: var(--color-text); font-size: 15px; }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
+  .tag.old { background: #eceeec; color: var(--color-text-muted); }
+  .tag.newtag { background: var(--color-pink-tint); color: var(--color-pink-dark); }
+  .tag.vision { background: var(--color-pink-tint); color: var(--color-pink-dark); }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 8px;
+  }
+  .feature {
+    background: #fff;
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 22px;
+  }
+  .feature .icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--color-background);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+  }
+  .feature h3 { margin: 0 0 6px; font-size: 17px; }
+  .feature p { margin: 0; font-size: 14px; color: var(--color-text-muted); }
+
+  .phone-shell {
+    width: 240px;
+    height: 540px;
+    background: var(--color-dark);
+    border-radius: 32px;
+    padding: 10px;
+    margin: 0 auto;
+    box-shadow: 0 20px 40px rgba(1, 121, 25, 0.2);
+  }
+  .phone-screen {
+    background: #fff;
+    border-radius: 24px;
+    overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .phone-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+  }
+  .phone-topbar .name { font-size: 12px; font-weight: 700; color: var(--color-dark); }
+  .phone-topbar .status { font-size: 10px; color: var(--color-primary); font-weight: 700; }
+  .phone-topbar .status.off { color: var(--color-text-muted); }
+  .phone-topbar .right { display: flex; align-items: center; gap: 8px; }
+  .phone-topbar .gear { width: 16px; height: 16px; stroke: var(--color-dark); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .phone-topbar .gear.active { stroke: var(--color-pink-dark); }
+  .phone-body { padding: 12px; flex: 1; min-height: 0; overflow: hidden; background-color: #fff; background-image: var(--topo-pattern-mockup); }
+  .phone-heading { text-align: center; background: #fff; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .phone-heading .big { font-family: var(--font-heading); font-size: 24px; font-weight: 700; color: var(--color-dark); }
+  .phone-heading .small { font-size: 10px; color: var(--color-text-muted); margin-top: 2px; }
+  .phone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .phone-metric { background: #fff; border: 1px solid var(--card-border); border-radius: 8px; padding: 8px; }
+  .phone-metric .label { font-size: 9px; color: var(--color-text-muted); }
+  .phone-metric .value { font-size: 14px; font-weight: 700; color: var(--color-dark); }
+  .phone-navbar { display: flex; flex-shrink: 0; border-top: 1px solid #eee; padding: 0 10px 2px; }
+  .phone-navbar div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; padding: 8px 0; font-size: 7.5px; min-width: 0; white-space: nowrap; color: var(--color-text-muted); }
+  .phone-navbar div.active { color: var(--color-primary); font-weight: 700; }
+  .phone-navbar div.active .nav-icon { color: var(--color-pink-dark); }
+  .nav-icon { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .mockup-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 40px 24px;
+    margin-top: 8px;
+  }
+  .mockup-item { text-align: center; }
+  .mockup-item .mockup-label {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--color-dark);
+    margin-bottom: 12px;
+  }
+  .live-badge {
+    display: inline-block;
+    background: var(--color-pink-tint);
+    color: var(--color-pink-dark);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-top: 6px;
+  }
+  .phone-card { background: #fff; border: 1px solid var(--card-border); border-radius: 8px; padding: 8px; margin-bottom: 8px; text-align: left; }
+  .phone-card .card-label { font-size: 9px; font-weight: 700; color: var(--color-dark); margin: 0 0 4px; }
+  .phone-card .card-sub { font-size: 9px; color: var(--color-text-muted); margin: 0; }
+  .phone-btn {
+    width: 100%;
+    border-radius: 6px;
+    padding: 6px 0;
+    font-size: 9px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .phone-btn.pink { background: #fff; border: 1px solid var(--color-pink); color: var(--color-pink-dark); }
+  .phone-btn.outline { background: #fff; border: 1px solid var(--color-light); color: var(--color-dark); }
+  .phone-btn.big { padding: 16px 0; font-size: 13px; border-radius: 10px; border-width: 2px; }
+  .phone-seg { display: flex; border: 1px solid var(--color-light); border-radius: 6px; overflow: hidden; margin-top: 4px; }
+  .phone-seg span { flex: 1; text-align: center; font-size: 9px; padding: 4px 0; color: var(--color-text-muted); background: #fff; }
+  .phone-seg span.on { background: var(--color-primary); color: #fff; font-weight: 700; }
+  .phone-list .fail { color: var(--color-text-muted); font-style: italic; }
+  .phone-note { font-size: 8px; color: var(--color-text-muted); text-align: center; margin: 3px 0 0; }
+  .phone-empty { text-align: center; padding: 6px 4px 2px; }
+  .phone-empty .big-emoji { font-size: 30px; line-height: 1; }
+  .phone-empty p { font-size: 10px; color: var(--color-text); margin: 6px 0 0; }
+  .phone-empty p.phone-note { font-size: 8px; color: var(--color-text-muted); margin: 3px 0 0; }
+  .phone-bar { height: 5px; background: #fff; border: 1px solid var(--color-pink); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .phone-bar .fill { height: 100%; background: repeating-linear-gradient(45deg, var(--color-pink) 0 3px, #fff 3px 6px); }
+  .phone-list { font-size: 9px; display: flex; flex-direction: column; gap: 4px; }
+  .phone-list .row { display: flex; justify-content: space-between; }
+  .phone-list .ok { color: var(--color-primary); font-weight: 700; }
+  .phone-input {
+    width: 100%;
+    font-size: 9px;
+    padding: 5px 6px;
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    margin-bottom: 5px;
+    color: var(--color-text-muted);
+  }
+  .toggle-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .toggle-row .toggle-label { font-size: 9px; color: var(--color-text); }
+  .mini-toggle { width: 24px; height: 13px; border-radius: 999px; background: #e0e0e0; position: relative; flex-shrink: 0; }
+  .mini-toggle.on { background: var(--color-primary); }
+  .mini-toggle .knob { position: absolute; top: 1.5px; left: 1.5px; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
+  .mini-toggle.on .knob { left: 11.5px; }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .step {
+    background: #fff;
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 22px;
+    position: relative;
+  }
+  .step .num {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .step h3 { margin: 0 0 6px; font-size: 16px; }
+  .step p { margin: 0; font-size: 14px; color: var(--color-text-muted); }
+
+  .benefits { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .benefit { display: flex; gap: 12px; align-items: flex-start; }
+  .benefit .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-pink); margin-top: 8px; flex-shrink: 0;
+  }
+  .benefit p { margin: 0; font-size: 15px; }
+  .benefit strong { color: var(--color-dark); }
+
+  .scope-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .scope-card {
+    background: #fff;
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .scope-card h3 { margin: 0 0 4px; font-size: 16px; }
+  .scope-card .effort { font-size: 12px; color: var(--color-primary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 12px; display: block;}
+  .scope-card p { margin: 0; font-size: 14px; color: var(--color-text-muted); }
+
+  .vision-section { background: var(--color-dark); color: #fff; }
+  .vision-section h2 { color: #fff; }
+  .vision-section p.lead { color: var(--color-light); }
+  .vision-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  .vision-card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px;
+    padding: 22px;
+    border-left: 3px solid var(--color-pink);
+  }
+  .vision-card .icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: rgba(236,143,192,0.16);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+  }
+  .vision-card h3 { margin: 0 0 6px; font-size: 17px; color: #fff; }
+  .vision-card p { margin: 0; font-size: 14px; color: var(--color-light); }
+
+  footer {
+    padding: 32px 0;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    border-top: 1px solid var(--card-border);
+  }
+
+  @media (max-width: 640px) {
+    .compare, .feature-grid, .steps, .benefits, .scope-grid, .vision-grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 30px; }
+  }
+</style>
+</head>
+<body>
+
+<svg style="display:none;">
+  <symbol id="i-dashboard" viewBox="0 0 24 24">
+    <path d="M4 15a8 8 0 0 1 16 0"/>
+    <line x1="12" y1="15" x2="15.5" y2="10.5"/>
+    <circle cx="12" cy="15" r="1"/>
+  </symbol>
+  <symbol id="i-navigate" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9"/>
+    <polygon points="14.5,9.5 13,14.5 9.5,13 11,8" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-gps" viewBox="0 0 24 24">
+    <path d="M12 21s-6-5.6-6-10.5a6 6 0 0 1 12 0C18 15.4 12 21 12 21z"/>
+    <circle cx="12" cy="10.5" r="2.2"/>
+  </symbol>
+  <symbol id="i-diagnostics" viewBox="0 0 24 24">
+    <line x1="6" y1="18" x2="14" y2="10"/>
+    <circle cx="17" cy="7" r="3"/>
+    <line x1="6" y1="18" x2="8" y2="20"/>
+  </symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24">
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+    <circle cx="12" cy="12" r="3"/>
+  </symbol>
+</svg>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="eyebrow">Hope Turtle Project</span>
+    <h1>Turtle Wrangler</h1>
+    <p class="tagline">An Android app that puts the turtle's cockpit in your pocket — see what it sees, and steer it from your phone, without ever touching the tiny screen on the hull.</p>
+    <span class="status-pill">Proposal — not yet built</span>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>The problem today</h2>
+    <p class="lead">Right now, everything about checking on or adjusting a Hope Turtle happens through a single small screen and a single button on the hull.</p>
+    <div class="compare">
+      <div class="card today">
+        <h3><span class="tag old">Today</span></h3>
+        <ul>
+          <li>A 1.3-inch OLED screen, one action button for control</li>
+          <li>Different numbers of clicks open different menus — single, double, triple, quadruple, or a long hold — genuinely tedious in practice</li>
+          <li>The OLED washes out and can't be read in direct daylight</li>
+          <li>Checking battery, sail, GPS and heading means clicking through several separate screens, one at a time</li>
+          <li>Setting a destination or starting a journey is a multi-step button sequence you have to remember</li>
+          <li>Any control at all is impossible unless you're physically right beside the turtle, in the water</li>
+          <li>If a stamp or a command fails, the tiny screen is easy to miss — or it gives no reason at all</li>
+        </ul>
+      </div>
+      <div class="card new">
+        <h3><span class="tag newtag">With Turtle Wrangler</span></h3>
+        <ul>
+          <li>A full phone screen, easy to read even outdoors</li>
+          <li>Tap what you want — no click-counting to memorize</li>
+          <li>Works from up to 5 metres away — no wading in beside the hull</li>
+          <li>Battery, sail, heading, and position all visible together, at a glance</li>
+          <li>Setting a destination or starting a journey is a couple of taps</li>
+          <li>Manual GPS stamps are one big button — and the turtle tells you straight away if one didn't take</li>
+          <li>Every command gets an answer: done, or exactly why not</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>What the app actually does</h2>
+    <p class="lead">Four simple tabs plus a settings page, each replacing a part of what the on-hull screen does today — just easier to read and easier to use. Every button in the app does something the turtle's own button can already do, so nothing is lost when a phone isn't around.</p>
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="icon">📊</div>
+        <h3>Dashboard</h3>
+        <p>One glance tells you heading, battery level, sail angle, GPS position, and how far the turtle still has to travel — live, the moment your phone is near it.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🧭</div>
+        <h3>Navigate</h3>
+        <p>Set where the turtle should head, start or end a test run, and see how far off-course it currently is — all with taps instead of button-click codes.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📍</div>
+        <h3>GPS stamps</h3>
+        <p>Switch the turtle to manual logging and record its position with one big tap — each stamp is confirmed, counted, and tracked until it reaches the website.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🔧</div>
+        <h3>Diagnostics</h3>
+        <p>Run a quick sail test to find the wind, and check at a glance that every sensor on board — compass, battery monitor, GPS — is healthy before launch.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⚙️</div>
+        <h3>Settings</h3>
+        <p>Hand the turtle its WiFi details and adjust how often it reports home — no laptop or cable required in the field.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🔒</div>
+        <h3>Safe for real voyages</h3>
+        <p>Pairing a phone needs a 6-digit code shown on the turtle itself, so only someone standing beside it can take control. Before a real mission, Bluetooth can be switched off completely.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What it could look like</h2>
+    <p class="lead">Early sketches of the four main tabs, the settings page (behind the gear in the top corner), and what you'd see when no turtle is in range.</p>
+    <div class="mockup-grid">
+
+      <div class="mockup-item">
+        <p class="mockup-label">Dashboard</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">🐢 Hope Turtle #3</span>
+              <div class="right"><span class="status">● Connected</span><svg class="gear"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card">
+                <p class="card-label">Position</p>
+                <svg viewBox="0 0 200 60" style="width:100%; height:auto; display:block; border-radius:6px;">
+                  <rect width="200" height="60" fill="#e4eef0"/>
+                  <path d="M0,0 L45,0 Q28,16 14,13 Q3,10 0,20 Z" fill="#ede7d9"/>
+                  <circle cx="120" cy="34" r="7" fill="var(--color-primary)" opacity="0.25"/>
+                  <circle cx="120" cy="34" r="3.5" fill="var(--color-primary)" stroke="#fff" stroke-width="1"/>
+                </svg>
+                <p class="card-sub" style="margin-top:4px;">31.362N, 34.291E · 6 sats</p>
+              </div>
+              <div class="phone-grid">
+                <div class="phone-metric">
+                  <div class="label">Battery</div>
+                  <div class="value">78%</div>
+                  <svg viewBox="0 0 56 16" style="width:100%; height:14px; margin-top:2px;">
+                    <polyline points="0,13 8,10 16,11 24,6 32,8 40,4 48,6 56,3" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+                <div class="phone-metric">
+                  <div class="label">Sail angle</div>
+                  <div class="value">32°</div>
+                  <svg viewBox="0 0 20 20" style="width:16px; height:16px; margin-top:2px;">
+                    <circle cx="10" cy="10" r="7" fill="none" stroke="var(--color-text-muted)" stroke-width="1.3"/>
+                    <line x1="10" y1="10" x2="13.7" y2="4.1" stroke="var(--color-primary)" stroke-width="1.6" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="phone-metric"><div class="label">GPS</div><div class="value">Fixed</div></div>
+                <div class="phone-metric"><div class="label">Distance</div><div class="value">4.2 km</div></div>
+              </div>
+              <div class="phone-heading" style="margin-top:8px;">
+                <svg viewBox="0 0 20 20" style="width:22px; height:22px; margin-bottom:4px;">
+                  <circle cx="10" cy="10" r="8" fill="none" stroke="var(--color-text-muted)" stroke-width="1.3"/>
+                  <circle cx="3.6" cy="12.7" r="1.6" fill="var(--color-primary)"/>
+                </svg>
+                <div class="big">247°</div>
+                <div class="small">heading · target is 251°</div>
+                <span class="live-badge">● live</span>
+              </div>
+            </div>
+            <div class="phone-navbar">
+              <div class="active"><svg class="nav-icon"><use href="#i-dashboard"/></svg>Dashboard</div>
+              <div><svg class="nav-icon"><use href="#i-navigate"/></svg>Navigate</div>
+              <div><svg class="nav-icon"><use href="#i-gps"/></svg>GPS</div>
+              <div><svg class="nav-icon"><use href="#i-diagnostics"/></svg>Diagnostics</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-item">
+        <p class="mockup-label">Navigate</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">🐢 Hope Turtle #3</span>
+              <div class="right"><span class="status">● Connected</span><svg class="gear"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card">
+                <p class="card-label">Journey</p>
+                <p class="card-sub">In progress · started 14:02</p>
+                <button class="phone-btn pink">End journey</button>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Destination</p>
+                <p class="card-sub">31.350N, 34.270E · Al Mawasi</p>
+                <button class="phone-btn outline">Set to the turtle's position</button>
+                <p class="phone-note">or pick a point on the map</p>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Route</p>
+                <svg viewBox="0 0 200 100" style="width:100%; height:auto; display:block; border-radius:6px;">
+                  <rect width="200" height="100" fill="#e4eef0"/>
+                  <path d="M0,0 L55,0 Q35,22 18,18 Q4,14 0,28 Z" fill="#ede7d9"/>
+                  <path d="M28,36 C68,50 108,46 148,70 C158,75 163,80 168,86" fill="none" stroke="var(--color-primary)" stroke-width="2" stroke-dasharray="5 4"/>
+                  <circle cx="28" cy="36" r="3" fill="none" stroke="var(--color-dark)" stroke-width="1.5"/>
+                  <circle cx="168" cy="86" r="3.5" fill="var(--color-dark)" stroke="#fff" stroke-width="1"/>
+                  <text x="83" y="53" font-size="13">🐢</text>
+                </svg>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Off course by 4°</p>
+                <div class="phone-bar"><div class="fill" style="width:38%;"></div></div>
+              </div>
+            </div>
+            <div class="phone-navbar">
+              <div><svg class="nav-icon"><use href="#i-dashboard"/></svg>Dashboard</div>
+              <div class="active"><svg class="nav-icon"><use href="#i-navigate"/></svg>Navigate</div>
+              <div><svg class="nav-icon"><use href="#i-gps"/></svg>GPS</div>
+              <div><svg class="nav-icon"><use href="#i-diagnostics"/></svg>Diagnostics</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-item">
+        <p class="mockup-label">GPS stamps</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">🐢 Hope Turtle #3</span>
+              <div class="right"><span class="status">● Connected</span><svg class="gear"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card">
+                <p class="card-label">Logging mode</p>
+                <div class="phone-seg"><span>Off</span><span>Auto</span><span class="on">Manual</span></div>
+              </div>
+              <div class="phone-card">
+                <p class="card-sub">Turtle is at 31.3621N, 34.2913E · 7 sats</p>
+                <button class="phone-btn pink big">Stamp position</button>
+                <p class="phone-note">Logged this session: 14</p>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">This session</p>
+                <div class="phone-list">
+                  <div class="row"><span>14:36 · 31.3621N</span><span class="ok">stamped</span></div>
+                  <div class="row"><span>14:33 · 31.3617N</span><span class="ok">sent</span></div>
+                  <div class="row"><span>14:31 · no GPS fix</span><span class="fail">not stamped</span></div>
+                </div>
+                <p class="card-sub" style="margin-top:6px;">3 waiting to send · last sent 14:34</p>
+              </div>
+            </div>
+            <div class="phone-navbar">
+              <div><svg class="nav-icon"><use href="#i-dashboard"/></svg>Dashboard</div>
+              <div><svg class="nav-icon"><use href="#i-navigate"/></svg>Navigate</div>
+              <div class="active"><svg class="nav-icon"><use href="#i-gps"/></svg>GPS</div>
+              <div><svg class="nav-icon"><use href="#i-diagnostics"/></svg>Diagnostics</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-item">
+        <p class="mockup-label">Diagnostics</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">🐢 Hope Turtle #3</span>
+              <div class="right"><span class="status">● Connected</span><svg class="gear"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card">
+                <p class="card-label">Sail servo</p>
+                <button class="phone-btn pink">Run wind-finder sweep</button>
+                <p class="card-sub" style="margin-top:6px;">last: wind at 198° · high confidence</p>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Battery charge</p>
+                <svg viewBox="0 0 200 50" style="width:100%; height:44px; display:block;">
+                  <polygon points="0,40 25,36 50,34 75,25 100,22 125,14 150,12 175,6 200,4 200,50 0,50" fill="var(--color-background)"/>
+                  <polyline points="0,40 25,36 50,34 75,25 100,22 125,14 150,12 175,6 200,4" fill="none" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <p class="card-sub" style="margin-top:4px;">78% · charging</p>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Sensor health</p>
+                <div class="phone-list">
+                  <div class="row"><span>Compass / IMU</span><span class="ok">ok</span></div>
+                  <div class="row"><span>Battery monitor</span><span class="ok">ok</span></div>
+                  <div class="row"><span>GPS</span><span class="ok">fixed</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="phone-navbar">
+              <div><svg class="nav-icon"><use href="#i-dashboard"/></svg>Dashboard</div>
+              <div><svg class="nav-icon"><use href="#i-navigate"/></svg>Navigate</div>
+              <div><svg class="nav-icon"><use href="#i-gps"/></svg>GPS</div>
+              <div class="active"><svg class="nav-icon"><use href="#i-diagnostics"/></svg>Diagnostics</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-item">
+        <p class="mockup-label">Settings</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">🐢 Hope Turtle #3</span>
+              <div class="right"><span class="status">● Connected</span><svg class="gear active"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card">
+                <p class="card-label">Bluetooth</p>
+                <p class="card-sub">Open to phones · 9:42 left · paired</p>
+                <button class="phone-btn outline">Turn off for the voyage</button>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Reporting to shore</p>
+                <div class="phone-seg"><span>Off</span><span class="on">Auto</span><span>Manual</span></div>
+                <p class="card-sub" style="margin-top:4px;">every 120s · last sent 2 min ago</p>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Shore WiFi</p>
+                <div class="toggle-row">
+                  <span class="toggle-label">WiFi enabled</span>
+                  <div class="mini-toggle on"><div class="knob"></div></div>
+                </div>
+                <input class="phone-input" placeholder="SSID" readonly>
+                <input class="phone-input" placeholder="Password" readonly>
+                <button class="phone-btn pink">Push to turtle</button>
+              </div>
+            </div>
+            <div class="phone-navbar">
+              <div><svg class="nav-icon"><use href="#i-dashboard"/></svg>Dashboard</div>
+              <div><svg class="nav-icon"><use href="#i-navigate"/></svg>Navigate</div>
+              <div><svg class="nav-icon"><use href="#i-gps"/></svg>GPS</div>
+              <div><svg class="nav-icon"><use href="#i-diagnostics"/></svg>Diagnostics</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-item">
+        <p class="mockup-label">No turtles nearby</p>
+        <div class="phone-shell">
+          <div class="phone-screen">
+            <div class="phone-topbar">
+              <span class="name">Turtle Wrangler</span>
+              <div class="right"><span class="status off">○ Not connected</span><svg class="gear"><use href="#i-settings"/></svg></div>
+            </div>
+            <div class="phone-body">
+              <div class="phone-card phone-empty">
+                <div class="big-emoji">🐢</div>
+                <p>Sorry, we can't find any turtles to connect to via Bluetooth :-(</p>
+                <p>Would you like to login and connect to your other turtles that are swimming in WiFi?</p>
+                <button class="phone-btn pink">Log in with Buwana</button>
+                <p class="phone-note">coming in a later version</p>
+                <button class="phone-btn outline">Scan again</button>
+              </div>
+              <div class="phone-card">
+                <p class="card-label">Last seen</p>
+                <p class="card-sub">Hope Turtle #3 · today 14:36 · 78%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>How it would work, in practice</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Walk up with your phone</h3>
+        <p>Open the app anywhere within about 5 metres of the turtle — no WiFi network or internet connection needed.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>It finds the turtle</h3>
+        <p>The app finds the turtle over Bluetooth (the same short-range wireless a pair of headphones uses). The first time, you pair by typing the 6-digit code the turtle shows on its own screen.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>See it, tap it, done</h3>
+        <p>Live readings appear immediately. Any change you make — a new destination, a GPS stamp, a sail test — reaches the turtle in under a second, and the turtle answers back: done, or exactly why not.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Why this is worth doing</h2>
+    <div class="benefits">
+      <div class="benefit"><span class="dot"></span><p><strong>Faster field checks.</strong> A full status readout in seconds instead of cycling through several tiny screens.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>Wayyyy less tedious.</strong> No more misremembering whether it's a double-click or triple-click to reach a setting.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>Easier to train new team members.</strong> A phone app is familiar; a button-code sequence on a 1-inch screen is not.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>Better diagnostics before launch.</strong> One screen confirms every sensor is healthy before a turtle goes in the water.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>No extra hardware.</strong> Any Android phone works — nothing new to buy or carry.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>No silent failures.</strong> Every tap gets a clear answer from the turtle — "no GPS fix yet", "clock not set" — instead of a screen that just doesn't change.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>Locked down at sea.</strong> Bluetooth only opens for a few minutes at a time, pairing needs the code on the hull, and it can be switched off entirely for a real mission.</p></div>
+      <div class="benefit"><span class="dot"></span><p><strong>Doesn't replace the shore tracking system.</strong> This is for hands-on fieldwork; the existing website tracking stays exactly as is.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>What building this involves</h2>
+    <p class="lead">Two pieces of work now, one on each side of the Bluetooth connection — and a third, smaller one planned for later.</p>
+    <div class="scope-grid">
+      <div class="scope-card">
+        <span class="effort">Turtle side</span>
+        <h3>A small firmware update</h3>
+        <p>The turtle's onboard computer needs to learn how to broadcast its data over Bluetooth and accept a small set of commands — an addition to the existing system, not a rebuild of it.</p>
+      </div>
+      <div class="scope-card">
+        <span class="effort">Phone side</span>
+        <h3>A new Android app</h3>
+        <p>Built from scratch, but a well-understood kind of app — the screens sketched above, talking to the turtle over Bluetooth.</p>
+      </div>
+      <div class="scope-card">
+        <span class="effort">Website side · later</span>
+        <h3>Turtles at sea</h3>
+        <p>A small, read-only addition to hopeturtles.org so a logged-in Buwana user can see their own turtles from the app when they're out of Bluetooth range but reporting over WiFi.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="vision-section">
+  <div class="wrap">
+    <span class="tag vision">Version 2.0</span>
+    <h2 style="margin-top:12px;">Down the road...</h2>
+    <p class="lead">Once the first version is out and proven in the field, here's the vision for where Turtle Wrangler could go next. None of this is committed work — it's the shape of a second phase, once the core app has earned its keep.</p>
+    <div class="vision-grid">
+      <div class="vision-card">
+        <div class="icon">🌊</div>
+        <h3>Turtles at sea — next up</h3>
+        <p>Log in with your Buwana account and follow the turtles you look after while they're far out of Bluetooth range — position, battery and track, straight from the website. View-only: steering still happens beside the turtle.</p>
+      </div>
+      <div class="vision-card">
+        <div class="icon">🍏</div>
+        <h3>iOS version</h3>
+        <p>The same app, rebuilt for iPhone, so the team isn't limited to Android hardware in the field.</p>
+      </div>
+      <div class="vision-card">
+        <div class="icon">🐧</div>
+        <h3>Ubuntu Touch version</h3>
+        <p>A build for UBports' open-source mobile OS, for teams who prefer to stay off the mainstream app stores entirely.</p>
+      </div>
+      <div class="vision-card">
+        <div class="icon">🗺️</div>
+        <h3>Offline map tile caching</h3>
+        <p>Maps that keep working with no signal at all — useful for genuinely remote coastlines where the phone has no connection either.</p>
+      </div>
+      <div class="vision-card">
+        <div class="icon">🐢</div>
+        <h3>Multi-turtle fleet view</h3>
+        <p>One screen showing every turtle nearby over Bluetooth at once, for the day a launch involves more than one hull at a time.</p>
+      </div>
+      <div class="vision-card">
+        <div class="icon">🏬</div>
+        <h3>Android store listing</h3>
+        <p>A public, polished listing on the Play Store, so the app is a normal download rather than a file passed hand to hand.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Turtle Wrangler — a proposal for the Hope Turtle Project · Mandala Team
+</footer>
+
+</body>
+</html>

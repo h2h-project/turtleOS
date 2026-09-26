@@ -210,12 +210,18 @@ def run(
         if gps is None:
             gps_state = GPS_NONE
             return
-        # Hardware present — check UART buffer for incoming bytes.
-        # Ublox6GPS exposes gps.uart, not gps.any() directly.
+        # Hardware present and enabled → at least GPS_INIT (empty icon).
+        # GPS_FIXED (filled icon) only when there's an actual satellite fix:
+        # a recent lat/lon in the shared gpsfix cache. Incoming UART bytes
+        # just mean the module is streaming NMEA — it emits RMC/GGA with the
+        # 'void' flag set long before it locks on, so uart.any() is not a
+        # fix. Whoever drains the UART (NavController / telemetry) publishes
+        # to gpsfix; a fix older than ~10 s (10 missed 1 Hz epochs) is stale.
         gps_state = GPS_INIT
         try:
-            uart = getattr(gps, "uart", None)
-            if uart is not None and uart.any():
+            from src.nav import gpsfix as _gpsfix
+            lat, lon, age_ms = _gpsfix.get()
+            if lat is not None and lon is not None and age_ms is not None and age_ms < 10000:
                 gps_state = GPS_FIXED
         except Exception:
             pass
@@ -643,6 +649,10 @@ def run(
             elif name == "destination":
                 from src.ui.screens.destination import DestinationScreen
                 screens[name] = DestinationScreen(oled)
+
+            elif name == "journey":
+                from src.ui.screens.journey import JourneyScreen
+                screens[name] = JourneyScreen(oled)
 
             elif name == "sleep":
                 from src.ui.screens.sleep import SleepScreen

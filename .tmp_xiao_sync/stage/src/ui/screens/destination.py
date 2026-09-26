@@ -5,20 +5,23 @@
 #   coord = set_destination or mission_destination
 #
 # Nested click flow (single click on NORMAL still advances the carousel):
-#   NORMAL    --double--> MENU
-#   MENU      1x = target = here    -> stamp GPS into set_destination, then DEPARTURE
-#             2x = target = mission -> copy mission_destination into set_destination
-#             3x = cancel           -> flash "Cancelled", NORMAL
-#   DEPARTURE 1x = stamp GPS into set_departure, then ARRIVAL
-#             2x = cancel           -> flash "Cancelled", then ARRIVAL
-#   ARRIVAL   1x = stamp GPS into set_arrival -> NORMAL
-#             2x = cancel           -> flash "Cancelled", NORMAL
+#   NORMAL  --double--> MENU
+#   MENU    1x = target = here    -> stamp GPS into set_destination, then hand
+#                                    off to the Journey screen ("Ready to go?")
+#           2x = target = mission -> copy mission_destination into set_destination
+#           3x = cancel           -> flash "Cancelled", NORMAL
 #
 # The action you repeat most (stamp) is one click; cancel is deliberately the
 # multi-click so a slow double can't silently back out of the menu.
 #
 # A stamp writes config.json (authoritative for nav) and best-effort PATCHes
 # the values to the server for the dashboard.
+#
+# set_departure / set_arrival used to be stamped here via two extra screens
+# (DEPARTURE, ARRIVAL) after the destination stamp. That is now the Journey
+# screen's job: departure is stamped when a journey opens, arrival when it
+# ends (src/ui/screens/journey.py). Setting a destination therefore chains
+# straight into the Journey screen so "pick a target, then go" is one flow.
 
 import time
 
@@ -233,16 +236,23 @@ class DestinationScreen:
         })
         self._flash("Destination Set!", 1200, tick_fn)
 
+    def _launch_journey(self, btn, gps, tick_fn):
+        """Hand off to the Journey screen right after a here-stamp so the
+        operator can open the journey (which stamps set_departure) without
+        hunting for the screen in the carousel."""
+        try:
+            from src.ui.screens.journey import JourneyScreen
+            JourneyScreen(self.oled).show_live(btn, gps=gps, cfg=self._cfg,
+                                               tick_fn=tick_fn)
+        except Exception as e:
+            print("[DEST] journey launch err:", repr(e))
+
     # ------------------------------------------------------------------ states
 
     _MENUS = {
-        "menu":      ("Set Target?",   ("1x  target = here",
-                                        "2x  target = mission",
-                                        "3x  cancel")),
-        "departure": ("Set Departure", ("1x  departure = here",
-                                        "2x  skip")),
-        "arrival":   ("Set Arrival",   ("1x  arrival = here",
-                                        "2x  skip")),
+        "menu": ("Set Target?", ("1x  target = here",
+                                 "2x  target = mission",
+                                 "3x  cancel")),
     }
 
     def _enter(self, state, btn):
@@ -300,33 +310,13 @@ class DestinationScreen:
                 if action == "single":
                     ok = self._stamp_here(gps, "set_destination",
                                           "Destination Set!", tick_fn)
-                    self._enter("departure" if ok else "normal", btn)
+                    if ok:
+                        self._launch_journey(btn, gps, tick_fn)
+                    self._enter("normal", btn)
                 elif action == "double":
                     self._use_mission(tick_fn)
                     self._enter("normal", btn)
                 elif action == "triple":
-                    self._flash("Cancelled", 900, tick_fn)
-                    self._enter("normal", btn)
-                elif action == "sleep":
-                    return "sleep"
-
-            elif self._state == "departure":
-                if action == "single":
-                    self._stamp_here(gps, "set_departure",
-                                     "Departure Set!", tick_fn)
-                    self._enter("arrival", btn)
-                elif action == "double":
-                    self._flash("Cancelled", 900, tick_fn)
-                    self._enter("arrival", btn)
-                elif action == "sleep":
-                    return "sleep"
-
-            elif self._state == "arrival":
-                if action == "single":
-                    self._stamp_here(gps, "set_arrival",
-                                     "Arrival Set!", tick_fn)
-                    self._enter("normal", btn)
-                elif action == "double":
                     self._flash("Cancelled", 900, tick_fn)
                     self._enter("normal", btn)
                 elif action == "sleep":

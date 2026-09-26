@@ -15,11 +15,15 @@ SAFE = "SAFE"
 
 # Allowed forward transitions. SAFE is reachable from any state (checked
 # separately in set_state); leaving SAFE requires a manual reset → ACQUIRE.
+#
+# SAIL_NAV/ARRIVAL → ACQUIRE is the operator "stand down" path: ending a
+# journey (src/ui/screens/journey.py) drops the turtle back to ACQUIRE so it
+# is no longer steering to a waypoint. It is not a fault path — SAFE is.
 _VALID = {
     BOOT: (ACQUIRE,),
     ACQUIRE: (SAIL_NAV,),
-    SAIL_NAV: (ARRIVAL,),
-    ARRIVAL: (),
+    SAIL_NAV: (ARRIVAL, ACQUIRE),
+    ARRIVAL: (ACQUIRE,),
     SAFE: (ACQUIRE,),
 }
 
@@ -48,6 +52,10 @@ def set_state(new, reason=None):
 
 def is_mission_active():
     return _state[0] in (SAIL_NAV, ARRIVAL)
+
+
+def is_sail_nav():
+    return _state[0] == SAIL_NAV
 
 
 def display_name(state=None):

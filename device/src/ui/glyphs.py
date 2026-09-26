@@ -151,6 +151,62 @@ def draw_x_mark(fb, x, y, color=1):
 
 
 # ------------------------------------------------------------
+# Lightning bolt (solid) — "charging" marker
+# ------------------------------------------------------------
+
+BOLT_W = 5
+BOLT_H = 8
+
+_BOLT_5x8 = [
+    "00011",
+    "00110",
+    "01110",
+    "11111",
+    "00111",
+    "00110",
+    "01100",
+    "01000",
+]
+
+
+def draw_bolt(fb, x, y, color=1):
+    """Draw a solid 5x8 lightning bolt with its top-left at (x, y).
+    The extra 8th row is the tip pixel, so callers can sit the glyph
+    flush to the bottom screen line with y = height - BOLT_H."""
+    draw_bitmap_rows(fb, x, y, _BOLT_5x8, c=color)
+
+
+# ------------------------------------------------------------
+# Minus bar — "discharging" marker
+#
+# Same 5x8 footprint as the lightning bolt so the two markers are
+# interchangeable in a fixed-width slot: the battery current number does
+# not shift when the sign flips between charge and discharge. The bar
+# sits on rows 3-4 so it lands near the vertical middle of the f_small
+# text row when drawn flush to the bottom line (y = height - MINUS_H).
+# ------------------------------------------------------------
+
+MINUS_W = 5
+MINUS_H = 8
+
+_MINUS_5x8 = [
+    "00000",
+    "00000",
+    "00000",
+    "11111",
+    "11111",
+    "00000",
+    "00000",
+    "00000",
+]
+
+
+def draw_minus(fb, x, y, color=1):
+    """Draw a 5x8 minus bar (BOLT_W-wide) with its top-left at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _MINUS_5x8, c=color)
+
+
+# ------------------------------------------------------------
 # Pixel "C" glyph (for LARGE temp units)
 # ------------------------------------------------------------
 
@@ -704,6 +760,76 @@ def draw_api(fb, x, y, on=True, color=1, *, heartbeat=False, sending=False, now_
         draw_bitmap_rows(fb, x, y, _API_FILLED_6, c=color)
     else:
         draw_bitmap_rows(fb, x, y, _API_RING_6, c=color)
+
+
+# ------------------------------------------------------------
+# Navigation flèche — machine-state arrow for the waiting screen
+#
+# An 11x9 right-pointing arrowhead with a swept-back V-notch, shown
+# top-left of the compass reading. Hollow while the turtle is still
+# finding itself (BOOT / ACQUIRE); filled once the mission is under way
+# (SAIL_NAV / ARRIVAL). The 9px height gives the f_small reading text
+# beside it 1px of clearance above and below.
+# ------------------------------------------------------------
+
+NAV_FLECHE_W = 11
+NAV_FLECHE_H = 9
+
+_FLECHE_HOLLOW = [
+    "11.........",
+    ".111.......",
+    "..1.111....",
+    "...1...11..",
+    "....1....11",
+    "...1...11..",
+    "..1.111....",
+    ".111.......",
+    "11.........",
+]
+
+_FLECHE_FILLED = [
+    "11.........",
+    ".111.......",
+    "..11111....",
+    "...111111..",
+    "....1111111",
+    "...111111..",
+    "..11111....",
+    ".111.......",
+    "11.........",
+]
+
+
+def draw_nav_fleche(fb, x, y, filled=False, color=1):
+    """Draw the 11x9 navigation flèche at (x, y).
+    filled=True  -> solid arrow (mission under way)
+    filled=False -> outline only (still acquiring)."""
+    rows = _FLECHE_FILLED if filled else _FLECHE_HOLLOW
+    draw_bitmap_rows(fb, x, y, rows, c=color)
+
+
+# ------------------------------------------------------------
+# Small degree ring (3x3 hollow)
+#
+# draw_degree()'s r=2 ring is ~5px and rides too tall as a superscript
+# next to the 7px PT Sans Narrow caps on the waiting screen. This one is
+# a bare 3x3 outline — centre pixel left unset, so it must be drawn over
+# clear background.
+# ------------------------------------------------------------
+
+DEGREE_SM_W = 3
+DEGREE_SM_H = 3
+
+_DEGREE_SM_3 = [
+    "111",
+    "101",
+    "111",
+]
+
+
+def draw_degree_sm(fb, x, y, color=1):
+    """Draw a compact 3x3 hollow degree ring with its top-left at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _DEGREE_SM_3, c=color)
 
 
 # ============================================================

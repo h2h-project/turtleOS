@@ -30,10 +30,12 @@ class HeadingSource:
             return None
         self._probed = True
         try:
-            from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
+            from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L, QMC5883P
             m = QMC5883L(self._i2c)
             if not m.is_present:
                 m = HMC5883L(self._i2c)
+            if not m.is_present:
+                m = QMC5883P(self._i2c)
             if m.is_present:
                 self._mag = m
         except Exception:

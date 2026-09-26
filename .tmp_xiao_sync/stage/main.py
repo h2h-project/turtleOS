@@ -112,6 +112,7 @@ I2C_ADDR_BME280     = 0x76  # BME280 temp + humidity + pressure (SDO=LOW)
 I2C_ADDR_BME280_ALT = 0x77  # BME280 alternate address (SDO=HIGH)
 I2C_ADDR_QMC5883 = 0x0D  # QMC5883L — GY-87 on-board mag (via bypass) or standalone GY-271, see step_imu()
 I2C_ADDR_HMC5883 = 0x1E  # HMC5883L — same roles as above (genuine Honeywell part)
+I2C_ADDR_QMC5883P = 0x2C  # QMC5883P — newer QST mag on GY-87/GY-271 clones, same roles
 I2C_ADDR_AS5600  = 0x36  # AS5600 magnetic angle sensor (sail position)
 I2C_ADDR_MPU6050 = 0x68  # MPU6050 IMU on the GY-87 — factory address; only probed on I2C_EXT (0x68 on I2C_SYS is the RTC)
 I2C_ADDR_MPU6050_ALT = 0x69  # MPU6050 with AD0 strapped high
@@ -120,6 +121,7 @@ I2C_ADDR_BMP180  = 0x77  # BMP180 barometer on the GY-87 — shares 0x77 with BM
 _I2C_NAMES = {
     0x0D: "QMC5883L",
     0x1E: "HMC5883L",
+    0x2C: "QMC5883P",
     0x36: "AS5600",
     0x38: "AHT21",
     0x3C: "OLED",
@@ -791,7 +793,7 @@ try:
         print("[BOOT] I2C_EXT: I2C({}) SDA=GPIO{} SCL=GPIO{} {}kHz".format(
             _de[0], _de[2], _de[1], _de[3] // 1000))
         _de_found = i2c_scan_ext()
-        _de_names = {0x68: "MPU6050", 0x69: "MPU6050(AD0)", 0x0D: "QMC5883L", 0x1E: "HMC5883L", 0x77: "BMP180"}
+        _de_names = {0x68: "MPU6050", 0x69: "MPU6050(AD0)", 0x0D: "QMC5883L", 0x1E: "HMC5883L", 0x2C: "QMC5883P", 0x77: "BMP180"}
         if _de_found:
             print("[BOOT] I2C_EXT scan: [{}]".format(", ".join(
                 "{} {}".format(hex(a), _de_names[a]) if a in _de_names else hex(a) for a in _de_found)))
@@ -1502,7 +1504,7 @@ _rt_imu = None
 def step_imu():
     """Probe the GY-87 10DOF board on I2C_EXT: MPU6050 (0x68 factory, or
     0x69 with AD0 high), its aux-bus magnetometer (QMC5883L 0x0D / HMC5883L
-    0x1E, visible after bypass) and BMP180 (0x77). The GY87 instance is kept
+    0x1E / QMC5883P 0x2C, visible after bypass) and BMP180 (0x77). The GY87 instance is kept
     in _rt_imu so nothing else re-probes the bus.
 
     The IMU is never looked for on I2C_SYS: 0x68 there is the DS3231. A
@@ -1537,7 +1539,7 @@ def step_imu():
     addrs = i2c_scan()
     try:
         _gc()
-        from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L
+        from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L, QMC5883P
         i2c = init_i2c()
         if I2C_ADDR_QMC5883 in addrs:
             m = QMC5883L(i2c)
@@ -1547,6 +1549,10 @@ def step_imu():
             m = HMC5883L(i2c)
             if m.is_present:
                 return True, "HMC5883L standalone (0x1E)"
+        if I2C_ADDR_QMC5883P in addrs:
+            m = QMC5883P(i2c)
+            if m.is_present:
+                return True, "QMC5883P standalone (0x2C)"
     except Exception:
         pass
 

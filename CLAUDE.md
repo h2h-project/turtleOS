@@ -43,7 +43,8 @@ device/               ← everything deployed to the microcontroller
     │   ├── boot_guard.py         ← debug-mode REPL gate
     │   ├── rtc_sync.py
     │   ├── telemetry_scheduler.py
-    │   └── telemetry_state.py
+    │   ├── telemetry_state.py
+    │   └── journey.py            ← active-journey state (/journey_state.json); tags telemetry
     ├── hal/
     │   ├── platform.py           ← detects "pico", "esp32", "esp32s3", "xiao_esp32s3"
     │   ├── board.py              ← facade: delegates to the correct board module
@@ -68,6 +69,7 @@ device/               ← everything deployed to the microcontroller
     │   └── screens/
     │       ├── — turtleOS screens —
     │       ├── turtle_waiting.py ← animated turtle idle screen (turtle_mode=true)
+    │       ├── journey.py        ← start/end an operator journey; toggles telemetry tagging
     │       ├── servo.py          ← sail servo status + test sweep
     │       ├── compass.py        ← live heading via the shared HeadingSource (GY-87 mag)
     │       ├── sailpoint.py      ← sail-angle overlay on compass reading
@@ -255,6 +257,7 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 ### turtleOS sensor carousel (turtle_mode=true)
 
 Single-click enters `sensor_carousel()` configured for navigation screens (order set in `flows.py`; single-click always advances):
+0. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it leads the carousel. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and clears the file. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
 1. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
 2. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
 3. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
@@ -385,6 +388,8 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **GY-87 fields (turtleOS 2.4+):** `_read_baro()` adds `bmp_pressure` (hPa), `bmp_temp` (°C) and `bmp_alt_m` (ISA altitude from 1013.25 hPa — a sanity number, it drifts with the weather); `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart.
 
+**`flags`:** `_build_full_payload()` always emits `flags.auto_log` / `flags.manual_registry`, and — while an operator journey is open — `flags.journey_id` (see [Journey tagging](#journey-tagging)). The whole `flags` object is stored verbatim in `raw_data.flags`.
+
 ---
 
 ## The backend API server (`hopeturtles.org`)
@@ -429,11 +434,13 @@ Two independent navigation targets:
   `mission_destination` (+ `mission_dest_full_name` / `mission_dest_short_name`)
   on every online boot, so it survives the next offline boot.
 - **Operator-set** — a per-turtle pond/field test target, captured by hand on the
-  Destination screen and stored in config as `set_destination` / `set_departure`
-  / `set_arrival` (`[lat, lon]` or `null`), `set_waypoints`, `set_short_name`,
-  `set_full_name`. It is **best-effort mirrored** to `turtles_tb.set_*` columns
-  via `PATCH /v1/device` (`src/net/device_client.py`) — for the dashboard only;
-  the local `config.json` is authoritative for navigation.
+  Destination screen and stored in config as `set_destination` (`[lat, lon]` or
+  `null`), `set_waypoints`, `set_short_name`, `set_full_name`. `set_departure` /
+  `set_arrival` are also `[lat, lon]`|`null` but are now written by the **Journey
+  screen** (start / end of a journey), not the Destination screen. All of these
+  are **best-effort mirrored** to `turtles_tb.set_*` columns via `PATCH
+  /v1/device` (`src/net/device_client.py`) — for the dashboard only; the local
+  `config.json` is authoritative for navigation.
 
 `WaypointSequencer` (`src/nav/waypoints.py`) resolves the active target in this
 order: `set_waypoints` → `set_destination` → `mission_waypoints` →
@@ -442,13 +449,40 @@ so a changed target resets the waypoint index instead of resuming a stale one.
 
 The Destination screen carousel slot (single-click still advances): **double-click
 → menu** (1× target = here, GPS-stamped into `set_destination` · 2× target =
-mission, copies `mission_destination` · 3× cancel). A here-stamp then walks
-through **Set Departure** and **Set Arrival** (1× stamp into `set_departure` /
-`set_arrival`, 2× skip). Stamps flash "… Set!", cancels flash "Cancelled", and
-no fix flashes "Sorry, no GPS!"; every outcome is also printed as `[DEST]`. The
-stamp is the single click on purpose — a slow double must never silently back
-out of the menu. `set_waypoints` exists in schema + config but has no
-on-device writer yet.
+mission, copies `mission_destination` · 3× cancel). A here-stamp then **hands off
+to the Journey screen** ("Ready to go?") so picking a target and departing is one
+flow. Stamps flash "… Set!", cancels flash "Cancelled", and no fix flashes
+"Sorry, no GPS!"; every outcome is also printed as `[DEST]`. The stamp is the
+single click on purpose — a slow double must never silently back out of the menu.
+`set_waypoints` exists in schema + config but has no on-device writer yet.
+
+### Journey tagging
+
+A **journey** is an operator-marked leg of travel (pond test, field run,
+release-and-track). `src/app/journey.py` is a process-wide singleton backed by
+**`/journey_state.json`** (device-owned, like `nav_state.json` /
+`telemetry_queue.json` — a firmware re-upload must not clobber an in-flight
+journey):
+
+```json
+{"id": 1725800000, "started_at": 1725800000, "departure": [lat, lon]}
+```
+
+`id` is the unix second the journey started — monotonic per turtle, sortable,
+allocatable with no server round-trip. The **Journey screen**
+(`src/ui/screens/journey.py`) opens a journey (needs a GPS fix; stamps
+`set_departure`) and closes it (stamps `set_arrival`; a lost fix still ends it).
+
+While a journey is open, `TelemetryScheduler._build_full_payload()` adds
+**`flags.journey_id`** to every payload — auto, manual, and offline-queued
+readings alike. The server already stores `flags` verbatim in
+`telemetry_tb.raw_data`, so **no ingest change is needed** for the tag to land;
+`my-turtle` reads it back via `JSON_EXTRACT(raw_data, '$.flags.journey_id')` to
+highlight that leg's GPS points. A time-window between the departure and arrival
+stamps was rejected as the primary mechanism (open-ended if a journey never
+formally ends; ambiguous for overlapping journeys; fragile when the RTC is
+briefly unsynced) — the in-payload tag is authoritative. An optional server-side
+straggler back-fill is sketched in the `journey.py` header comment for later.
 
 ---
 
@@ -481,8 +515,8 @@ on-device writer yet.
 | `mission_destination` | `[lat,lon]` | `[31.35, 34.27]` | grand-mission target; overwritten from API (`mission_target_*`) |
 | `mission_waypoints` | list | `[]` | grand-mission route of `[lat,lon]` pairs |
 | `set_destination` | `[lat,lon]`\|`null` | `null` | operator test-project target; set on the Destination screen |
-| `set_departure` | `[lat,lon]`\|`null` | `null` | operator start point; set on the Destination screen's "Set Departure" step |
-| `set_arrival` | `[lat,lon]`\|`null` | `null` | operator arrival point; set on the Destination screen's "Set Arrival" step |
+| `set_departure` | `[lat,lon]`\|`null` | `null` | operator start point; stamped by the Journey screen when a journey opens |
+| `set_arrival` | `[lat,lon]`\|`null` | `null` | operator arrival point; stamped by the Journey screen when a journey ends |
 | `set_waypoints` | list | `[]` | operator route; **no on-device writer yet** |
 | `set_short_name` | str | `""` | operator label (`"SET"` after a here-stamp) |
 | `set_full_name` | str | `""` | operator label (`"User Set"` after a here-stamp) |
