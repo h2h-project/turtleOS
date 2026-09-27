@@ -213,6 +213,13 @@ gesture leaves Settings.
 - Empty and error states: connection dropped mid-command (after
   reconnecting, read Result to learn the outcome), a turtle whose
   window has closed, a contract version mismatch.
+- **Stale bond** (seen in Phase 0). If the turtle has lost its bond
+  keys ("Forget phones", or a wiped `/ble_bonds.json`) while the phone
+  still holds its own, Android tries to encrypt with the old key, fails,
+  and drops the link within seconds of connecting. The app must detect
+  "connected, then dropped before any read completed" twice in a row,
+  and tell the user to forget the turtle in Android's Bluetooth
+  settings and pair again (optionally calling `removeBond()` itself).
 - Branding pass per the README's visual identity (one pink element per
   screen, ghost style only).
 - No background foreground-service in v1. Near-field use doesn't need

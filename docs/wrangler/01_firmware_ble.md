@@ -24,20 +24,25 @@ connections.
 Confirm these on real hardware before building. If any of them fails,
 the plan changes.
 
-1. **BLE stack on the deployed build.** Confirm that
-   `resources/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin` has the
-   `bluetooth` module (NimBLE). Decide between vendoring `aioble` into
+1. **BLE stack on the deployed build.** *Checked on the desk:* the
+   image `resources/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin`
+   contains the `bluetooth` module on NimBLE, including `gap_pair`,
+   `gap_passkey` and `gatts_set_buffer`, so pairing and large writes are
+   compiled in. `aioble` is not in the image. Still to confirm on the
+   device: `import bluetooth` works on the flashed board. Then decide
+   between vendoring `aioble` into
    `src/lib/` (the way `urequests.py` is vendored) and writing directly
    against `bluetooth`. aioble's `security` module handles bond
    persistence, which counts in its favour.
-2. **WiFi/BLE coexistence and power management.** `wifi_manager.py`
-   sets `pm=0xA11140` (line 63) and falls back to `PM_NONE` (line 97).
-   ESP-IDF requires WiFi modem sleep while BLE is active, and it can
-   abort with *"Should enable WiFi modem sleep when both WiFi and
-   Bluetooth are enabled"*. Test the turtle with BLE active plus a WiFi
-   connect, a telemetry POST and an offline-queue drain, and find out
-   whether the PM setting has to change while BLE is up. Then measure
-   POST latency and queue-drain rate with a phone connected.
+2. **WiFi/BLE coexistence and power management.** ESP-IDF requires
+   WiFi modem sleep while BLE is active. On ESP32, `wifi_manager.py`
+   sets `PM_PERFORMANCE` (`WIFI_PS_MIN_MODEM`, which is modem sleep, so
+   it is compatible). The CYW43 value `0xA11140` is guarded to Pico
+   only. The one risk is the `PM_NONE` fallback (line 97), which only
+   runs if `PM_PERFORMANCE` is missing. v1.28 has it, but the spike
+   should confirm the constant exists and that BLE survives a WiFi
+   connect. Then measure telemetry POST latency and offline-queue drain
+   rate with and without a phone connected.
 3. **Passkey pairing.** Confirm the build supports
    `ble.config(io=DISPLAY_ONLY, mitm=True, bond=True, le_secure=True)`
    and delivers `_IRQ_PASSKEY_ACTION` for display. Confirm a bond
@@ -47,6 +52,37 @@ the plan changes.
    WIFI_SET_CREDENTIALS write in one piece.
 
 Deliverable: a short go/no-go note appended to this file, not code.
+
+---
+
+### Phase 0 results (2026-09-27, turtle 18, MicroPython 1.28.0)
+
+Scripts: `tests/ble_spike.py` (tests A + B) and `tests/ble_coex.py`
+(test C).
+
+| Check | Result |
+|---|---|
+| `bluetooth` on the deployed build | **Pass.** NimBLE; `bond`, `le_secure`, `mitm`, `io=DisplayOnly` and `mtu=185` all accepted before/after `active(True)`. |
+| Advertise + scan-response name | **Pass.** 21 B adv (flags + 128-bit UUID), name in scan response. Found by nRF Connect. |
+| Read / 1 Hz notify | **Pass.** |
+| 100-byte write (WIFI_SET_CREDENTIALS size) | **Pass** at both MTU 185 (phone requested it) and MTU 23 (no request, so Android used a long write). WIFI_SET_CREDENTIALS works even on a phone that never raises the MTU. The earlier 0-byte result was an empty paste. |
+| Passkey pairing (DisplayOnly, OLED code) | **Pass.** LE Secure, authenticated, bonded, 16-byte key. A failed first attempt ended the connection (`encrypted=0`, then disconnect). |
+| Bond survives a hard reset | **Pass.** Secrets reloaded from the JSON store. The phone reconnected from a *new* resolvable private address and was still recognised (IRK resolution works). Encrypted, bonded, no passkey. |
+| Stale bond | Observed both ways. (1) Phone still bonded, turtle has no keys: the phone is dropped within seconds (see app Phase 7). (2) Phone forgot the turtle, turtle still has keys: on re-pairing NimBLE deleted the old keys itself (`secret deleted`) and offered a fresh passkey. A pairing that isn't completed leaves the link up but unencrypted (`encrypted=0`), so command writes must return `ERR_NOT_BONDED`, which is the contract's design. |
+| WiFi PM with BLE active | **Pass.** `PM_PERFORMANCE` = 1 exists; `pm` stays 1 throughout. No abort or reset. |
+| `GET /api/v1/device` latency: BLE off / advertising | Median 870 / 845 ms, 20/20 each. **No measurable cost from advertising.** |
+| Latency with a phone connected + 5 Hz notify | **Pass.** 20/20, median 993 ms against 841 ms with BLE off in the same run (about +150 ms, ~18%). 5 Hz is a deliberate stress rate, several times the contract's real notify rates, so no throttling is needed for v1. Max latency stayed about 2.2–2.5 s in every phase, including BLE off. |
+| BLE off again with WiFi up | **Pass.** WiFi stayed connected, 20/20. Median 933 / 936 ms in two runs, about 90 ms above the BLE-off baseline both times. Small, but repeatable; recheck in Phase 7 whether a BLE on→off cycle leaves the radio slightly slower. |
+| Current draw | *Not measured.* On USB power the INA219 reads ~0 mA. Deferred to a battery-powered bench run; it only tunes the `ble_window_min` default and blocks nothing. |
+
+**Verdict: GO.** Build as planned, with no architecture changes:
+- use the raw `bluetooth` module with our own JSON bond store (`/ble_bonds.json`), not aioble;
+- keep the existing WiFi power-management code as it is;
+- no coexistence throttling is needed for v1.
+
+Carry forward:
+- recheck the small post-BLE latency offset in Phase 7;
+- measure current on battery before fixing the `ble_window_min` default.
 
 ---
 
