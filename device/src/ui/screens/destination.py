@@ -15,7 +15,9 @@
 # multi-click so a slow double can't silently back out of the menu.
 #
 # A stamp writes config.json (authoritative for nav) and best-effort PATCHes
-# the values to the server for the dashboard.
+# the values to the server for the dashboard. Those side effects live in
+# src.app.actions (dest_set_here / dest_set_mission), shared with the
+# Bluetooth command handler; this screen maps their result codes to a flash.
 #
 # set_departure / set_arrival used to be stamped here via two extra screens
 # (DEPARTURE, ARRIVAL) after the destination stamp. That is now the Journey
@@ -57,34 +59,6 @@ class DestinationScreen:
         except Exception:
             if not isinstance(self._cfg, dict):
                 self._cfg = {}
-
-    def _save(self, updates):
-        """Merge `updates` into config.json and refresh self._cfg."""
-        try:
-            from config import load_config, save_config
-            c = load_config() or {}
-            c.update(updates)
-            save_config(c)
-            self._cfg = c
-        except Exception:
-            # Keep the in-RAM copy consistent even if the write failed.
-            try:
-                self._cfg.update(updates)
-            except Exception:
-                pass
-        self._push(updates)
-
-    def _push(self, updates):
-        """Best-effort mirror of the set_* fields to the server."""
-        try:
-            from src.net.device_client import patch_set_fields
-            patch_set_fields(self._cfg, {
-                k: v for k, v in updates.items()
-                if k in ("set_destination", "set_departure", "set_arrival",
-                         "set_waypoints", "set_short_name", "set_full_name")
-            })
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------ drawing
 
@@ -163,78 +137,32 @@ class DestinationScreen:
             except Exception:
                 pass
 
-    # ------------------------------------------------------------------ GPS
-
-    def _read_gps(self, gps):
-        """Return (lat, lon) from a live/recent fix, or None."""
-        try:
-            from src.nav import gpsfix
-        except Exception:
-            gpsfix = None
-
-        if gpsfix is not None:
-            try:
-                la, lo, age = gpsfix.get()
-                if la is not None and age is not None and age < 5000:
-                    return (la, lo)
-            except Exception:
-                pass
-
-        if gpsfix is None or gps is None:
-            return None
-
-        t0 = time.ticks_ms()
-        while time.ticks_diff(time.ticks_ms(), t0) < 2200:
-            try:
-                line = gps.read_nmea(max_ms=40)
-            except Exception:
-                line = None
-            if line and "RMC" in line:
-                la, lo, cog = gpsfix.parse_rmc(line)
-                if la is not None:
-                    try:
-                        gpsfix.update(la, lo, cog)
-                    except Exception:
-                        pass
-                    return (la, lo)
-            time.sleep_ms(10)
-        return None
-
     # ------------------------------------------------------------------ actions
 
-    def _stamp_here(self, gps, key, label, tick_fn):
-        """Stamp the current GPS position into config key `key`.
-        Returns True on success, False when there is no fix."""
-        loc = self._read_gps(gps)
-        if loc is None:
-            print("[DEST] {}: no GPS fix".format(key))
+    def _stamp_here(self, gps, tick_fn):
+        """Target = the turtle's own position. Returns True on success."""
+        from src.app import actions
+        code, _info = actions.dest_set_here(gps)
+        self._load_config()
+        if code == actions.OK:
+            self._flash("Destination Set!", 1200, tick_fn)
+            return True
+        if code == actions.ERR_NO_GPS_FIX:
             self._flash("Sorry, no GPS!", 2000, tick_fn)
-            return False
-        updates = {key: [loc[0], loc[1]]}
-        if key == "set_destination":
-            updates["set_short_name"] = "SET"
-            updates["set_full_name"] = "User Set"
-        self._save(updates)
-        print("[DEST] {} = {:.6f},{:.6f}".format(key, loc[0], loc[1]))
-        self._flash(label, 1200, tick_fn)
-        return True
+        else:
+            self._flash("Not saved!", 2000, tick_fn)
+        return False
 
     def _use_mission(self, tick_fn):
-        try:
-            from config import load_config
-            c = load_config() or {}
-        except Exception:
-            c = self._cfg
-        md = _valid_pair(c.get("mission_destination"))
-        if md is None:
+        from src.app import actions
+        code, _info = actions.dest_set_mission()
+        self._load_config()
+        if code == actions.OK:
+            self._flash("Destination Set!", 1200, tick_fn)
+        elif code == actions.ERR_NO_TARGET:
             self._flash("No mission dest!", 2000, tick_fn)
-            return
-        self._save({
-            "set_destination": [md[0], md[1]],
-            "set_short_name": str(c.get("mission_dest_short_name") or ""),
-            "set_full_name": str(c.get("mission_dest_full_name") or ""),
-        })
-        self._flash("Destination Set!", 1200, tick_fn)
+        else:
+            self._flash("Not saved!", 2000, tick_fn)
 
     def _launch_journey(self, btn, gps, tick_fn):
         """Hand off to the Journey screen right after a here-stamp so the
@@ -308,8 +236,7 @@ class DestinationScreen:
 
             elif self._state == "menu":
                 if action == "single":
-                    ok = self._stamp_here(gps, "set_destination",
-                                          "Destination Set!", tick_fn)
+                    ok = self._stamp_here(gps, tick_fn)
                     if ok:
                         self._launch_journey(btn, gps, tick_fn)
                     self._enter("normal", btn)

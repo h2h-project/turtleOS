@@ -337,7 +337,7 @@ empty.
 
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
-| `0x20` | GPS_STAMP | — | GPS screen, single-click in manual mode (`TelemetryState.send_manual`) | OK `<BH>` committed_to (0 flash queue · 1 background sender), stamps_session · WRONG_STATE (`telemetry_mode` isn't manual) · NOT_STAMPED `<B>` reason (1 RTC not epoch · 2 GPS disabled · `0xFF` other) |
+| `0x20` | GPS_STAMP | — | GPS screen, single-click in manual mode (`TelemetryState.send_manual`) | OK `<BHB>` committed_to (0 flash queue · 1 background sender), stamps_session, has_position (0 = recorded without a fix, sensor values and time only) · WRONG_STATE (`telemetry_mode` isn't manual) · NOT_STAMPED `<B>` reason (1 RTC not synced · 2 GPS disabled and no sensor values · 3 no fix and no sensor values · `0xFF` other, e.g. a sensor sample in flight) |
 | `0x21` | GPS_SET_ENABLED | `<B>` 0/1 | GPS screen, double-click (auto/off) or triple-click (manual) | OK · NO_HARDWARE |
 | `0x22` | TELEMETRY_SET_MODE | `<B>` 0 off · 1 auto · 2 manual | Logging screen, double-click (cycles off → auto → manual) | OK · BAD_VALUE |
 | `0x23` | TELEMETRY_SET_INTERVAL | `<H>` seconds | **App-only** (config key, no OLED writer) | OK · BAD_VALUE (< 10) |
@@ -345,7 +345,10 @@ empty.
 
 - GPS_STAMP is the **most important command in the contract**. It behaves
   exactly like the OLED stamp: it commits the payload before returning
-  and never blocks on the network. A later shore delivery shows up as
+  and never blocks on the network. A stamp taken without a fix is still
+  a valid record when the turtle has sensor values to save;
+  `has_position = 0` tells the app to show "Stamped — no position" instead
+  of implying a GPS point was logged. A later shore delivery shows up as
   `queue_count` falling and `last_shore_sync` advancing in the
   notifications. No second result is sent.
 - The Online screen's on/off toggle is covered by TELEMETRY_SET_MODE (it

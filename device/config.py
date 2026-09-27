@@ -66,6 +66,21 @@ DEFAULTS = {
     "api_base": "",
     "device_id": "",
     "device_key": "",
+    # Human-readable turtle name (turtles_tb.name). Written by step_api() on
+    # every online boot from GET /v1/device's "device_name", so an offline boot
+    # still has a name to show and to advertise over Bluetooth.
+    "device_name": "",
+
+    # --- Bluetooth (Turtle Wrangler, docs/wrangler/) ---
+    # ble_enabled: master switch. False = the radio is never activated — the
+    #   setting for a real mission voyage.
+    # ble_window_min: after boot, wake, and each visit to the Bluetooth screen
+    #   the turtle advertises for this many minutes. 0 = always while enabled.
+    # ble_require_bond: commands need a bonded, encrypted link. False is for
+    #   bench development only; never on a deployed turtle.
+    "ble_enabled": True,
+    "ble_window_min": 10,
+    "ble_require_bond": True,
 
     # --- Time ---
     # Minutes offset from UTC.
@@ -223,6 +238,22 @@ def save_config(cfg):
     os.rename(tmp_file, CONFIG_FILE)
 
 
+def update_config(changes):
+    """Merge `changes` into the config on flash and return the saved config.
+
+    Reads the file fresh, merges, normalizes and writes it back in one step.
+    Every writer should use this instead of saving a cfg dict it loaded
+    earlier: a screen that holds a stale copy and calls save_config() on it
+    silently reverts anything written in the meantime (a Bluetooth command,
+    the boot API sync, another screen).
+    """
+    cfg = load_config()
+    cfg.update(changes)
+    cfg, _ = _normalize_types(cfg)
+    save_config(cfg)
+    return cfg
+
+
 def file_exists(path):
     try:
         os.stat(path)
@@ -270,7 +301,8 @@ def _normalize_types(cfg):
         changed = True
 
     # --- Booleans ---
-    for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present"):
+    for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present",
+                "ble_enabled", "ble_require_bond"):
         old_val = cfg.get(key, DEFAULTS[key])
         new_val = _to_bool(old_val, DEFAULTS[key])
         if old_val != new_val:
@@ -428,6 +460,21 @@ def _normalize_types(cfg):
         if _clean != _wps:
             cfg[_key] = _clean
             changed = True
+
+    # --- Bluetooth wrangle window (minutes; 0 = always advertise) ---
+    try:
+        _bw = int(cfg.get("ble_window_min", DEFAULTS["ble_window_min"]))
+        _bw = max(0, min(240, _bw))
+    except Exception:
+        _bw = DEFAULTS["ble_window_min"]
+    if cfg.get("ble_window_min") != _bw:
+        cfg["ble_window_min"] = _bw
+        changed = True
+
+    _dn = str(cfg.get("device_name", "") or "").strip()
+    if cfg.get("device_name") != _dn:
+        cfg["device_name"] = _dn
+        changed = True
 
     # --- Mission link mode ---
     try:

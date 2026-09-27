@@ -44,7 +44,8 @@ device/               ← everything deployed to the microcontroller
     │   ├── rtc_sync.py
     │   ├── telemetry_scheduler.py
     │   ├── telemetry_state.py
-    │   └── journey.py            ← active-journey state (/journey_state.json); tags telemetry
+    │   ├── journey.py            ← active-journey state (/journey_state.json); tags telemetry
+    │   └── actions.py            ← side effects of every OLED gesture, returning GATT v1 result codes; shared with Bluetooth
     ├── hal/
     │   ├── platform.py           ← detects "pico", "esp32", "esp32s3", "xiao_esp32s3"
     │   ├── board.py              ← facade: delegates to the correct board module
@@ -326,7 +327,7 @@ reading, double click advances** — because stamping is the action repeated doz
 times in a session while advancing happens once. In `auto`/`off` mode the legacy
 mapping stands (single advances, double toggles GPS).
 
-**What a stamp does** (`GPSScreen._manual_send` → `TelemetryState.send_manual`):
+**What a stamp does** (`GPSScreen._manual_send` → `src/app/actions.gps_stamp` → `TelemetryState.send_manual`):
 1. Arms `scheduler._manual_flag`, which punches through the `manual` gate in `tick()`
    and marks the payload `{"auto_log": false, "manual_registry": true}`.
 2. `tick()` builds the payload and **commits it before returning** — handed to the
@@ -490,7 +491,7 @@ straggler back-fill is sketched in the `journey.py` header comment for later.
 
 ## Configuration (`config.py` / `config.json`)
 
-`load_config()` reads `config.json`, applies defaults, and migrates legacy keys. `save_config(cfg)` writes back atomically.
+`load_config()` reads `config.json`, applies defaults, and migrates legacy keys. `save_config(cfg)` writes back atomically. **Writers use `update_config(changes)`**, which reloads, merges, normalizes and saves in one step. Calling `save_config()` on a dict loaded earlier silently reverts anything written in between (a Bluetooth command, the boot API sync, another screen).
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
@@ -504,6 +505,10 @@ straggler back-fill is sketched in the `journey.py` header comment for later.
 | `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
 | `device_id` | str | `""` | |
 | `device_key` | str | `""` | |
+| `device_name` | str | `""` | human-readable turtle name (`turtles_tb.name`, sent as `device_name` by `GET /v1/device`); Bluetooth advertises it |
+| `ble_enabled` | bool | `true` | Bluetooth master switch; `false` = radio never activated (mission lockdown) |
+| `ble_window_min` | int | `10` | minutes the turtle advertises after boot / wake / opening the Bluetooth screen; `0` = always; max 240 |
+| `ble_require_bond` | bool | `true` | Bluetooth commands need a bonded link; `false` for bench development only |
 | `mission_connection_mode` | str | `"wifi_auto"` | how records are **shipped**: `"wifi_auto"` = association attempts on exponential backoff (15 min → 12 h cap); `"wifi_manual"` = only a triple-click ever connects; `"lora"` reserved. Orthogonal to `telemetry_mode`, which governs when records are **created**. |
 | `gps_enabled` | bool | `false` | |
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
