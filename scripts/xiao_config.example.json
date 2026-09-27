@@ -8,8 +8,8 @@
     "oled_col_offset": 2,
 
     "wifi_enabled": true,
-    "wifi_ssid": "MAVI_MARMARA",
-    "wifi_password": "Mavimarmara@2010",
+    "wifi_ssid": "",
+    "wifi_password": "",
 
     "mission_connection_mode": "wifi_auto",
 
@@ -19,8 +19,8 @@
     "morse_bless": true,
 
     "api_base": "http://hopeturtles.org",
-    "device_id": "18",
-    "device_key": "119209285457a6f7d14979d0df1dcd6da32b732b81c8db00418c7b6f4dd3236f",
+    "device_id": "",
+    "device_key": "",
 
     "timezone_offset_min": 180,
 

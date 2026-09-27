@@ -24,7 +24,11 @@ config.json
 .tem_xiao_sync/
 backups/
 
+# Local configs with WiFi + device credentials. Commit the *.example.json
+# versions instead; the sync scripts copy those on a fresh clone.
 scripts/xiao_config.json
+scripts/xiao_config_england.json
+scripts/airbuddy_config.json
 # Device-owned runtime data pulled off the board (never sync back)
 device/telemetry_queue.json
 device/telemetry_last_sent.json

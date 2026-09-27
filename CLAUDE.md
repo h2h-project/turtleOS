@@ -127,8 +127,10 @@ scripts/              ← host-side deploy helpers
   ├── install_airOS.sh    ← first-time setup: flash + configure + upload airOS (curl one-liner)
   ├── sync_turtleOS.sh    ← Synker: re-upload turtleOS firmware to an already-installed device
   ├── sync_airOS.sh       ← Synker: re-upload airOS firmware to an already-installed device
-  ├── xiao_config.json    ← base config installed by sync_turtleOS.sh
-  └── airbuddy_config.json ← base config installed by sync_airOS.sh
+  ├── xiao_config.example.json    ← committed template (credentials blank)
+  ├── xiao_config.json            ← LOCAL, git-ignored: base config installed by sync_turtleOS.sh
+  ├── airbuddy_config.example.json ← committed template (credentials blank)
+  └── airbuddy_config.json        ← LOCAL, git-ignored: base config installed by sync_airOS.sh
 tests/                ← hardware/integration scripts (not unit tests)
 backups/              ← archived experiment files
 ```
@@ -632,9 +634,11 @@ Do **not** run these as `curl -sSL ... | bash`. Both scripts detect a non-intera
 ./scripts/sync_turtleOS.sh --port /dev/cu.usbmodem141301
 ```
 
-Option 1 (and the end of options 2/3/4) opens a REPL via `open_repl()` rather than forcing a hardware reset — pressing Ctrl-D inside the REPL triggers a *soft* reset (prints the full boot log) without dropping the USB serial connection. Don't chain `mpremote ... reset repl`: `reset` calls `machine.reset()`, a full chip reset that can drop/re-enumerate the XIAO's native USB port out from under the subsequent `repl` command.
+Option 1 (and the end of options 2/3/4) calls `open_repl()`, which runs `scripts/reboot_repl.py` under mpremote's own interpreter (it always has pyserial): it sends Ctrl-C (stop the app), Ctrl-B (leave raw REPL), Ctrl-D (*soft* reset) and opens a pyserial Miniterm on the same port handle, so the full boot log streams with no keypress and the USB connection never drops. Ctrl-] exits. If pyserial can't be imported it falls back to `mpremote repl` and asks for a manual Ctrl-D. Don't substitute `mpremote soft-reset repl`: mpremote resets from the raw REPL, and MicroPython skips `main.py` after a raw-REPL soft reset. Don't chain `mpremote ... reset repl` either: `reset` calls `machine.reset()`, a full chip reset that can drop/re-enumerate the XIAO's native USB port out from under the subsequent `repl` command.
 
 Option 2 uploads only `config.json` (from `xiao_config.json` / `airbuddy_config.json`) — no firmware staging, no flash-usage report. Option 3 (quick sync) re-uploads the full firmware for any OS code change, also without a flash-usage report. Only option 4 (full sync, or `--fresh`) reports flash usage before/after and offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
+
+**Credentials never go in git.** The repo is public, so `scripts/xiao_config.json`, `scripts/airbuddy_config.json` and `device/config.json` are git-ignored: they hold the WiFi password and `device_key`. Only the `*.example.json` templates are committed. On a fresh clone the Synker copies the example to the local file and stops so you can fill in `wifi_ssid`, `wifi_password`, `device_id` and `device_key`. It also refuses to upload a config whose four credentials are all still blank, which would wipe the board's own. Keep per-location variants (e.g. `xiao_config_england.json`) untracked too.
 
 **Manual mpremote operations:**
 ```bash

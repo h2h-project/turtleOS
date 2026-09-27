@@ -207,12 +207,34 @@ print('Cleanup done. Removed', removed, 'excluded file(s).')
 " || warn "Cleanup step had errors — continuing."
 }
 
+# Python that can import pyserial: mpremote's own interpreter (from its
+# shebang — it always has pyserial), else python3.
+mpremote_python() {
+  local exe first
+  exe="$(command -v "$MPREMOTE" 2>/dev/null)"
+  first="$(head -n1 "$exe" 2>/dev/null)"
+  if [[ "$first" == "#!"* && "$first" != *" "* && -x "${first#\#!}" ]]; then
+    echo "${first#\#!}"
+  else
+    echo python3
+  fi
+}
+
 open_repl() {
-  msg "Opening REPL"
-  echo "  Press Ctrl-D inside the REPL to reboot and see the full boot log."
-  echo "  Press Ctrl-] to exit back to the shell."
-  echo
-  "${MPREMOTE_CMD[@]}" repl
+  local py
+  py="$(mpremote_python)"
+  if "$py" -c "import serial" >/dev/null 2>&1; then
+    msg "Rebooting the turtle — full boot log follows"
+    echo "  Press Ctrl-] to exit back to the shell."
+    echo
+    "$py" "$SCRIPTS_DIR/reboot_repl.py" "$PORT"
+  else
+    msg "Opening REPL"
+    echo "  Press Ctrl-D inside the REPL to reboot and see the full boot log."
+    echo "  Press Ctrl-] to exit back to the shell."
+    echo
+    "${MPREMOTE_CMD[@]}" repl
+  fi
   echo
 }
 
@@ -342,12 +364,38 @@ if [[ "$ACTION" == "reboot" ]]; then
 fi
 
 # ============================================================
+# Local config (untracked — holds WiFi + device credentials)
+# ============================================================
+# scripts/xiao_config.json is git-ignored so credentials never reach the public
+# repo. A fresh clone only has scripts/xiao_config.example.json: copy it once and
+# fill in the blanks. Never upload the blank example — it would wipe the
+# board's WiFi and device credentials.
+
+CONFIG_FILE="$SCRIPTS_DIR/xiao_config.json"
+CONFIG_EXAMPLE="$SCRIPTS_DIR/xiao_config.example.json"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  cp "$CONFIG_EXAMPLE" "$CONFIG_FILE" || die "Could not create $CONFIG_FILE from the example."
+  die "Created scripts/xiao_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
+fi
+_blank=()
+for _key in wifi_ssid wifi_password device_id device_key; do
+  if grep -Eq "\"$_key\"[[:space:]]*:[[:space:]]*\"\"" "$CONFIG_FILE"; then
+    _blank+=("$_key")
+  fi
+done
+if (( ${#_blank[@]} == 4 )); then
+  die "scripts/xiao_config.json is still the blank example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
+elif (( ${#_blank[@]} > 0 )); then
+  warn "scripts/xiao_config.json has empty: ${_blank[*]} — the board will get blank values."
+fi
+
+# ============================================================
 # Option 2 — Sync only the config file
 # ============================================================
 
 if [[ "$ACTION" == "config" ]]; then
   msg "Uploading config.json only"
-  "${MPREMOTE_CMD[@]}" fs cp "$SCRIPTS_DIR/xiao_config.json" :config.json \
+  "${MPREMOTE_CMD[@]}" fs cp "$CONFIG_FILE" :config.json \
     || die "Config upload failed. Try reconnecting the board and running again."
   echo "Config: scripts/xiao_config.json → config.json"
   echo
@@ -385,7 +433,7 @@ rsync -a \
   \
   "$DEVICE_DIR/" "$STAGE_DIR/"
 
-cp "$SCRIPTS_DIR/xiao_config.json" "$STAGE_DIR/config.json"
+cp "$CONFIG_FILE" "$STAGE_DIR/config.json"
 echo "Config: scripts/xiao_config.json → config.json"
 
 # ============================================================
