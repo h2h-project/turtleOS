@@ -567,6 +567,9 @@ rsync -a \
     `# ── Device-owned runtime data (never overwrite the board's own records) ─` \
     --exclude 'telemetry_queue.json' \
     --exclude 'telemetry_last_sent.json' \
+    --exclude 'journey_state.json' \
+    --exclude 'nav_state.json' \
+    --exclude 'ble_bonds.json' \
     --exclude 'src/hal/board_pico.py' \
     --exclude 'src/ui/flows_pico.py' \
     --exclude 'src/ui/glyphs_pico.py' \

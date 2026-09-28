@@ -712,6 +712,14 @@ def run(
     # Calling load_config() every 500 ms allocates and frees JSON dicts that
     # fragment the heap even before telemetry fires.
     _cfg_cell = [{}]
+    # Config writes made through src.app.actions (OLED gestures, and later
+    # Bluetooth commands) mirror into _cfg_cell[0] so the background tick sees
+    # them immediately, not only after the carousel exits.
+    try:
+        from src.app.actions import bind_cfg_cell as _bind_cfg_cell
+        _bind_cfg_cell(_cfg_cell)
+    except Exception as e:
+        print("[ACTIONS] cfg bind failed:", repr(e))
 
     # ------------------------------------------------------------
     # NAV CONTROLLER (turtle_mode only) — lazy singleton.

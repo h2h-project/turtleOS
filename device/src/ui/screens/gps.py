@@ -152,6 +152,11 @@ class GPSScreen:
             if len(p) < 8:
                 return
             self._hw_present = True
+            try:
+                from src.nav import gpsfix
+                gpsfix.note_gga(line)
+            except Exception:
+                pass
             if p[6] and p[6] != "0":
                 self.last_fix = True
             if p[7]:

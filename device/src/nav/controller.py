@@ -180,6 +180,8 @@ class NavController:
                     lat, lon, cog = gpsfix.parse_rmc(line)
                     if lat is not None:
                         gpsfix.update(lat, lon, cog)
+                elif "GGA" in line:
+                    gpsfix.note_gga(line)
         except Exception:
             pass
 

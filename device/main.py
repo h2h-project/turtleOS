@@ -1263,13 +1263,19 @@ def step_api():
             _sn = info.get("mission_dest_short_name")
             if _sn:
                 _updates["mission_dest_short_name"] = str(_sn)
+            # turtles_tb.name, so an offline boot still has a name to show and
+            # to advertise over Bluetooth.
+            _dn = str(info.get("device_name") or "").strip()
+            if _dn:
+                _updates["device_name"] = _dn
             if _updates and cfg is not None:
                 _changed = any(cfg.get(k) != v for k, v in _updates.items())
                 if _changed:
                     cfg.update(_updates)
-                    from config import save_config
-                    save_config(cfg)
-                    print("[BOOT] mission destination synced:", _updates.get("mission_destination"))
+                    from config import update_config
+                    update_config(_updates)
+                    print("[BOOT] synced from API: destination={} name={!r}".format(
+                        _updates.get("mission_destination"), _updates.get("device_name")))
     except Exception as e:
         print("[BOOT] mission destination sync failed:", repr(e))
 

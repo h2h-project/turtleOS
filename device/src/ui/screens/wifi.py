@@ -3,7 +3,7 @@
 import time
 import sys as _sys
 from src.ui.toggle import ToggleSwitch
-from config import load_config, save_config
+from config import load_config
 from src.net.wifi_manager import WiFiManager
 from src.ui import grace as _grace
 
@@ -318,9 +318,14 @@ class WiFiScreen:
         self._draw()
 
     def _toggle_enabled(self):
+        # actions.wifi_set_enabled() persists the flag (and mirrors it into the
+        # live config); the connect animation / radio-off drawing stay here.
+        from src.app import actions
+        code, _info = actions.wifi_set_enabled(not self.enabled)
+        if code != actions.OK:
+            return
         self.enabled = not self.enabled
-        self.cfg["wifi_enabled"] = self.enabled
-        save_config(self.cfg)
+        self._reload_cfg()
         if self.enabled:
             self._animated_connect(min_ms=1500, timeout_ms=10000)
         else:

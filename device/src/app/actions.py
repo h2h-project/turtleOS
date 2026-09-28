@@ -43,6 +43,43 @@ FIX_MAX_AGE_MS = 5000
 FIX_LISTEN_MS = 2200
 
 
+# ---------------------------------------------------------------- config
+
+# run() re-reads config.json only at the top of each main-loop iteration and
+# hands that dict (_cfg_cell[0]) to the background tick and every carousel.
+# While a screen — or a Bluetooth command — is running, the loop isn't
+# re-reading, so a write that only reached the file would not reach the
+# background tick until the carousel exits. run() binds its cell here once;
+# write_config() mirrors every change into the live dict as well.
+_cfg_cell = None
+
+
+def bind_cfg_cell(cell):
+    global _cfg_cell
+    _cfg_cell = cell
+
+
+def write_config(changes):
+    """update_config() plus the live-dict mirror. Returns the saved config,
+    or None if the write failed."""
+    try:
+        from config import update_config
+        cfg = update_config(changes)
+    except Exception as e:
+        print("[ACTION] config write failed:", repr(e))
+        return None
+    try:
+        live = _cfg_cell[0] if _cfg_cell else None
+        if isinstance(live, dict):
+            for k in changes:
+                live[k] = cfg.get(k)
+            # Derived mirror rebuilt by _normalize_types()
+            live["telemetry_enabled"] = cfg.get("telemetry_enabled")
+    except Exception:
+        pass
+    return cfg
+
+
 # ---------------------------------------------------------------- helpers
 
 def current_fix(gps=None, max_age_ms=FIX_MAX_AGE_MS, listen_ms=FIX_LISTEN_MS):
@@ -90,12 +127,7 @@ def save_set_fields(updates):
     """Write operator set_* fields to config, then best-effort mirror them to
     hopeturtles.org (PATCH /v1/device) for the dashboard. config.json stays
     authoritative; a failed PATCH is re-pushed on the next online boot."""
-    cfg = None
-    try:
-        from config import update_config
-        cfg = update_config(updates)
-    except Exception as e:
-        print("[ACTION] config write failed:", repr(e))
+    cfg = write_config(updates)
     if cfg is None:
         return
     try:
@@ -392,26 +424,272 @@ def gps_stamp(telemetry, cfg=None):
 
 
 def gps_set_enabled(gps, on):
-    """Turn the GPS module on or off and persist gps_enabled.
+    """Persist gps_enabled and, where the driver supports it, power the
+    module on or off.
 
-    OK               info: {"enabled"}
+    The current L76K driver (src/sensors/xiao_gnss.py GnssModule) has no
+    power control, so today this only changes the flag: the module keeps
+    running and NavController keeps reading it. info["power_control"] says
+    which happened.
+
+    OK               info: {"enabled", "power_control"}
     ERR_NO_HARDWARE  no GPS session exists (module absent at boot)
     """
     try:
         if gps is None:
             return ERR_NO_HARDWARE, {}
         on = bool(on)
-        from config import update_config
-        update_config({"gps_enabled": on})
-        try:
-            if on:
-                gps.enable()
-            else:
-                gps.disable()
-        except Exception as e:
-            print("[GPS] enable/disable err:", repr(e))
-        print("[GPS] gps_enabled =", on)
-        return OK, {"enabled": on}
+        if write_config({"gps_enabled": on}) is None:
+            return ERR_INTERNAL, {}
+        fn = getattr(gps, "enable" if on else "disable", None)
+        power_control = fn is not None
+        if power_control:
+            try:
+                fn()
+            except Exception as e:
+                print("[GPS] enable/disable err:", repr(e))
+                power_control = False
+        print("[GPS] gps_enabled = {}{}".format(
+            on, "" if power_control else " (flag only - driver has no power control)"))
+        return OK, {"enabled": on, "power_control": power_control}
     except Exception as e:
         print("[GPS] set enabled err:", repr(e))
         return ERR_INTERNAL, {}
+
+
+TELEMETRY_MODES = ("off", "auto", "manual")
+
+
+def telemetry_set_mode(mode):
+    """Set telemetry_mode (authoritative; telemetry_enabled is rebuilt from it).
+
+    OK             info: {"mode"}
+    ERR_BAD_VALUE  not one of off / auto / manual
+    """
+    try:
+        mode = str(mode or "").strip().lower()
+        if mode not in TELEMETRY_MODES:
+            return ERR_BAD_VALUE, {}
+        if write_config({"telemetry_mode": mode}) is None:
+            return ERR_INTERNAL, {}
+        print("[TELEMETRY] mode =", mode)
+        return OK, {"mode": mode}
+    except Exception as e:
+        print("[TELEMETRY] set mode err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def telemetry_set_interval(seconds):
+    """Set telemetry_post_every_s (App-only; no OLED writer).
+
+    OK             info: {"seconds"}
+    ERR_BAD_VALUE  below the 10 s floor, or not a number
+    """
+    try:
+        try:
+            s = int(seconds)
+        except Exception:
+            return ERR_BAD_VALUE, {}
+        if s < 10:
+            return ERR_BAD_VALUE, {}
+        if write_config({"telemetry_post_every_s": s}) is None:
+            return ERR_INTERNAL, {}
+        print("[TELEMETRY] interval =", s, "s")
+        return OK, {"seconds": s}
+    except Exception as e:
+        print("[TELEMETRY] set interval err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def api_handshake(telemetry, cfg=None):
+    """Ask the scheduler to send now, as the Online screen does on entry.
+    The send runs in the background; poll api_outcome() for the result.
+
+    IN_PROGRESS      info: {"before_ms"} — pass it to api_outcome()
+    ERR_WRONG_STATE  telemetry_mode is "off"
+    ERR_INTERNAL     no telemetry scheduler
+    """
+    try:
+        if not isinstance(cfg, dict):
+            from config import load_config
+            cfg = load_config() or {}
+        if str(cfg.get("telemetry_mode", "auto")).strip().lower() == "off":
+            return ERR_WRONG_STATE, {}
+        if telemetry is None:
+            return ERR_INTERNAL, {}
+        before_ms = None
+        try:
+            before_ms = telemetry.api_state.get("last_ms")
+        except Exception:
+            pass
+        telemetry.request_now()
+        return IN_PROGRESS, {"before_ms": before_ms}
+    except Exception as e:
+        print("[ONLINE] handshake err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+# ---------------------------------------------------------------- connectivity
+
+def wifi_set_enabled(on, wifi=None):
+    """Persist wifi_enabled; turning off also drops the radio when a
+    WiFiManager is given. Turning on only persists — the connect attempt
+    is the caller's (the WiFi screen animates its own; the Bluetooth
+    handler will poll one in Phase 6).
+
+    OK  info: {"enabled"}
+    """
+    try:
+        on = bool(on)
+        if write_config({"wifi_enabled": on}) is None:
+            return ERR_INTERNAL, {}
+        if not on and wifi is not None:
+            try:
+                wifi.disconnect()
+            except Exception:
+                pass
+            try:
+                wifi.active(False)
+            except Exception:
+                pass
+        print("[WIFI] wifi_enabled =", on)
+        return OK, {"enabled": on}
+    except Exception as e:
+        print("[WIFI] set enabled err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def wifi_set_credentials(ssid, password):
+    """Save WiFi credentials (App-only). Saving never depends on a connect
+    succeeding; the caller reconnects if wifi_enabled.
+
+    OK             info: {"ssid"}
+    ERR_BAD_VALUE  empty SSID, SSID > 32 bytes or password > 63 bytes
+    """
+    try:
+        ssid = str(ssid or "").strip()
+        password = str(password or "")
+        if not ssid or len(ssid.encode()) > 32 or len(password.encode()) > 63:
+            return ERR_BAD_VALUE, {}
+        if write_config({"wifi_ssid": ssid, "wifi_password": password}) is None:
+            return ERR_INTERNAL, {}
+        print("[WIFI] credentials saved for %r" % ssid)
+        return OK, {"ssid": ssid}
+    except Exception as e:
+        print("[WIFI] set credentials err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+CONNECTION_MODES = ("wifi_auto", "wifi_manual")   # "lora" is reserved
+
+
+def connection_mode_set(mode):
+    """Set mission_connection_mode (App-only).
+
+    OK             info: {"mode"}
+    ERR_BAD_VALUE  not wifi_auto / wifi_manual
+    """
+    try:
+        mode = str(mode or "").strip().lower()
+        if mode not in CONNECTION_MODES:
+            return ERR_BAD_VALUE, {}
+        if write_config({"mission_connection_mode": mode}) is None:
+            return ERR_INTERNAL, {}
+        print("[WIFI] mission_connection_mode =", mode)
+        return OK, {"mode": mode}
+    except Exception as e:
+        print("[WIFI] set connection mode err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+# ---------------------------------------------------------------- sail & compass
+
+def nav_luff_sweep(nav):
+    """Start the autonomous luff sweep (NavController, non-blocking).
+    Poll nav.sweeping() / nav.wind_angle() for the outcome.
+
+    IN_PROGRESS      sweep started
+    ERR_BUSY         a sweep is already running
+    ERR_WRONG_STATE  info: {"state"} — only valid in ACQUIRE / SAIL_NAV
+    ERR_NO_HARDWARE  no NavController (not turtle mode)
+    """
+    try:
+        if nav is None:
+            return ERR_NO_HARDWARE, {}
+        if nav.sweeping():
+            return ERR_BUSY, {}
+        if nav.begin_luff_sweep():
+            print("[NAV] luff sweep started")
+            return IN_PROGRESS, {}
+        state = None
+        try:
+            from src.nav import state_machine as sm
+            state = sm.get_state()
+        except Exception:
+            pass
+        print("[NAV] luff sweep refused in state", state)
+        return ERR_WRONG_STATE, {"state": state}
+    except Exception as e:
+        print("[NAV] luff sweep err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def compass_set_offset(deg, heading=None):
+    """Set compass_offset_deg (App-only; no OLED writer). Pass the shared
+    HeadingSource (nav.heading_source()) to apply it immediately; otherwise
+    it takes effect on the next boot.
+
+    OK             info: {"deg"}
+    ERR_BAD_VALUE  outside -180..180
+    """
+    try:
+        try:
+            d = int(deg)
+        except Exception:
+            return ERR_BAD_VALUE, {}
+        if not -180 <= d <= 180:
+            return ERR_BAD_VALUE, {}
+        if write_config({"compass_offset_deg": d}) is None:
+            return ERR_INTERNAL, {}
+        if heading is not None:
+            try:
+                heading.set_offset(d)
+            except Exception as e:
+                print("[COMPASS] live offset apply failed:", repr(e))
+        print("[COMPASS] offset =", d)
+        return OK, {"deg": d}
+    except Exception as e:
+        print("[COMPASS] set offset err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+# ---------------------------------------------------------------- system
+
+def set_turtle_mode(on):
+    """Persist turtle_mode (turtleOS <-> airOS). Takes effect on the next
+    boot; the caller reboots after reporting (CLAUDE.md gotcha 15 — no
+    hot-reload).
+
+    OK  info: {"turtle_mode"}
+    """
+    try:
+        on = bool(on)
+        if write_config({"turtle_mode": on}) is None:
+            return ERR_INTERNAL, {}
+        print("[SYSTEM] turtle_mode =", on, "(reboot to apply)")
+        return OK, {"turtle_mode": on}
+    except Exception as e:
+        print("[SYSTEM] set turtle_mode err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def api_outcome(telemetry, before_ms):
+    """Final result of an api_handshake(), or None while it is still running:
+    OK or ERR_API_FAILED once the scheduler records a new attempt."""
+    try:
+        st = telemetry.api_state
+        if st.get("sending") or st.get("last_ms") == before_ms or st.get("ok") is None:
+            return None
+        return OK if st.get("ok") else ERR_API_FAILED
+    except Exception:
+        return None

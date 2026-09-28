@@ -42,6 +42,11 @@ class HeadingSource:
             pass
         return self._mag
 
+    def set_offset(self, offset_deg):
+        """Apply a new compass_offset_deg at runtime (the value is otherwise
+        read once, when NavController builds this source)."""
+        self._offset_deg = float(offset_deg)
+
     def heading_deg(self):
         """Heading in degrees [0, 360) with compass_offset_deg applied, or
         None if unavailable."""
