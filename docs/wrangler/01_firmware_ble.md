@@ -122,6 +122,38 @@ and independently useful.
 
 ---
 
+### Phase 1 status — DONE (2026-09-28, commits 5bd36b1, 96ae214)
+
+Tested on turtle 18 (Applemore), including a field walk for Journey,
+Destination and GPS stamps.
+
+- `src/app/actions.py` holds every gesture's side effects and returns
+  contract result codes:
+  - journey: `journey_start/end`
+  - destination: `dest_set_here/mission/coords/clear`
+  - GPS: `gps_stamp`, `gps_set_enabled`
+  - telemetry: `telemetry_set_mode/interval`, `api_handshake` + `api_outcome`
+  - WiFi: `wifi_set_enabled/credentials`, `connection_mode_set`
+  - sail and compass: `nav_luff_sweep`, `compass_set_offset`
+  - system: `set_turtle_mode`
+  - Bluetooth (Phase 2): `ble_set_enabled`, `ble_open_window`
+- **Live config mirror.** `actions.write_config()` = `update_config()`
+  plus a mirror into `run()`'s `_cfg_cell[0]` (bound via
+  `bind_cfg_cell`). A change takes effect on the next background tick.
+  No screen calls `save_config()` any more.
+- **Deferred to Phase 6**, because the screen logic is too entangled to
+  separate yet: `SERVO_BENCH_SWEEP` (WindFinder) and `SLEEP`.
+- **Found:** `GnssModule` has no power control, so "GPS off" has only ever
+  been a config flag; the module keeps running. `gps_set_enabled`
+  reports `power_control`. Real L76K standby (a command, or the
+  `GPS_WAKEUP` pin on D0) is a separate battery task, not in this plan.
+- `device_name` is persisted by `step_api()`. `gpsfix` caches GGA fix
+  quality and satellite count (`note_gga()` / `gga()`).
+  `journey_state.json`, `nav_state.json` and `ble_bonds.json` are
+  excluded from uploads.
+
+---
+
 ## Phase 2 — peripheral skeleton, wrangle window, Bluetooth screen
 
 Get a turtle advertising under the operator's control, with no data yet.
@@ -160,6 +192,40 @@ Get a turtle advertising under the operator's control, with no data yet.
 - **Validation** with a generic scanner (nRF Connect): the turtle
   appears under its name, advertising stops when the window closes,
   toggling off on the screen removes it, and sleep removes it.
+
+---
+
+### Phase 2 status — DONE (2026-09-29)
+
+Tested on turtle 18 with nRF Connect: advertises as **Applemore**,
+connect/disconnect, both identity characteristics, on/off persists
+across reboot, sleep shuts the radio down, wake restarts it, and window
+expiry.
+
+- `src/net/ble_service.py` (`init()` / `instance()`) is built in
+  `step_init_runtime()` (turtle mode only), passed to `run(ble=...)`,
+  and ticked from `_bg_tick()`. The IRQ handler only records events.
+  Advertising interval 0.5 s. Serves `0101` Contract info and `0102`
+  Turtle name.
+- **Bluetooth screen** (`screens/bluetooth.py`) after WiFi in the
+  connectivity carousel. Arvo 20 title like Online/WiFi; states Off /
+  Open m:ss / Open / Connected / Hidden. Opening it reopens the window.
+- **Indicators** (the design changed during testing; the earlier "rune
+  in the header while connected" was replaced):
+  - they read state from the service on every draw
+    (`connection_header.ble_on()` / `ble_visible()`), so they can't go
+    stale;
+  - shown whenever Bluetooth is on: blinking with a 1 s phase while
+    advertising, steady when a phone is connected or the window is
+    closed;
+  - every screen: a 3x3 "+" in the WiFi icon's empty lower-right corner,
+    without moving the WiFi icon;
+  - waiting screen only: a 5x7 rune left of the nav flèche. The flèche
+    is now 7x8, pointing up, cap-height with its tip in the spare row
+    above the heading text;
+  - static screens (Destination, Device, Servo) redraw for the blink via
+    `connection_header.BleWatch`.
+- Also fixed: the Servo screen never passed `gps_state` to the header.
 
 ---
 

@@ -83,6 +83,7 @@ def run(
         nav_controller=None,
         turtle_waiting_scr=None,
         imu=None,
+        ble=None,
 ):
     BTN_PIN = _resolve_btn_pin_default()
     # Shared GY-87 10DOF instance built by device/main.py step_imu() (or None).
@@ -563,6 +564,10 @@ def run(
                 from src.ui.screens.wifi import WiFiScreen
                 screens[name] = WiFiScreen(oled)
 
+            elif name == "bluetooth":
+                from src.ui.screens.bluetooth import BluetoothScreen
+                screens[name] = BluetoothScreen(oled)
+
             elif name == "online":
                 from src.ui.screens.online import OnlineScreen
                 screens[name] = OnlineScreen(oled)
@@ -773,6 +778,14 @@ def run(
         if _nav_cell[0] is not None:
             try:
                 _nav_cell[0].tick(_cfg_cell[0])
+            except Exception:
+                pass
+        # Bluetooth housekeeping (advertising / wrangle window / header).
+        # Lives here, not only in the top-level loop, because every screen
+        # owns the loop while it is showing and calls tick_fn=_bg_tick.
+        if ble is not None:
+            try:
+                ble.tick()
             except Exception:
                 pass
 

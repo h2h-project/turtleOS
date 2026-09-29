@@ -405,6 +405,36 @@ _WIFI_OFF_6 = [
 ]
 
 
+# Bluetooth indicators (Turtle Wrangler, src/net/ble_service.py).
+#   draw_ble_rune: 5x7, the cap height of the f_small heading text —
+#                  waiting screen only, top-left, left of the flèche.
+#   draw_plus3:    3x3 "+" tucked into the empty lower-right corner of the
+#                  header WiFi icon, on every screen. See connection_header.
+BLE_RUNE_W = 5
+BLE_RUNE_H = 7
+
+_BLE_RUNE_7 = (
+    "..11.",
+    "1.1.1",
+    ".111.",
+    "..1..",
+    ".111.",
+    "1.1.1",
+    "..11.",
+)
+
+
+def draw_ble_rune(fb, x, y, color=1):
+    draw_bitmap_rows(fb, x, y, _BLE_RUNE_7, c=color)
+
+
+def draw_plus3(fb, x, y, color=1):
+    """3x3 plus with its top-left at (x, y)."""
+    _pix(fb, x + 1, y, color)
+    _hline(fb, x, y + 1, 3, color)
+    _pix(fb, x + 1, y + 2, color)
+
+
 def draw_wifi(fb, x, y, on=True, color=1):
     """
     Draw compact WiFi indicator at (x, y). Size: 9x6.
@@ -765,38 +795,37 @@ def draw_api(fb, x, y, on=True, color=1, *, heartbeat=False, sending=False, now_
 # ------------------------------------------------------------
 # Navigation flèche — machine-state arrow for the waiting screen
 #
-# An 11x9 right-pointing arrowhead with a swept-back V-notch, shown
-# top-left of the compass reading. Hollow while the turtle is still
-# finding itself (BOOT / ACQUIRE); filled once the mission is under way
-# (SAIL_NAV / ARRIVAL). The 9px height gives the f_small reading text
-# beside it 1px of clearance above and below.
+# A 7x8 up-pointing arrowhead with a V-notch in its base, shown top-left of
+# the compass reading. Hollow while the turtle is still finding itself
+# (BOOT / ACQUIRE); filled once the mission is under way (SAIL_NAV /
+# ARRIVAL). Its lower 7 rows line up with the 7 px caps of the f_small
+# reading beside it; the tip takes the one spare row above them. Draw it at
+# the text's y (the font's blank top row is where the tip lands).
 # ------------------------------------------------------------
 
-NAV_FLECHE_W = 11
-NAV_FLECHE_H = 9
+NAV_FLECHE_W = 7
+NAV_FLECHE_H = 8
 
 _FLECHE_HOLLOW = [
-    "11.........",
-    ".111.......",
-    "..1.111....",
-    "...1...11..",
-    "....1....11",
-    "...1...11..",
-    "..1.111....",
-    ".111.......",
-    "11.........",
+    "...1...",
+    "..1.1..",
+    "..1.1..",
+    ".1...1.",
+    ".1...1.",
+    ".1.1.1.",
+    "1.1.1.1",
+    "11...11",
 ]
 
 _FLECHE_FILLED = [
-    "11.........",
-    ".111.......",
-    "..11111....",
-    "...111111..",
-    "....1111111",
-    "...111111..",
-    "..11111....",
-    ".111.......",
-    "11.........",
+    "...1...",
+    "..111..",
+    "..111..",
+    ".11111.",
+    ".11111.",
+    ".11111.",
+    "111.111",
+    "11...11",
 ]
 
 

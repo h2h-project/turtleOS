@@ -107,7 +107,8 @@ class TurtleWaitingScreen:
     # The flèche is 9px tall so the f_small reading it sits beside gets 1px
     # of clearance above and below; text + degree ring follow to its right.
     _FLECHE_X = 0
-    _FLECHE_TEXT_GAP = 4
+    _FLECHE_TEXT_GAP = 3
+    _BLE_GAP = 2            # rune -> flèche
     _READING_Y = 1
 
     # Space to reserve left of the mission text for the target glyph
@@ -260,10 +261,26 @@ class TurtleWaitingScreen:
         # the heading ("NE 28°") sits on the f_small row to its right, with
         # the degree ring drawn as a glyph after the number.
         ry = self._READING_Y
+
+        # Bluetooth rune at the far left while Bluetooth is on (blinks while
+        # advertising); the flèche and heading shift right to make room. The
+        # space stays reserved during a blink-off frame so nothing jitters.
+        fleche_x = self._FLECHE_X
+        if _ch is not None:
+            try:
+                if _ch.ble_on():
+                    from src.ui.glyphs import draw_ble_rune, BLE_RUNE_W
+                    if _ch.ble_visible():
+                        # caps rows: one below the font's blank top row
+                        draw_ble_rune(dst, self._FLECHE_X, ry + 1)
+                    fleche_x = self._FLECHE_X + BLE_RUNE_W + self._BLE_GAP
+            except Exception:
+                pass
+
         try:
             from src.nav.state_machine import is_mission_active
             from src.ui.glyphs import draw_nav_fleche, NAV_FLECHE_W
-            draw_nav_fleche(dst, self._FLECHE_X, ry, filled=is_mission_active())
+            draw_nav_fleche(dst, fleche_x, ry, filled=is_mission_active())
             fleche_w = NAV_FLECHE_W
         except Exception:
             fleche_w = 11
@@ -275,7 +292,7 @@ class TurtleWaitingScreen:
             except Exception:
                 hdg = None
 
-        rx = self._FLECHE_X + fleche_w + self._FLECHE_TEXT_GAP
+        rx = fleche_x + fleche_w + self._FLECHE_TEXT_GAP
         if hdg is None:
             o.f_small.write("--", rx, ry)
         else:
@@ -427,6 +444,7 @@ class TurtleWaitingScreen:
         # idle_state: [next_ms, live_status_dict, interval_ms]
         _overlay_next = time.ticks_add(time.ticks_ms(), 1000)
         _last_morse = 0
+        _last_ble = None
 
         def _btn():
             # Sampled between every expensive step below, not just once per
@@ -462,7 +480,14 @@ class TurtleWaitingScreen:
                 _cur_morse = _ch._api_morse_circle[0] if _ch else 0
             except Exception:
                 _cur_morse = 0
-            if time.ticks_diff(now, _overlay_next) >= 0 or _cur_morse != _last_morse:
+            # ...and whenever a Bluetooth indicator should appear, vanish or
+            # blink (1 s phase while advertising) — redraws on each flip.
+            try:
+                _cur_ble = (_ch.ble_on(), _ch.ble_visible(now)) if _ch else None
+            except Exception:
+                _cur_ble = None
+            if (time.ticks_diff(now, _overlay_next) >= 0 or _cur_morse != _last_morse
+                    or _cur_ble != _last_ble):
                 try:
                     st = idle_state[1] if idle_state else None
                     self._draw(self._cur, st)
@@ -470,6 +495,7 @@ class TurtleWaitingScreen:
                     pass
                 _overlay_next = time.ticks_add(now, 1000)
                 _last_morse = _cur_morse
+                _last_ble = _cur_ble
                 action = _btn()
                 if action is not None:
                     return action

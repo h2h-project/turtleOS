@@ -580,6 +580,45 @@ def wifi_set_credentials(ssid, password):
         return ERR_INTERNAL, {}
 
 
+def ble_set_enabled(on):
+    """Persist ble_enabled and start/stop the radio. Off is the mission
+    lockdown: the radio stays down across reboots until turned back on from
+    the Bluetooth screen.
+
+    OK               info: {"enabled"}
+    ERR_NO_HARDWARE  no BleService (not turtle mode, or no BLE in firmware)
+    """
+    try:
+        on = bool(on)
+        from src.net import ble_service
+        svc = ble_service.instance()
+        if svc is None:
+            return ERR_NO_HARDWARE, {}
+        if write_config({"ble_enabled": on}) is None:
+            return ERR_INTERNAL, {}
+        if on:
+            svc.start()
+        else:
+            svc.stop()
+        print("[BLE] ble_enabled =", on)
+        return OK, {"enabled": on}
+    except Exception as e:
+        print("[BLE] set enabled err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def ble_open_window():
+    """Reopen the wrangle window (the Bluetooth screen does this on entry:
+    someone standing at the hull is the intent). No-op when BLE is off."""
+    try:
+        from src.net import ble_service
+        svc = ble_service.instance()
+        if svc is not None and svc.active():
+            svc.open_window()
+    except Exception:
+        pass
+
+
 CONNECTION_MODES = ("wifi_auto", "wifi_manual")   # "lora" is reserved
 
 

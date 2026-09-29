@@ -952,6 +952,7 @@ def _preload_screens(oled, is_pico=False, turtle_mode=False):
             "src.ui.screens.gps",       # GPS status + manual logging (hold flow)
             "src.ui.screens.compass",   # compass heading screen (turtle sensor carousel)
             "src.ui.screens.sailpoint", # AS5600 sail angle screen (turtle only)
+            "src.ui.screens.bluetooth", # Turtle Wrangler on/off (connectivity carousel)
             # Nav stack: imported post-WiFi via _get_nav()/get_screen("state")
             # when the heap is fragmented — bytecode must be resident by then.
             "src.nav.state_machine",    # ~1 KB — also imported by telemetry on every send
@@ -1571,6 +1572,7 @@ _rt_gps = None
 _rt_wifi_mgr = None
 _rt_nav = None
 _rt_turtle_scr = None
+_rt_ble = None
 
 
 def _rt_mission_name():
@@ -1597,7 +1599,7 @@ def step_init_runtime():
     was built here and only falls back to building it itself if a piece is
     missing (e.g. this step was skipped on Pico, or something here failed).
     """
-    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr
+    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr, _rt_ble
 
     if _is_pico:
         # Pico's tight heap doesn't have room for a second copy of this setup
@@ -1652,6 +1654,15 @@ def step_init_runtime():
     if not cfg.get("turtle_mode", False):
         _gc()
         return True, "OK"
+
+    # Turtle Wrangler BLE peripheral (docs/wrangler/). Built once; the radio
+    # only comes up when ble_enabled. run() ticks it from _bg_tick.
+    try:
+        from src.net import ble_service
+        _rt_ble = ble_service.init(cfg)
+    except Exception as e:
+        print("[BLE] init failed:", repr(e))
+        _rt_ble = None
 
     nav_servo = None
     if cfg.get("servo_present", False):
@@ -1910,6 +1921,7 @@ if _btn_hal_ok:
             nav_controller=_rt_nav,
             turtle_waiting_scr=_rt_turtle_scr,
             imu=_rt_imu,
+            ble=_rt_ble,
         )
     except Exception as e:
         # Write crash info with minimal heap — repr(e) is cheap, no traceback capture

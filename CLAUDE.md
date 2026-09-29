@@ -86,6 +86,7 @@ device/               ← everything deployed to the microcontroller
     │       ├── — shared screens —
     │       ├── time.py           ← local time / UTC / date
     │       ├── wifi.py           ← WiFi toggle screen
+    │       ├── bluetooth.py      ← Bluetooth on/off + wrangle window (turtle mode)
     │       ├── online.py         ← API/telemetry toggle screen
     │       ├── logging.py        ← telemetry rate screen
     │       ├── device.py         ← device info from API
@@ -118,6 +119,7 @@ device/               ← everything deployed to the microcontroller
     │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
     │   ├── wifi_manager_null.py  ← no-op stub for no-WiFi builds
     │   ├── telemetry_client.py   ← POST telemetry readings
+    │   ├── ble_service.py        ← Turtle Wrangler BLE peripheral (GATT contract v1, docs/wrangler/)
     │   └── net_caps.py           ← wifi_supported() probe
     └── lib/
         └── urequests.py          ← lightweight HTTP (no SSL by default)
@@ -294,6 +296,8 @@ Waiting → Online screen
             ↓ single click (always advances)
          WiFi screen
             ↓ single click
+         Bluetooth screen   (turtle mode only)
+            ↓ single click
          Device screen
             ↓ single click
          Waiting
@@ -303,6 +307,7 @@ Waiting → Online screen
 - Online screen leads and is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
 - The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
+- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. Closing the window stops advertising but never drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
 
@@ -580,6 +585,8 @@ _ch.draw(
 ```
 
 Icon cluster width is ~38 px (WiFi 9 + gap 4 + API 7 + gap 4 + GPS 14). Titles up to ~90 px wide won't collide.
+
+**Bluetooth indicator.** While Bluetooth is on, `draw()` adds a 3x3 "+" in the WiFi icon's empty lower-right corner (the WiFi icon does not move). It reads the `BleService` state on every draw (`ble_on()` / `ble_visible()`): it blinks with a 1 s phase (`BLE_BLINK_MS`) while advertising and is steady when a phone is connected or the window has closed. The waiting screen draws a matching 5x7 rune left of the nav flèche. A screen that never redraws on its own must poll `connection_header.BleWatch().changed()` in its loop and redraw when it returns True, or the "+" won't blink there (Destination, Device and Servo do this).
 
 ---
 

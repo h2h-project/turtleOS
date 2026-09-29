@@ -229,7 +229,7 @@ class ServoScreen:
 
         if _ch:
             try:
-                _ch.draw(fb, o.width, icon_y=1)
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
@@ -327,7 +327,7 @@ class ServoScreen:
 
         if _ch:
             try:
-                _ch.draw(fb, o.width, icon_y=1)
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
@@ -540,9 +540,11 @@ class ServoScreen:
             result = finder.run()
             self._wind_result = result
             self._draw_wind_result(result)
+            self._view = "wind"
 
         except Exception as e:
             print("[WIND] failed:", repr(e))
+            self._view = "failed"   # keep the failure on screen; no blink redraw
 
             self._draw(
                 "Wind failed",
@@ -597,6 +599,7 @@ class ServoScreen:
         self._servo_configured = None
         gc.collect()
 
+        self._view = "normal"
         self._draw()
         self._probe()
 
@@ -610,12 +613,24 @@ class ServoScreen:
 
         _tick_next = time.ticks_ms()
         _tick_every = 500
+        _ble = _ch.BleWatch() if _ch else None
 
         while True:
             try:
                 action = btn.poll_action()
             except Exception:
                 action = None
+
+            # Static screen: redraw only for the header's Bluetooth "+",
+            # keeping whichever view is up (a wind-finder result stays on
+            # screen until the next click).
+            if (action is None and _ble is not None and _ble.changed()
+                    and self._view != "failed"):
+                if self._view == "wind" and self._wind_result is not None:
+                    self._draw_wind_result(self._wind_result)
+                else:
+                    self._draw(current_ma=self._last_current_ma,
+                               angle_deg=self._last_angle_deg)
 
             # Single click: next carousel screen.
             if action == "single":

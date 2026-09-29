@@ -218,11 +218,17 @@ class DestinationScreen:
         # tested 500 ms default that every other screen uses.
 
         self._draw_normal()
+        _ble = _ch.BleWatch() if _ch else None
         while True:
             try:
                 action = btn.poll_action()
             except Exception:
                 action = None
+
+            # Static view: redraw only for the header's Bluetooth "+".
+            if (action is None and self._state == "normal"
+                    and _ble is not None and _ble.changed()):
+                self._draw_normal()
 
             if self._state == "normal":
                 if action == "single":

@@ -94,8 +94,19 @@ class SleepScreen:
         fb.show()
 
     def _do_sleep(self, btn, tick_fn):
-        """Block until single click. OLED off. LED: 11 s off / 1 s on pulse."""
+        """Block until single click. OLED off. LED: 11 s off / 1 s on pulse.
+        Bluetooth is shut down for the duration and comes back on wake with a
+        fresh wrangle window (only if it was on before)."""
         self.oled.poweroff()
+
+        _ble = None
+        try:
+            from src.net import ble_service
+            _ble = ble_service.instance()
+            if _ble is not None:
+                _ble.suspend()
+        except Exception:
+            _ble = None
 
         # Start with LED off; first pulse fires after 11 s
         led_state = False
@@ -134,6 +145,11 @@ class SleepScreen:
         finally:
             self._set_led(False)
             self.oled.poweron()
+            if _ble is not None:
+                try:
+                    _ble.resume()
+                except Exception:
+                    pass
 
     def show_live(self, btn, tick_fn=None):
         try:
