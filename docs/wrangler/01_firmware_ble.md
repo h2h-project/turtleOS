@@ -255,6 +255,40 @@ thresholds are a tuning pass and don't block the phase.
 
 ---
 
+### Phase 3 status — DONE (2026-09-30)
+
+Tested on turtle 18 with nRF Connect: all ten Turtle-service
+characteristics are present and live. Decoded with `tests/ble_decode.py`
+(a host helper: `python3 tests/ble_decode.py 0116 F3-BF-02-...`).
+
+- `src/net/ble_telemetry.py` (`TurtleData`) packs `0110`–`0117` to the
+  contract formats, using sentinels for missing data. The schedule is in
+  `SCHEDULE`: Position, Nav, Sail and IMU at 1 s, with Sail at 0.5 s
+  while sweeping; Targets and Status at 2 s; Power and Shore at 5 s.
+  Notify happens on change only. Shore also forces one notify a minute
+  for its clock.
+- Values are packed **only while a phone is connected**. A new
+  connection resets the schedule, so the first reads are fresh and every
+  characteristic notifies once.
+- Sources are getters handed in by `run()` via `ble.attach_sources()`.
+  The queue count and last-successful-sync time are read from flash at
+  most every 10 s.
+- Epoch: `rtc_unix()` reuses `TelemetryScheduler._dt_to_unix()`, because
+  `time.mktime()` counts from 2000 on ESP32.
+- **Nav bug fixed along the way:** `WaypointSequencer` resolved its route
+  only when `NavController` was built, so a destination set at runtime
+  wasn't steered to until the next reboot. `WaypointSequencer.sync(cfg)`
+  now runs from `NavController.tick()` at most once a second; a changed
+  route restarts at waypoint 0. The sequencer also reports which config
+  key the route came from (Targets `active_source`). `NavController`
+  gained `target()`, `route_source()`, `battery_pct()` and
+  `sail_encoder_present()`.
+- Still sentinel by design: `xte_m` (no cross-track function) and Sail
+  `confidence_pct` (the nav sweep produces none; the bench sweep
+  arrives in Phase 6).
+
+---
+
 ## Phase 4 — command/result plumbing and bonding
 
 Build the command channel and its security together, before any real

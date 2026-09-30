@@ -6,9 +6,11 @@
 # indicators (header "+", waiting-screen rune) read state() / advertising()
 # directly — see connection_header.ble_visible().
 #
-# Phase 2 serves only the two read-only identity characteristics (Contract
-# info, Turtle name). Telemetry characteristics arrive in Phase 3, the
-# command/result channel and bonding in Phase 4.
+# Serves the Turtle service: Contract info + Turtle name (static) and the
+# eight telemetry characteristics packed by src/net/ble_telemetry.py
+# (Phase 3). The command/result channel and bonding arrive in Phase 4.
+# Telemetry is only packed while a phone is connected — nothing to read
+# otherwise — and is refreshed in full the moment one connects.
 #
 # WRANGLE WINDOW
 #   After boot, after waking from sleep, and whenever the Bluetooth screen is
@@ -44,6 +46,7 @@ _IRQ_CENTRAL_DISCONNECT = const(2)
 _IRQ_MTU_EXCHANGED = const(21)
 
 _F_READ = const(0x0002)
+_F_NOTIFY = const(0x0010)
 
 _UUID_FMT = "26d0{:04x}-5890-45f2-b0be-090d35436a95"
 
@@ -81,6 +84,11 @@ class BleService:
         self._events = []
         self._suspended = False       # radio stopped for sleep, not by the user
         self._handles = {}
+        self._data = None             # ble_telemetry.TurtleData (attach_sources)
+        self._due = {}                # short id -> ticks_ms next refresh
+        self._last_val = {}           # short id -> bytes last written
+        self._last_key = {}           # short id -> notify_key() last notified
+        self._last_notify = {}        # short id -> ticks_ms of last notify
 
     # ------------------------------------------------------------ status
 
@@ -145,12 +153,21 @@ class BleService:
             except Exception as e:
                 print("[BLE] mtu not set:", repr(e))
 
-            svc = (_uuid(0x0001), (
-                (_uuid(0x0101), _F_READ),   # Contract info <BB>
-                (_uuid(0x0102), _F_READ),   # Turtle name, UTF-8
-            ))
-            ((h_info, h_name),) = self._ble.gatts_register_services((svc,))
+            from src.net import ble_telemetry as T
+            chars = [(_uuid(0x0101), _F_READ),   # Contract info <BB>
+                     (_uuid(0x0102), _F_READ)]   # Turtle name, UTF-8
+            for cid, _base, _force in T.SCHEDULE:
+                chars.append((_uuid(cid), _F_READ | _F_NOTIFY))
+            svc = (_uuid(0x0001), tuple(chars))
+            (handles,) = self._ble.gatts_register_services((svc,))
+            h_info, h_name = handles[0], handles[1]
             self._handles = {"info": h_info, "name": h_name}
+            for i, (cid, _base, _force) in enumerate(T.SCHEDULE):
+                self._handles[cid] = handles[2 + i]
+                self._ble.gatts_set_buffer(handles[2 + i], 20)
+            self._due = {}
+            self._last_val = {}
+            self._last_key = {}
             self._ble.gatts_write(h_info, struct.pack("<BB", CONTRACT_VERSION, 1))
             name_b = self._name.encode()[:64]
             self._ble.gatts_set_buffer(h_name, 64)
@@ -234,10 +251,17 @@ class BleService:
                 ev = self._events.pop(0)
                 if ev == "connect":
                     print("[BLE] phone connected")
+                    # Fresh values for the phone's first reads, and a first
+                    # notify for every characteristic once it subscribes.
+                    self._due = {}
+                    self._last_key = {}
                 elif ev == "disconnect":
                     print("[BLE] phone disconnected")
                 elif ev == "mtu":
                     print("[BLE] MTU", self._mtu)
+
+            if self._conn is not None:
+                self._pump()
 
             if self._conn is None:
                 want = self.window_open()
@@ -248,6 +272,55 @@ class BleService:
                     print("[BLE] window closed - advertising stopped")
         except Exception as e:
             print("[BLE] tick err:", repr(e))
+
+    # ------------------------------------------------------------ telemetry
+
+    def attach_sources(self, sources):
+        """Hand in run()'s getters (see ble_telemetry.TurtleData)."""
+        try:
+            from src.net.ble_telemetry import TurtleData
+            self._data = TurtleData(sources)
+        except Exception as e:
+            print("[BLE] telemetry attach failed:", repr(e))
+            self._data = None
+
+    def _pump(self):
+        """Refresh due characteristics; notify the ones whose value changed
+        (or whose forced interval is up). At most one pass per tick."""
+        if self._data is None or self._ble is None:
+            return
+        from src.net import ble_telemetry as T
+        now = time.ticks_ms()
+        for cid, base, force in T.SCHEDULE:
+            due = self._due.get(cid)
+            if due is not None and time.ticks_diff(now, due) < 0:
+                continue
+            self._due[cid] = time.ticks_add(now, self._data.period(cid, base))
+            h = self._handles.get(cid)
+            if h is None:
+                continue
+            try:
+                val = self._data.pack(cid, now)
+            except Exception as e:
+                print("[BLE] pack %04x err: %r" % (cid, e))
+                continue
+            if val is None:
+                continue
+            if val != self._last_val.get(cid):
+                self._ble.gatts_write(h, val)
+                self._last_val[cid] = val
+            key = T.notify_key(cid, val)
+            forced = bool(force) and time.ticks_diff(
+                now, self._last_notify.get(cid, time.ticks_add(now, -force))) >= force
+            if key != self._last_key.get(cid) or forced:
+                conn = self._conn
+                if conn is not None:
+                    try:
+                        self._ble.gatts_notify(conn, h, val)
+                        self._last_notify[cid] = now
+                    except Exception as e:
+                        print("[BLE] notify %04x err: %r" % (cid, e))
+                self._last_key[cid] = key
 
     def _advertise(self, on):
         try:

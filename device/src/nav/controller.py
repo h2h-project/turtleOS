@@ -21,6 +21,7 @@ class NavController:
         self._sail_min = int(cfg.get("sail_min_deg", 10))
         self._sail_max = int(cfg.get("sail_max_deg", 170))
         self._next_ms = 0
+        self._next_route_ms = 0
         self._last_nav_ms = None
         self._sailnav_since_ms = None
         self._next_sweep_ms = None     # periodic re-sweep schedule (SAIL_NAV)
@@ -94,6 +95,22 @@ class NavController:
         so offset handling lives in exactly one place."""
         return self._heading
 
+    def target(self):
+        """Active waypoint (lat, lon), or None."""
+        return self._wps.current()
+
+    def route_source(self):
+        """Which config key the route came from (waypoints.SRC_*)."""
+        return self._wps.source()
+
+    def battery_pct(self):
+        """State-of-charge estimate from the INA219 bus voltage, or None.
+        The one SoC estimator — telemetry and Bluetooth read it here."""
+        return self._battery_pct()
+
+    def sail_encoder_present(self):
+        return self._enc is not None
+
     def seconds_to_next_sweep(self):
         """Seconds until the next scheduled luff re-sweep, or None when not
         in SAIL_NAV / nothing scheduled. 0 while a sweep is running."""
@@ -143,6 +160,15 @@ class NavController:
             self._next_ms = time.ticks_add(now, self._cycle_ms)
 
         self._drain_gps()
+
+        # Pick up a target changed at runtime (Destination / Journey / a
+        # Bluetooth command). Cheap, but no need to do it every 50 ms.
+        if isinstance(cfg, dict) and time.ticks_diff(now, self._next_route_ms) >= 0:
+            self._next_route_ms = time.ticks_add(now, 1000)
+            try:
+                self._wps.sync(cfg)
+            except Exception as e:
+                print("[NAV] route sync failed:", repr(e))
 
         state = sm.get_state()
         if state == sm.ACQUIRE:

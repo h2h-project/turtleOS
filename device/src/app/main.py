@@ -762,6 +762,23 @@ def run(
             print("[NAV] controller init failed:", repr(e))
         return _nav_cell[0]
 
+    # Turtle Wrangler: hand the BLE service getters for everything its
+    # telemetry characteristics report (src/net/ble_telemetry.py). Getters,
+    # not values — nav and telemetry are built lazily and may be rebuilt.
+    if ble is not None:
+        try:
+            ble.attach_sources({
+                "nav": lambda: _nav_cell[0],
+                "ina": lambda: _ina_dev,
+                "imu": lambda: _imu_dev,
+                "gps": lambda: gps,
+                "status": lambda: status,
+                "cfg": lambda: _cfg_cell[0],
+                "telemetry": lambda: telemetry,
+            })
+        except Exception as e:
+            print("[BLE] attach sources failed:", repr(e))
+
     def _bg_tick():
         try:
             # Skip wlan.isconnected() when background_process is active — it blocks
