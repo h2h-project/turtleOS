@@ -319,6 +319,43 @@ command exists. That way no command ever ships on an open link.
 
 ---
 
+### Phase 4 status — DONE (2026-10-02)
+
+Tested on turtle 18 with nRF Connect:
+- an unbonded command returns `ERR_NOT_BONDED`;
+- pairing off-screen is refused and the link dropped;
+- on the Bluetooth screen the passkey shows on the OLED, and the link
+  comes up `encrypted=1 authenticated=1 bonded=1`;
+- the bond survives a reboot (re-encrypts with no passkey);
+- REBOOT and BLE_SET_ENABLED 0 act after their OK;
+- "Forget phones" clears every bond.
+
+- `src/net/ble_commands.py` (`CommandRunner`, `OPCODES`) does framing,
+  length and bond checks, sends one final result per command, refuses a
+  second command with `ERR_BUSY`, and polls `IN_PROGRESS` work.
+  Followups are `("after", ms, fn)` (act once the result has gone out:
+  reboot, radio off) and `("poll", fn, timeout_ms)`. Adding a command is
+  one `OPCODES` entry plus a handler that calls `src/app/actions.py`.
+  First commands: `REBOOT` (0x42) and `BLE_SET_ENABLED 0` (0x33).
+- `ble_service.py`:
+  - Command service `0002` (`0201` write, 128-byte buffer; `0202`
+    Result, read + notify; the last result stays readable).
+  - Security: `bond`, `le_secure`, `mitm`, `io=DisplayOnly`, set before
+    `active(True)`.
+  - The bond store `/ble_bonds.json` is answered synchronously in
+    `_irq()`. This is the one exception to the IRQ-records-only rule.
+  - The passkey is generated with `os.urandom`. The pairing gate is
+    `set_pairing_allowed()`, opened only while the Bluetooth screen
+    shows; otherwise the link is dropped.
+  - `link_bonded()` requires encrypted, authenticated and bonded.
+- Bluetooth screen: "Pair code" with large digits while pairing;
+  "Connected / Paired - <name>"; triple-click "Forget phones?" (double
+  confirms, shows the bond count).
+- Status bits `link_bonded` (14) and `command_in_progress` (16) are live.
+- `tests/ble_decode.py` also decodes `0202` Results.
+
+---
+
 ## Phase 5 — commands: journey, destination, GPS & logging
 
 These are the field-critical commands, and `GPS_STAMP` comes first.

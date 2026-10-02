@@ -8,7 +8,17 @@
 #
 # Serves the Turtle service: Contract info + Turtle name (static) and the
 # eight telemetry characteristics packed by src/net/ble_telemetry.py
-# (Phase 3). The command/result channel and bonding arrive in Phase 4.
+# (Phase 3), plus the Command service (0201 Command / 0202 Result) run by
+# src/net/ble_commands.py (Phase 4).
+#
+# BONDING
+#   LE Secure Connections, MITM, IO capability DisplayOnly: the turtle shows
+#   a 6-digit passkey on the OLED and the phone's user types it in, so
+#   pairing needs someone standing at the hull. Pairing is only accepted
+#   while the Bluetooth screen is showing (set_pairing_allowed); otherwise
+#   the link is dropped. Bonds persist in /ble_bonds.json (device-owned;
+#   the sync scripts exclude it). Commands require a bonded, encrypted link
+#   unless ble_require_bond is false (bench only).
 # Telemetry is only packed while a phone is connected — nothing to read
 # otherwise — and is refreshed in full the moment one connects.
 #
@@ -21,9 +31,11 @@
 #
 # THREADING RULE
 #   _irq() runs in MicroPython scheduler context. It only records state and
-#   appends to an event list; tick() (called from run()'s _bg_tick on the main
-#   loop) does all printing, advertising and header updates. Anything that
-#   touches files or config must stay out of _irq().
+#   appends to event/command lists; tick() (called from run()'s _bg_tick on
+#   the main loop) does all printing, advertising and command execution.
+#   The one exception is the bond store: NimBLE's GET/SET_SECRET and
+#   PASSKEY_ACTION need an answer synchronously, so those handlers read/write
+#   the secrets (and /ble_bonds.json) and answer the passkey inside _irq().
 #
 # Built once in device/main.py step_init_runtime() (turtle mode only) and
 # reached through instance() — never construct a second one.
@@ -43,10 +55,24 @@ PREFERRED_MTU = 185
 
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
+_IRQ_GATTS_WRITE = const(3)
 _IRQ_MTU_EXCHANGED = const(21)
+_IRQ_ENCRYPTION_UPDATE = const(28)
+_IRQ_GET_SECRET = const(29)
+_IRQ_SET_SECRET = const(30)
+_IRQ_PASSKEY_ACTION = const(31)
+
+_PASSKEY_ACTION_DISP = const(3)
+_IO_CAPABILITY_DISPLAY_ONLY = const(0)
 
 _F_READ = const(0x0002)
+_F_WRITE = const(0x0008)
 _F_NOTIFY = const(0x0010)
+
+CMD_BUFFER = 128          # contract: Command attribute sized for WIFI_SET_CREDENTIALS
+MAX_INBOX = 4             # queued raw commands; extras get ERR_BUSY from the runner
+
+BONDS_FILE = "/ble_bonds.json"
 
 _UUID_FMT = "26d0{:04x}-5890-45f2-b0be-090d35436a95"
 
@@ -59,6 +85,48 @@ def _uuid(short):
 def _adv_field(t, v):
     import struct
     return struct.pack("BB", len(v) + 1, t) + v
+
+
+# ---------------------------------------------------------------- bond store
+# {(sec_type, key_bytes): value_bytes}, persisted as base64 JSON. Kept at
+# module level so it survives stop()/start() of the radio.
+_secrets = {}
+_secrets_loaded = False
+
+
+def _b64(b):
+    import binascii
+    return binascii.b2a_base64(b).decode().strip()
+
+
+def _load_secrets():
+    global _secrets_loaded
+    if _secrets_loaded:
+        return
+    _secrets_loaded = True
+    try:
+        import json
+        import binascii
+        with open(BONDS_FILE) as f:
+            for sec_type, key, value in json.load(f):
+                _secrets[(sec_type, binascii.a2b_base64(key))] = binascii.a2b_base64(value)
+        print("[BLE] %d bond secret(s) loaded" % len(_secrets))
+    except OSError:
+        pass
+    except Exception as e:
+        print("[BLE] bond file unreadable, ignoring:", repr(e))
+
+
+def _save_secrets():
+    try:
+        import json
+        tmp = BONDS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump([(t, _b64(k), _b64(v)) for (t, k), v in _secrets.items()], f)
+        import os
+        os.rename(tmp, BONDS_FILE)
+    except Exception as e:
+        print("[BLE] bond save failed:", repr(e))
 
 
 def advertised_name(cfg):
@@ -89,6 +157,13 @@ class BleService:
         self._last_val = {}           # short id -> bytes last written
         self._last_key = {}           # short id -> notify_key() last notified
         self._last_notify = {}        # short id -> ticks_ms of last notify
+        self._enc = None              # (encrypted, authenticated, bonded) of this link
+        self._passkey = None          # 6-digit code while pairing (drawn on the OLED)
+        self._pairing_allowed = False # True only while the Bluetooth screen shows
+        self._cmd_inbox = []          # raw Command writes, queued by _irq()
+        self._sources = None
+        from src.net.ble_commands import CommandRunner
+        self._runner = CommandRunner(self, lambda: self._sources)
 
     # ------------------------------------------------------------ status
 
@@ -107,6 +182,43 @@ class BleService:
 
     def mtu(self):
         return self._mtu
+
+    def link_bonded(self):
+        """True when the current link is encrypted, authenticated (MITM,
+        passkey) and bonded."""
+        e = self._enc
+        return bool(self._conn is not None and e and e[0] and e[1] and e[2])
+
+    def passkey(self):
+        return self._passkey
+
+    def command_busy(self):
+        return self._runner.busy()
+
+    def set_pairing_allowed(self, allowed):
+        """The Bluetooth screen opens the pairing gate while it's showing."""
+        self._pairing_allowed = bool(allowed)
+        if not allowed:
+            self._passkey = None
+
+    def bond_count(self):
+        """Stored peer bonds (LTKs), not counting our own identity key."""
+        _load_secrets()
+        return sum(1 for (t, _k) in _secrets if t == 2)
+
+    def forget_bonds(self):
+        """Delete every stored bond and restart the radio with a clean
+        store. Phones must then forget the turtle and pair again."""
+        _secrets.clear()
+        try:
+            import os
+            os.remove(BONDS_FILE)
+        except Exception:
+            pass
+        print("[BLE] all bonds forgotten")
+        if self._active:
+            self.stop()
+            self.start()
 
     def window_open(self):
         if self._window_min == 0:
@@ -141,9 +253,22 @@ class BleService:
         try:
             import bluetooth
             import struct
+            _load_secrets()               # our identity key is read at activation
             self._ble = bluetooth.BLE()
             self._ble.irq(self._irq)
+            retry = []
+            for k, v in (("bond", True), ("le_secure", True), ("mitm", True),
+                         ("io", _IO_CAPABILITY_DISPLAY_ONLY)):
+                try:
+                    self._ble.config(**{k: v})
+                except Exception:
+                    retry.append((k, v))
             self._ble.active(True)
+            for k, v in retry:
+                try:
+                    self._ble.config(**{k: v})
+                except Exception as e:
+                    print("[BLE] security config %s failed: %r" % (k, e))
             try:
                 self._ble.config(gap_name=self._name)
             except Exception as e:
@@ -159,9 +284,15 @@ class BleService:
             for cid, _base, _force in T.SCHEDULE:
                 chars.append((_uuid(cid), _F_READ | _F_NOTIFY))
             svc = (_uuid(0x0001), tuple(chars))
-            (handles,) = self._ble.gatts_register_services((svc,))
+            cmd_svc = (_uuid(0x0002), (
+                (_uuid(0x0201), _F_WRITE),              # Command
+                (_uuid(0x0202), _F_READ | _F_NOTIFY),   # Result
+            ))
+            (handles, (h_cmd, h_res)) = self._ble.gatts_register_services((svc, cmd_svc))
+            self._ble.gatts_set_buffer(h_cmd, CMD_BUFFER, False)
+            self._ble.gatts_set_buffer(h_res, 64)
             h_info, h_name = handles[0], handles[1]
-            self._handles = {"info": h_info, "name": h_name}
+            self._handles = {"info": h_info, "name": h_name, "cmd": h_cmd, "res": h_res}
             for i, (cid, _base, _force) in enumerate(T.SCHEDULE):
                 self._handles[cid] = handles[2 + i]
                 self._ble.gatts_set_buffer(handles[2 + i], 20)
@@ -175,6 +306,9 @@ class BleService:
 
             self._active = True
             self._conn = None
+            self._enc = None
+            self._passkey = None
+            self._cmd_inbox = []
             self._advertising = False
             print("[BLE] active as %r (contract v%d)" % (self._name, CONTRACT_VERSION))
             self.open_window()
@@ -199,6 +333,10 @@ class BleService:
         self._active = False
         self._advertising = False
         self._conn = None
+        self._enc = None
+        self._passkey = None
+        self._cmd_inbox = []
+        self._runner.cancel()
         self._window_until = None
         print("[BLE] off")
 
@@ -235,10 +373,59 @@ class BleService:
             self._events.append("connect")
         elif event == _IRQ_CENTRAL_DISCONNECT:
             self._conn = None
+            self._enc = None
+            self._passkey = None
             self._events.append("disconnect")
         elif event == _IRQ_MTU_EXCHANGED:
             self._mtu = data[1]
             self._events.append("mtu")
+        elif event == _IRQ_GATTS_WRITE:
+            conn, attr = data
+            if attr == self._handles.get("cmd"):
+                if len(self._cmd_inbox) < MAX_INBOX:
+                    self._cmd_inbox.append(bytes(self._ble.gatts_read(attr)))
+                else:
+                    self._events.append("inbox_full")
+        elif event == _IRQ_ENCRYPTION_UPDATE:
+            conn, encrypted, authenticated, bonded, key_size = data
+            self._enc = (bool(encrypted), bool(authenticated), bool(bonded))
+            self._passkey = None
+            self._events.append("enc")
+        elif event == _IRQ_PASSKEY_ACTION:
+            conn, action, _pk = data
+            if action == _PASSKEY_ACTION_DISP and self._pairing_allowed:
+                import os
+                pk = int.from_bytes(os.urandom(4), "little") % 1_000_000
+                self._passkey = pk
+                self._ble.gap_passkey(conn, action, pk)
+                self._events.append("passkey")
+            else:
+                # Not on the Bluetooth screen (or an unexpected method):
+                # refuse — tick() drops the link.
+                self._events.append("pair_refused")
+        elif event == _IRQ_SET_SECRET:
+            sec_type, key, value = data
+            key = (sec_type, bytes(key))
+            if value is None:
+                if key in _secrets:
+                    del _secrets[key]
+                    _save_secrets()
+                    return True
+                return False
+            _secrets[key] = bytes(value)
+            _save_secrets()
+            return True
+        elif event == _IRQ_GET_SECRET:
+            sec_type, index, key = data
+            if key is None:
+                i = 0
+                for (t, _k), v in _secrets.items():
+                    if t == sec_type:
+                        if i == index:
+                            return v
+                        i += 1
+                return None
+            return _secrets.get((sec_type, bytes(key)))
 
     # ------------------------------------------------------------ tick
 
@@ -257,8 +444,28 @@ class BleService:
                     self._last_key = {}
                 elif ev == "disconnect":
                     print("[BLE] phone disconnected")
+                    self._runner.cancel()
+                    self._cmd_inbox = []
                 elif ev == "mtu":
                     print("[BLE] MTU", self._mtu)
+                elif ev == "enc":
+                    e = self._enc or (False, False, False)
+                    print("[BLE] link encrypted=%d authenticated=%d bonded=%d" % e)
+                elif ev == "passkey":
+                    print("[BLE] pairing: passkey shown on the Bluetooth screen")
+                elif ev == "pair_refused":
+                    print("[BLE] pairing refused - open the Bluetooth screen to pair")
+                    try:
+                        if self._conn is not None:
+                            self._ble.gap_disconnect(self._conn)
+                    except Exception:
+                        pass
+                elif ev == "inbox_full":
+                    print("[BLE] command inbox full - write dropped")
+
+            while self._conn is not None and self._cmd_inbox:
+                self._runner.handle(self._cmd_inbox.pop(0))
+            self._runner.tick()          # polls, and a pending reboot / radio-off
 
             if self._conn is not None:
                 self._pump()
@@ -277,12 +484,29 @@ class BleService:
 
     def attach_sources(self, sources):
         """Hand in run()'s getters (see ble_telemetry.TurtleData)."""
+        sources = dict(sources or {})
+        sources.setdefault("bonded", self.link_bonded)
+        sources.setdefault("cmd_busy", self.command_busy)
+        self._sources = sources
         try:
             from src.net.ble_telemetry import TurtleData
             self._data = TurtleData(sources)
         except Exception as e:
             print("[BLE] telemetry attach failed:", repr(e))
             self._data = None
+
+    def send_result(self, value):
+        """Write + notify the Result characteristic (readable afterwards, so
+        an app that reconnects can learn a command's outcome)."""
+        h = self._handles.get("res")
+        if h is None or self._ble is None:
+            return
+        try:
+            self._ble.gatts_write(h, value)
+            if self._conn is not None:
+                self._ble.gatts_notify(self._conn, h, value)
+        except Exception as e:
+            print("[BLE] result send err:", repr(e))
 
     def _pump(self):
         """Refresh due characteristics; notify the ones whose value changed

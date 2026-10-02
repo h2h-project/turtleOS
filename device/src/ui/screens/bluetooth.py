@@ -16,6 +16,11 @@
 # Opening the screen reopens the wrangle window — someone standing at the hull
 # looking at Bluetooth is the intent. The on/off itself is
 # src.app.actions.ble_set_enabled, shared with the BLE_SET_ENABLED command.
+#
+# PAIRING (Phase 4): the pairing gate is open only while this screen shows.
+# When a phone starts pairing, the 6-digit passkey replaces the view, large,
+# to be typed into the phone. Anywhere else the turtle refuses to pair.
+# Triple-click -> "Forget phones?" (double-click confirms) clears every bond.
 
 import time
 
@@ -61,6 +66,8 @@ class BluetoothScreen:
         if st == "off":
             return "Off", "Double-click to turn on", False
         if st == "connected":
+            if svc.link_bonded():
+                return "Connected", "Paired - " + name[:14], True
             return "Connected", name, True
         if st == "advertising":
             rem = svc.window_remaining_s()
@@ -69,9 +76,30 @@ class BluetoothScreen:
             return "Open {}:{:02d}".format(rem // 60, rem % 60), name, True
         return "Hidden", name, True
 
+    def _draw_passkey(self, pk):
+        o = self.oled
+        fb = o.oled
+        fb.fill(0)
+        o.f_arvo20.write("Pair code", 0, 0)
+        code = "%06d" % pk
+        try:
+            o.draw_centered(o.f_large, code, 24)
+        except Exception:
+            o.f_med.write(code, 0, 26)
+        try:
+            o.draw_centered(o.f_small, "Type this on the phone", 54)
+        except Exception:
+            pass
+        fb.show()
+
     def _draw(self):
         o = self.oled
         if o is None:
+            return
+        svc = self._svc()
+        pk = svc.passkey() if svc is not None else None
+        if pk is not None:
+            self._draw_passkey(pk)
             return
         fb = o.oled
         fb.fill(0)
@@ -118,8 +146,49 @@ class BluetoothScreen:
         elif code != actions.OK:
             self._flash("Not saved!", 1500)
 
+    def _confirm_forget(self, btn, tick_fn):
+        """Triple-click: ask before clearing every stored bond."""
+        svc = self._svc()
+        if svc is None:
+            return
+        n = svc.bond_count()
+        o = self.oled
+        fb = o.oled
+        fb.fill(0)
+        o.f_arvo20.write("Forget phones?", 0, 0)
+        o.f_small.write("%d phone%s paired" % (n, "" if n == 1 else "s"), 0, 26)
+        o.f_small.write("2x click: forget all", 0, 40)
+        o.f_small.write("1x click: keep", 0, 52)
+        fb.show()
+        try:
+            btn.reset()
+        except Exception:
+            pass
+        deadline = time.ticks_add(time.ticks_ms(), 10_000)
+        _tick_next = time.ticks_ms()
+        while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+            now = time.ticks_ms()
+            if tick_fn is not None and time.ticks_diff(now, _tick_next) >= 0:
+                try:
+                    tick_fn()
+                except Exception:
+                    pass
+                _tick_next = time.ticks_add(now, 500)
+            try:
+                action = btn.poll_action()
+            except Exception:
+                action = None
+            if action == "double":
+                svc.forget_bonds()
+                self._flash("Phones forgotten", 1500)
+                return
+            if action is not None:
+                break
+            time.sleep_ms(25)
+        self._flash("Kept", 800)
+
     def show_live(self, btn, tick_fn=None):
-        """single -> advance ("single"); double -> Bluetooth on/off."""
+        """single -> advance; double -> on/off; triple -> forget phones."""
         try:
             btn.reset()
         except Exception:
@@ -127,6 +196,16 @@ class BluetoothScreen:
 
         from src.app import actions
         actions.ble_open_window()
+        svc = self._svc()
+        if svc is not None:
+            svc.set_pairing_allowed(True)
+        try:
+            return self._loop(btn, tick_fn)
+        finally:
+            if svc is not None:
+                svc.set_pairing_allowed(False)
+
+    def _loop(self, btn, tick_fn):
         self._draw()
 
         _tick_next = time.ticks_ms()
@@ -151,8 +230,11 @@ class BluetoothScreen:
                 return "quad"
             if action == "sleep":
                 return "sleep"
-            if action == "double":
-                self._toggle_ble()
+            if action in ("double", "triple"):
+                if action == "double":
+                    self._toggle_ble()
+                else:
+                    self._confirm_forget(btn, tick_fn)
                 try:
                     btn.reset()
                 except Exception:

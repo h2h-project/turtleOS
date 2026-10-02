@@ -4,6 +4,7 @@
 #
 #   python3 tests/ble_decode.py 0110 A3-5F-4F-1E-36-17-9C-FF-08-01-00-00
 #   python3 tests/ble_decode.py 0116 0x...        (dashes, spaces, 0x all fine)
+#   python3 tests/ble_decode.py 0202 42-01-14      (a command Result)
 #
 # Layouts are GATT contract v1 (docs/wrangler/README.md). Sentinels print "—".
 
@@ -38,6 +39,22 @@ ENUMS = {
     "connection_mode": ["wifi_auto", "wifi_manual", "lora"],
 }
 
+RESULTS = {0x00: "OK", 0x01: "IN_PROGRESS", 0x10: "ERR_UNKNOWN_OPCODE",
+           0x11: "ERR_BAD_LENGTH", 0x12: "ERR_BAD_VALUE", 0x13: "ERR_BUSY",
+           0x14: "ERR_NOT_BONDED", 0x15: "ERR_WRONG_STATE", 0x20: "ERR_NO_GPS_FIX",
+           0x21: "ERR_RTC_NOT_SYNCED", 0x22: "ERR_NO_HARDWARE", 0x23: "ERR_NO_TARGET",
+           0x30: "ERR_WIFI_FAILED", 0x31: "ERR_API_FAILED", 0x32: "ERR_NOT_STAMPED",
+           0x7F: "ERR_INTERNAL"}
+
+OPCODES = {0x01: "JOURNEY_START", 0x02: "JOURNEY_END", 0x03: "DEST_SET_HERE",
+           0x04: "DEST_SET_MISSION", 0x05: "DEST_SET_COORDS", 0x06: "DEST_CLEAR",
+           0x10: "NAV_LUFF_SWEEP", 0x11: "SERVO_BENCH_SWEEP", 0x20: "GPS_STAMP",
+           0x21: "GPS_SET_ENABLED", 0x22: "TELEMETRY_SET_MODE",
+           0x23: "TELEMETRY_SET_INTERVAL", 0x24: "API_HANDSHAKE",
+           0x30: "WIFI_SET_ENABLED", 0x31: "WIFI_SET_CREDENTIALS",
+           0x32: "CONNECTION_MODE_SET", 0x33: "BLE_SET_ENABLED", 0x40: "SLEEP",
+           0x41: "SET_TURTLE_MODE", 0x42: "REBOOT", 0x43: "COMPASS_SET_OFFSET"}
+
 FLAGS = ["wifi_connected", "api_ok", "gps_fixed", "journey_active", "wifi_enabled",
          "gps_enabled", "gps_hw_present", "imu_present", "mag_present",
          "ina219_present", "baro_present", "as5600_present", "servo_present",
@@ -70,6 +87,16 @@ def main():
     data = bytes.fromhex(raw)
     if cid == "0102":
         print("Turtle name:", data.decode("utf-8", "replace"))
+        return
+    if cid == "0202":
+        if len(data) < 3:
+            print("Result: %d bytes, need 3" % len(data))
+            sys.exit(2)
+        op, seq, code = data[0], data[1], data[2]
+        print("Result (0202): opcode 0x%02X (%s)  seq %d  ->  0x%02X %s" % (
+            op, OPCODES.get(op, "?"), seq, code, RESULTS.get(code, "(unknown code)")))
+        if len(data) > 3:
+            print("  payload:", data[3:].hex("-").upper())
         return
     title, fmt, names = LAYOUTS[cid]
     need = struct.calcsize(fmt)
