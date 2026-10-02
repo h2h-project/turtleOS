@@ -28,6 +28,10 @@
 #                   the operator in the journey), closes the journey, toggle
 #                   OFF, flashes "Arrived!"
 #
+# The side effects (fix, journey record, config, server mirror, nav state) live
+# in src.app.actions.journey_start / journey_end, shared with the Bluetooth
+# command handler; this screen only maps their result codes to a flash.
+#
 # The authoritative journey record lives in /journey_state.json via
 # src.app.journey; set_departure / set_arrival are mirrored to config.json and
 # best-effort PATCHed to the server for the dashboard, exactly like the
@@ -61,21 +65,9 @@ except Exception:
     _ch = None
 
 
-def _valid_pair(val):
-    if isinstance(val, (list, tuple)) and len(val) == 2:
-        try:
-            la = float(val[0]); lo = float(val[1])
-            if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
-                return (la, lo)
-        except Exception:
-            pass
-    return None
-
-
 class JourneyScreen:
     def __init__(self, oled):
         self.oled = oled
-        self._cfg = {}
 
         w = int(getattr(oled, "width", 128))
         h = int(getattr(oled, "height", 64))
@@ -86,120 +78,14 @@ class JourneyScreen:
             th = max(1, h - ty)
         self.toggle = ToggleSwitch(x=tx, y=ty, w=tw, h=th) if ToggleSwitch else None
 
-    # ------------------------------------------------------------------ config
-
-    def _load_config(self, cfg=None):
-        if isinstance(cfg, dict):
-            self._cfg = cfg
-            return
-        try:
-            from config import load_config
-            self._cfg = load_config() or {}
-        except Exception:
-            if not isinstance(self._cfg, dict):
-                self._cfg = {}
-
-    def _save(self, updates):
-        """Merge `updates` into config.json and best-effort mirror to server."""
-        try:
-            from config import load_config, save_config
-            c = load_config() or {}
-            c.update(updates)
-            save_config(c)
-            self._cfg = c
-        except Exception:
-            try:
-                self._cfg.update(updates)
-            except Exception:
-                pass
-        try:
-            from src.net.device_client import patch_set_fields
-            patch_set_fields(self._cfg, {
-                k: v for k, v in updates.items()
-                if k in ("set_departure", "set_arrival")
-            })
-        except Exception:
-            pass
-
     # ------------------------------------------------------------------ journey
 
-    def _journey(self):
-        try:
-            from src.app import journey
-            return journey
-        except Exception:
-            return None
-
     def _is_active(self):
-        j = self._journey()
         try:
-            return bool(j and j.active())
+            from src.app.actions import journey_active
+            return journey_active()
         except Exception:
             return False
-
-    # --------------------------------------------------------------- nav state
-
-    def _enter_sail_nav(self):
-        """Opening a journey puts the turtle into SAIL-NAV — from here on it is
-        steering to the active target and the waiting-screen flèche fills in.
-        No-op (and harmless) if the state machine refuses the transition, e.g.
-        the turtle is in SAFE after a fault."""
-        try:
-            from src.nav import state_machine as sm
-            if sm.get_state() == sm.BOOT:
-                # Boot normally advances BOOT->ACQUIRE; cover the race where the
-                # journey screen is reached first.
-                sm.set_state(sm.ACQUIRE, "journey started (from boot)")
-            sm.set_state(sm.SAIL_NAV, "journey started")
-        except Exception as e:
-            print("[JOURNEY] sail-nav enter failed:", repr(e))
-
-    def _stand_down(self):
-        """Ending a journey drops SAIL-NAV back to ACQUIRE. Left alone if the
-        turtle has meanwhile gone to SAFE or already reached ARRIVAL."""
-        try:
-            from src.nav import state_machine as sm
-            if sm.get_state() == sm.SAIL_NAV:
-                sm.set_state(sm.ACQUIRE, "journey ended")
-        except Exception as e:
-            print("[JOURNEY] stand-down failed:", repr(e))
-
-    # ------------------------------------------------------------------ GPS
-
-    def _read_gps(self, gps):
-        """Return (lat, lon) from a live/recent fix, or None."""
-        try:
-            from src.nav import gpsfix
-        except Exception:
-            gpsfix = None
-
-        if gpsfix is not None:
-            try:
-                la, lo, age = gpsfix.get()
-                if la is not None and age is not None and age < 5000:
-                    return (la, lo)
-            except Exception:
-                pass
-
-        if gpsfix is None or gps is None:
-            return None
-
-        t0 = time.ticks_ms()
-        while time.ticks_diff(time.ticks_ms(), t0) < 2200:
-            try:
-                line = gps.read_nmea(max_ms=40)
-            except Exception:
-                line = None
-            if line and "RMC" in line:
-                la, lo, cog = gpsfix.parse_rmc(line)
-                if la is not None:
-                    try:
-                        gpsfix.update(la, lo, cog)
-                    except Exception:
-                        pass
-                    return (la, lo)
-            time.sleep_ms(10)
-        return None
 
     # ------------------------------------------------------------------ drawing
 
@@ -256,51 +142,32 @@ class JourneyScreen:
 
     # ------------------------------------------------------------------ actions
 
+    # Result code -> (flash text, ms). Anything unlisted is a generic failure.
+    _START_MSGS = {
+        0x00: ("Journey started!", 1200),   # OK
+        0x20: ("Sorry, no GPS!", 2000),     # ERR_NO_GPS_FIX
+        0x21: ("No clock yet!", 2000),      # ERR_RTC_NOT_SYNCED
+        0x15: ("Already on a trip", 1600),  # ERR_WRONG_STATE
+    }
+
     def _start_journey(self, gps, tick_fn):
-        loc = self._read_gps(gps)
-        if loc is None:
-            print("[JOURNEY] start: no GPS fix")
-            self._flash("Sorry, no GPS!", 2000, tick_fn)
-            return
-        j = self._journey()
-        rec = None
-        try:
-            rec = j.start(loc[0], loc[1]) if j else None
-        except Exception as e:
-            print("[JOURNEY] start err:", repr(e))
-        if rec is None:
-            # No synced RTC → no usable id. Nothing to tag against.
-            self._flash("No clock yet!", 2000, tick_fn)
-            return
-        self._save({"set_departure": [loc[0], loc[1]]})
-        self._enter_sail_nav()
-        print("[JOURNEY] started id={} dep={:.6f},{:.6f}".format(
-            rec.get("id"), loc[0], loc[1]))
-        self._flash("Journey started!", 1200, tick_fn)
+        from src.app import actions
+        code, _info = actions.journey_start(gps)
+        text, ms = self._START_MSGS.get(code, ("Journey failed", 2000))
+        self._flash(text, ms, tick_fn)
 
     def _end_journey(self, gps, tick_fn):
-        loc = self._read_gps(gps)
-        j = self._journey()
-        jid = None
-        try:
-            jid = j.active_id() if j else None
-        except Exception:
-            pass
-        if loc is not None:
-            self._save({"set_arrival": [loc[0], loc[1]]})
-        try:
-            if j:
-                j.end()
-        except Exception as e:
-            print("[JOURNEY] end err:", repr(e))
-        self._stand_down()
-        if loc is not None:
-            print("[JOURNEY] arrived id={} arr={:.6f},{:.6f}".format(
-                jid, loc[0], loc[1]))
-            self._flash("Arrived!", 1200, tick_fn)
+        from src.app import actions
+        code, info = actions.journey_end(gps)
+        if code == actions.OK:
+            if info.get("arrival_stamped"):
+                self._flash("Arrived!", 1200, tick_fn)
+            else:
+                self._flash("Arrived (no GPS)", 1600, tick_fn)
+        elif code == actions.ERR_WRONG_STATE:
+            self._flash("No trip open", 1600, tick_fn)
         else:
-            print("[JOURNEY] arrived id={} (no GPS fix — set_arrival unchanged)".format(jid))
-            self._flash("Arrived (no GPS)", 1600, tick_fn)
+            self._flash("Journey failed", 2000, tick_fn)
 
     def _toggle(self, gps, tick_fn):
         if self._is_active():
@@ -317,7 +184,6 @@ class JourneyScreen:
         except Exception:
             pass
 
-        self._load_config(cfg)
         self._draw()
 
         _tick_next = time.ticks_ms()

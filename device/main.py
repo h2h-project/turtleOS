@@ -1534,8 +1534,10 @@ def step_imu():
             dev = GY87(init_i2c_ext(), imu_addr=(imu_addr or I2C_ADDR_MPU6050))
             if dev.is_present or dev.baro is not None:
                 _rt_imu = dev
-                if dev.is_present and dev.mag is None:
-                    return True, "MPU6050 - no mag" + (" + BMP180" if dev.baro else "")
+                # A GY-87 without its mag is a failed compass, even if the
+                # IMU or barometer answered.
+                if dev.mag is None:
+                    return False, "Compass FAIL - " + dev.summary() + " only"
                 return True, "OK - " + dev.summary()
         except Exception as e:
             print("[IMU] GY87 probe failed:", repr(e))
@@ -1563,7 +1565,7 @@ def step_imu():
     except Exception:
         pass
 
-    return True, "Compass not found"
+    return False, "Compass NOT FOUND"
 
 
 _rt_i2c = None

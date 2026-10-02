@@ -952,6 +952,7 @@ def _preload_screens(oled, is_pico=False, turtle_mode=False):
             "src.ui.screens.gps",       # GPS status + manual logging (hold flow)
             "src.ui.screens.compass",   # compass heading screen (turtle sensor carousel)
             "src.ui.screens.sailpoint", # AS5600 sail angle screen (turtle only)
+            "src.ui.screens.bluetooth", # Turtle Wrangler on/off (connectivity carousel)
             # Nav stack: imported post-WiFi via _get_nav()/get_screen("state")
             # when the heap is fragmented — bytecode must be resident by then.
             "src.nav.state_machine",    # ~1 KB — also imported by telemetry on every send
@@ -1263,13 +1264,19 @@ def step_api():
             _sn = info.get("mission_dest_short_name")
             if _sn:
                 _updates["mission_dest_short_name"] = str(_sn)
+            # turtles_tb.name, so an offline boot still has a name to show and
+            # to advertise over Bluetooth.
+            _dn = str(info.get("device_name") or "").strip()
+            if _dn:
+                _updates["device_name"] = _dn
             if _updates and cfg is not None:
                 _changed = any(cfg.get(k) != v for k, v in _updates.items())
                 if _changed:
                     cfg.update(_updates)
-                    from config import save_config
-                    save_config(cfg)
-                    print("[BOOT] mission destination synced:", _updates.get("mission_destination"))
+                    from config import update_config
+                    update_config(_updates)
+                    print("[BOOT] synced from API: destination={} name={!r}".format(
+                        _updates.get("mission_destination"), _updates.get("device_name")))
     except Exception as e:
         print("[BOOT] mission destination sync failed:", repr(e))
 
@@ -1527,8 +1534,10 @@ def step_imu():
             dev = GY87(init_i2c_ext(), imu_addr=(imu_addr or I2C_ADDR_MPU6050))
             if dev.is_present or dev.baro is not None:
                 _rt_imu = dev
-                if dev.is_present and dev.mag is None:
-                    return True, "MPU6050 - no mag" + (" + BMP180" if dev.baro else "")
+                # A GY-87 without its mag is a failed compass, even if the
+                # IMU or barometer answered.
+                if dev.mag is None:
+                    return False, "Compass FAIL - " + dev.summary() + " only"
                 return True, "OK - " + dev.summary()
         except Exception as e:
             print("[IMU] GY87 probe failed:", repr(e))
@@ -1556,7 +1565,7 @@ def step_imu():
     except Exception:
         pass
 
-    return True, "Compass not found"
+    return False, "Compass NOT FOUND"
 
 
 _rt_i2c = None
@@ -1565,6 +1574,7 @@ _rt_gps = None
 _rt_wifi_mgr = None
 _rt_nav = None
 _rt_turtle_scr = None
+_rt_ble = None
 
 
 def _rt_mission_name():
@@ -1591,7 +1601,7 @@ def step_init_runtime():
     was built here and only falls back to building it itself if a piece is
     missing (e.g. this step was skipped on Pico, or something here failed).
     """
-    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr
+    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr, _rt_ble
 
     if _is_pico:
         # Pico's tight heap doesn't have room for a second copy of this setup
@@ -1646,6 +1656,15 @@ def step_init_runtime():
     if not cfg.get("turtle_mode", False):
         _gc()
         return True, "OK"
+
+    # Turtle Wrangler BLE peripheral (docs/wrangler/). Built once; the radio
+    # only comes up when ble_enabled. run() ticks it from _bg_tick.
+    try:
+        from src.net import ble_service
+        _rt_ble = ble_service.init(cfg)
+    except Exception as e:
+        print("[BLE] init failed:", repr(e))
+        _rt_ble = None
 
     nav_servo = None
     if cfg.get("servo_present", False):
@@ -1904,6 +1923,7 @@ if _btn_hal_ok:
             nav_controller=_rt_nav,
             turtle_waiting_scr=_rt_turtle_scr,
             imu=_rt_imu,
+            ble=_rt_ble,
         )
     except Exception as e:
         # Write crash info with minimal heap — repr(e) is cheap, no traceback capture

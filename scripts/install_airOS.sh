@@ -479,7 +479,7 @@ OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
 # simple air-quality-only build, so none of that is asked here.
 TURTLE_MODE="false"
 JOKE_MODE="true"
-SERVO_PRESENT="false"
+SERVO_PRESENT="true"
 
 # ------------------------------------------------------------
 # Generate config.json

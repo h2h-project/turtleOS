@@ -13,6 +13,10 @@
 # alongside it: if the resolved target changed since the last run (e.g. the
 # operator set a test project), the index resets to 0 instead of resuming
 # against a stale list.
+#
+# sync(cfg) re-resolves on every nav tick, so a target changed at runtime
+# (Destination screen, Journey, a Bluetooth command) takes effect at once —
+# the route used to be resolved only when NavController was built at boot.
 
 import json
 
@@ -34,22 +38,57 @@ def _clean_pairs(seq):
     return out
 
 
+# Which config key the active route came from (GATT contract v1, Targets
+# characteristic active_source).
+SRC_NONE = 0
+SRC_SET_WAYPOINTS = 1
+SRC_SET_DESTINATION = 2
+SRC_MISSION_WAYPOINTS = 3
+SRC_MISSION_DESTINATION = 4
+
+
 class WaypointSequencer:
     def __init__(self, cfg):
-        self._wps = self._resolve(cfg)
+        self._wps, self._source = self._resolve(cfg)
         self._idx = 0
         self._restore()
 
     @staticmethod
     def _resolve(cfg):
+        """(waypoints, source) — first non-empty key wins."""
         wps = _clean_pairs(cfg.get("set_waypoints") or [])
-        if not wps:
-            wps = _clean_pairs([cfg.get("set_destination")] if cfg.get("set_destination") else [])
-        if not wps:
-            wps = _clean_pairs(cfg.get("mission_waypoints") or [])
-        if not wps:
-            wps = _clean_pairs([cfg.get("mission_destination")] if cfg.get("mission_destination") else [])
-        return wps
+        if wps:
+            return wps, SRC_SET_WAYPOINTS
+        wps = _clean_pairs([cfg.get("set_destination")] if cfg.get("set_destination") else [])
+        if wps:
+            return wps, SRC_SET_DESTINATION
+        wps = _clean_pairs(cfg.get("mission_waypoints") or [])
+        if wps:
+            return wps, SRC_MISSION_WAYPOINTS
+        wps = _clean_pairs([cfg.get("mission_destination")] if cfg.get("mission_destination") else [])
+        if wps:
+            return wps, SRC_MISSION_DESTINATION
+        return [], SRC_NONE
+
+    def sync(self, cfg):
+        """Re-resolve the route from cfg. A changed route restarts at its
+        first waypoint (and is persisted); an unchanged one is left alone.
+        Returns True when the route changed."""
+        wps, source = self._resolve(cfg or {})
+        self._source = source
+        old_sig = self._signature()
+        prev = self._wps
+        self._wps = wps
+        if self._signature() == old_sig:
+            self._wps = prev
+            return False
+        self._idx = 0
+        self._persist()
+        print("[NAV] route changed (source {}), {} waypoint(s)".format(source, len(wps)))
+        return True
+
+    def source(self):
+        return self._source
 
     def _signature(self):
         # Rounded so tiny float noise doesn't count as a route change.

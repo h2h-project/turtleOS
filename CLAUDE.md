@@ -262,11 +262,11 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 ### turtleOS sensor carousel (turtle_mode=true)
 
 Single-click enters `sensor_carousel()` configured for navigation screens (order set in `flows.py`; single-click always advances):
-0. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it leads the carousel. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and clears the file. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
-1. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
-2. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
-3. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
-4. **Servo** screen — sail servo status. **Single click advances; double click** waits 2 s then runs one full luff wind-finder sweep (`screens/wind_finder.py::WindFinder`, driven through `ServoScreen`'s raw-PWM callbacks). The result (wind angle + 180° alternate + jitter/confidence) stays on screen until the next action. `_make_pwm()` sets the frequency in the `PWM()` constructor — a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz) until `.freq()` lands, which is garbage to a servo. Idle loop polls the button every 2 ms with no periodic redraw (screen is static once probed) — see the sampling note under [the button](#user-interaction--the-button).
+0. **Servo** screen — **always first.** Sail servo status. **Single click advances; double click** waits 0.5 s then runs one full luff wind-finder sweep (`screens/wind_finder.py::WindFinder`, driven through `ServoScreen`'s raw-PWM callbacks). The result (wind angle + 180° alternate + jitter/confidence) stays on screen until the next action. `_make_pwm()` sets the frequency in the `PWM()` constructor — a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz) until `.freq()` lands, which is garbage to a servo. Idle loop polls the button every 2 ms with no periodic redraw (screen is static once probed) — see the sampling note under [the button](#user-interaction--the-button).
+1. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it follows Servo. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and clears the file. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
+2. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
+3. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
+4. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
 
 The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
 lives in the hold flow instead, so hand-taken position stamps are one hold away from
@@ -279,7 +279,7 @@ Single-click enters `sensor_carousel()` configured for air quality:
 2. **CO2** screen (static, timed dwell).
 3. **TVOC** screen (static, timed dwell).
 4. **Temp** screen via `show_live()` — live-updating, exits on single click.
-5. **Summary** screen via `show_live()`.
+5. **Summary** screen via `show_live()`. **airOS only** — turtleOS never shows it, even with air sensors attached.
 
 Any non-single click during a dwell exits the carousel early.
 
@@ -518,7 +518,7 @@ straggler back-fill is sketched in the `journey.py` header comment for later.
 | `gps_enabled` | bool | `false` | |
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
 | `compass_offset_deg` | int | `0` | magnetic declination correction |
-| `servo_present` | bool | `false` | authoritative flag for physical servo wiring |
+| `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |

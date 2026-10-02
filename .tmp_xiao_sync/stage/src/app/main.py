@@ -83,6 +83,7 @@ def run(
         nav_controller=None,
         turtle_waiting_scr=None,
         imu=None,
+        ble=None,
 ):
     BTN_PIN = _resolve_btn_pin_default()
     # Shared GY-87 10DOF instance built by device/main.py step_imu() (or None).
@@ -563,6 +564,10 @@ def run(
                 from src.ui.screens.wifi import WiFiScreen
                 screens[name] = WiFiScreen(oled)
 
+            elif name == "bluetooth":
+                from src.ui.screens.bluetooth import BluetoothScreen
+                screens[name] = BluetoothScreen(oled)
+
             elif name == "online":
                 from src.ui.screens.online import OnlineScreen
                 screens[name] = OnlineScreen(oled)
@@ -712,6 +717,14 @@ def run(
     # Calling load_config() every 500 ms allocates and frees JSON dicts that
     # fragment the heap even before telemetry fires.
     _cfg_cell = [{}]
+    # Config writes made through src.app.actions (OLED gestures, and later
+    # Bluetooth commands) mirror into _cfg_cell[0] so the background tick sees
+    # them immediately, not only after the carousel exits.
+    try:
+        from src.app.actions import bind_cfg_cell as _bind_cfg_cell
+        _bind_cfg_cell(_cfg_cell)
+    except Exception as e:
+        print("[ACTIONS] cfg bind failed:", repr(e))
 
     # ------------------------------------------------------------
     # NAV CONTROLLER (turtle_mode only) — lazy singleton.
@@ -749,6 +762,23 @@ def run(
             print("[NAV] controller init failed:", repr(e))
         return _nav_cell[0]
 
+    # Turtle Wrangler: hand the BLE service getters for everything its
+    # telemetry characteristics report (src/net/ble_telemetry.py). Getters,
+    # not values — nav and telemetry are built lazily and may be rebuilt.
+    if ble is not None:
+        try:
+            ble.attach_sources({
+                "nav": lambda: _nav_cell[0],
+                "ina": lambda: _ina_dev,
+                "imu": lambda: _imu_dev,
+                "gps": lambda: gps,
+                "status": lambda: status,
+                "cfg": lambda: _cfg_cell[0],
+                "telemetry": lambda: telemetry,
+            })
+        except Exception as e:
+            print("[BLE] attach sources failed:", repr(e))
+
     def _bg_tick():
         try:
             # Skip wlan.isconnected() when background_process is active — it blocks
@@ -765,6 +795,14 @@ def run(
         if _nav_cell[0] is not None:
             try:
                 _nav_cell[0].tick(_cfg_cell[0])
+            except Exception:
+                pass
+        # Bluetooth housekeeping (advertising / wrangle window / header).
+        # Lives here, not only in the top-level loop, because every screen
+        # owns the loop while it is showing and calls tick_fn=_bg_tick.
+        if ble is not None:
+            try:
+                ble.tick()
             except Exception:
                 pass
 

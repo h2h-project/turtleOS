@@ -733,7 +733,7 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    # Journey leads the turtle carousel, but ONLY while a journey is open —
+    # Servo leads the turtle carousel. Journey follows it, but ONLY while a journey is open —
     # otherwise it stays out of the way. Starting a journey is done from the
     # Destination screen's menu (which hands off to the same Journey screen).
     _journey_open = False
@@ -744,25 +744,50 @@ def sensor_carousel(
         except Exception:
             _journey_open = False
 
-    _nav_screens = ((["journey"] if _journey_open else []) + ["destination", "compass", "sailpoint", "servo"]) \
+    _nav_screens = (["servo"] + (["journey"] if _journey_open else []) + ["destination", "compass", "sailpoint"]) \
                    if _turtle_mode else []
+
+    # Summary is airOS-only: turtleOS never shows it, even with air sensors attached.
+    _show_summary = bool(_sensor_screens) and not _turtle_mode
 
     _all_screens = _nav_screens \
                    + _sensor_screens \
-                   + (["summary"] if _sensor_screens else [])
+                   + (["summary"] if _show_summary else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
 
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = _nav_screens + _sensor_screens + ["summary"]
+    _preload = _nav_screens + _sensor_screens + (["summary"] if _show_summary else [])
     for _n in _preload:
         get_screen(_n)
         _gc()
     reset_and_flush(btn, flush_ms, poll_ms)
 
     if _turtle_mode:
-        # ---- JOURNEY (only present while a journey is open; leads the carousel) ----
+        # ---- SERVO (first in single-click carousel, turtle mode only) ----
+        _gc()
+        servo_scr = get_screen("servo")
+        try:
+            _servo_cfg = bool((cfg or {}).get("servo_present", False))
+            _log_screen("servo", "configured={}".format(_servo_cfg))
+        except Exception:
+            _log_screen("servo")
+        if servo_scr and hasattr(servo_scr, "show_live"):
+            try:
+                a = servo_scr.show_live(btn, tick_fn=tick_fn)
+            except Exception:
+                a = None
+        else:
+            draw_text(oled, "Servo", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        if a not in ("single", None):
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- JOURNEY (only present while a journey is open; follows Servo) ----
         if _journey_open:
             _gc()
             journey_scr = get_screen("journey")
@@ -781,7 +806,7 @@ def sensor_carousel(
                 return a
             _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- DESTINATION (first in single-click carousel, turtle mode only) ----
+        # ---- DESTINATION (after Servo / Journey, turtle mode only) ----
         _gc()
         dest_scr = get_screen("destination")
         try:
@@ -853,28 +878,6 @@ def sensor_carousel(
                 a = None
         else:
             draw_text(oled, "Sailpoint", y=24)
-            a = wait_for_single(btn, tick_fn=tick_fn)
-
-        if a not in ("single", None):
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return a
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-        # ---- SERVO (fourth in single-click carousel, turtle mode only) ----
-        _gc()
-        servo_scr = get_screen("servo")
-        try:
-            _servo_cfg = bool((cfg or {}).get("servo_present", False))
-            _log_screen("servo", "configured={}".format(_servo_cfg))
-        except Exception:
-            _log_screen("servo")
-        if servo_scr and hasattr(servo_scr, "show_live"):
-            try:
-                a = servo_scr.show_live(btn, tick_fn=tick_fn)
-            except Exception:
-                a = None
-        else:
-            draw_text(oled, "Servo", y=24)
             a = wait_for_single(btn, tick_fn=tick_fn)
 
         if a not in ("single", None):
@@ -1013,9 +1016,9 @@ def sensor_carousel(
         reset_and_flush(btn, flush_ms, poll_ms)
         return a
 
-    # SUMMARY (after TEMP) — air-quality summary; only meaningful when air
-    # sensors are present. Skip entirely for a sensorless (turtle) carousel.
-    if _sensor_screens:
+    # SUMMARY (after TEMP) — air-quality summary, airOS only. Needs air
+    # sensors; never shown in turtle mode.
+    if _show_summary:
         _gc()   # (bug fix) reclaim heap before summary allocation
         _log_screen("summary")
         summ = get_screen("summary")

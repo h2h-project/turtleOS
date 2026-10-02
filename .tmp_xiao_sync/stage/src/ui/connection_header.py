@@ -29,7 +29,9 @@
 #        Callers that pass an explicit True/False still override the cache for
 #        that call (and update the cache so later draw() calls stay in sync).
 
-from src.ui.glyphs import draw_wifi_signal, draw_gps, draw_api
+import time
+
+from src.ui.glyphs import draw_wifi_signal, draw_gps, draw_api, draw_plus3
 from src.ui.glyphs import GPS_NONE, GPS_INIT, GPS_FIXED  # noqa: F401 — re-exported
 from src.ui.glyphs import WIFI_NONE, WIFI_FULL, wifi_level_from_rssi  # noqa: F401 — re-exported
 
@@ -125,6 +127,75 @@ def set_gps_state(state):
     _gps_state = int(state)
 
 
+# ---------------------------------------------------------------------------
+# Bluetooth indicator (Turtle Wrangler)
+#
+# Read straight from the BleService on every draw rather than cached here, so
+# it can never go stale. Shown whenever Bluetooth is ON; blinks with a 1 s
+# phase while advertising (window open, no phone), steady otherwise (phone
+# connected, or window closed). Hidden when off.
+#   - every screen:        3x3 "+" in the WiFi icon's empty lower-right corner
+#   - waiting screen only: the 7x9 rune left of the nav flèche
+#                          (src/ui/screens/turtle_waiting.py)
+# ---------------------------------------------------------------------------
+BLE_BLINK_MS = 1000
+
+_ble_mod = None
+
+
+def _ble_svc():
+    global _ble_mod
+    if _ble_mod is None:
+        from src.net import ble_service as _m
+        _ble_mod = _m
+    return _ble_mod.instance()
+
+
+def ble_on():
+    """True while the Bluetooth radio is on (layout: reserve the icon's space
+    even during a blink-off frame so nothing jitters)."""
+    try:
+        svc = _ble_svc()
+        return svc is not None and svc.active()
+    except Exception:
+        return False
+
+
+class BleWatch:
+    """For screens with no periodic redraw of their own (Destination, Device,
+    Servo…): poll changed() in the screen loop and redraw when it returns
+    True — the Bluetooth indicator should appear, vanish or blink. Cheap: no
+    I/O, just the service's state and the clock."""
+
+    def __init__(self):
+        self._last = None
+
+    def changed(self, now_ms=None):
+        v = (ble_on(), ble_visible(now_ms))
+        if self._last is None:          # first look: the screen just drew
+            self._last = v
+            return False
+        if v != self._last:
+            self._last = v
+            return True
+        return False
+
+
+def ble_visible(now_ms=None):
+    """True when a Bluetooth indicator should be drawn right now."""
+    try:
+        svc = _ble_svc()
+        if svc is None or not svc.active():
+            return False
+        if svc.advertising():
+            if now_ms is None:
+                now_ms = time.ticks_ms()
+            return (now_ms // BLE_BLINK_MS) % 2 == 0
+        return True
+    except Exception:
+        return False
+
+
 def get_gps_state():
     """Return the cached GPS state integer."""
     return _gps_state
@@ -198,6 +269,7 @@ def draw(
     Draw the right-aligned GPS / API / WiFi status cluster.
 
     Cluster layout (right-to-left): WiFi — gap — API — gap — GPS
+    Bluetooth on: a 3x3 "+" in the WiFi icon's lower-right corner (see ble_visible()).
 
     Parameters
     ----------
@@ -241,7 +313,14 @@ def draw(
     # WiFi (rightmost)
     x -= WIFI_W
     fb.fill_rect(x, y, WIFI_W, WIFI_H, 0)
+    # Bluetooth "+": the WiFi glyph is an inverted triangle, so its lower-right
+    # corner is empty. Centre the plus one column right of the glyph's last
+    # column (inside right_inset) — the WiFi icon itself never moves. Cleared
+    # first so a blink-off frame doesn't leave the previous plus behind.
+    fb.fill_rect(x + WIFI_W - 2, y + 3, 3, 3, 0)
     draw_wifi_signal(fb, x, y, level=wifi_level, color=1)
+    if ble_visible(now_ms):
+        draw_plus3(fb, x + WIFI_W - 2, y + 3, color=1)
     x -= g
 
     # API
@@ -273,3 +352,4 @@ def draw(
     x -= GPS_W
     fb.fill_rect(x, y, GPS_W, GPS_H, 0)
     draw_gps(fb, x, y, state=int(gps_state), color=1)
+

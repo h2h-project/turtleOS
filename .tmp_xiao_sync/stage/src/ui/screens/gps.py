@@ -1,4 +1,8 @@
 # src/ui/screens/gps.py  (MicroPython / Pico-safe)
+#
+# The stamp and the GPS on/off toggle are src.app.actions.gps_stamp /
+# gps_set_enabled, shared with the Bluetooth command handler; this screen
+# owns the fix display, the animated check and mapping results to text.
 
 import time
 import gc
@@ -88,15 +92,6 @@ class GPSScreen:
             self.enabled = False
             self._tel_mode = "auto"
 
-    def _save_config(self):
-        try:
-            from config import load_config, save_config
-            cfg = load_config() or {}
-            cfg["gps_enabled"] = self.enabled
-            save_config(cfg)
-        except Exception:
-            pass
-
     # ----------------------------
     # NMEA parsing helpers
     # ----------------------------
@@ -157,6 +152,11 @@ class GPSScreen:
             if len(p) < 8:
                 return
             self._hw_present = True
+            try:
+                from src.nav import gpsfix
+                gpsfix.note_gga(line)
+            except Exception:
+                pass
             if p[6] and p[6] != "0":
                 self.last_fix = True
             if p[7]:
@@ -422,24 +422,17 @@ class GPSScreen:
         if not gps:
             return
 
-        self.enabled = not self.enabled
-        self._save_config()
-        self._clear_data()
-
-        if self.enabled:
-            try:
-                gps.enable()
-            except Exception:
-                pass
-            self._start_animated_check(min_ms=1000)
-            self._draw(gps_flash=True)
-        else:
-            try:
-                gps.disable()
-            except Exception:
-                pass
-            self._check_active = False
-            self._draw()
+        from src.app import actions
+        code, _info = actions.gps_set_enabled(gps, not self.enabled)
+        if code == actions.OK:
+            self.enabled = not self.enabled
+            self._clear_data()
+            if self.enabled:
+                self._start_animated_check(min_ms=1000)
+                self._draw(gps_flash=True)
+            else:
+                self._check_active = False
+                self._draw()
 
         try:
             btn.reset()
@@ -450,18 +443,14 @@ class GPSScreen:
         """
         Stamp and record one telemetry reading on demand. Never blocks.
 
-        tick() commits the payload before returning — handed to the background
-        sender, or written straight to the flash queue when offline — so this
-        reports "Stamped" and returns immediately. Any network outcome is picked
-        up afterwards by _poll_send_outcome() from the main screen loop, which
-        keeps rapid stamping responsive: a blocking wait here would swallow the
-        next click.
+        actions.gps_stamp() commits the payload before returning — handed to
+        the background sender, or written straight to the flash queue when
+        offline — so this reports "Stamped" and returns immediately. Any
+        network outcome is picked up afterwards by _poll_send_outcome() from
+        the main screen loop, which keeps rapid stamping responsive: a blocking
+        wait here would swallow the next click.
         """
-        if telemetry is None:
-            self._send_state = "fail"
-            self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
-            self._draw()
-            return
+        from src.app import actions
 
         self._send_state = "sending"
         self._draw()
@@ -472,47 +461,28 @@ class GPSScreen:
         except Exception:
             pass
 
-        armed = False
-        try:
-            armed = bool(telemetry.send_manual())
-        except Exception as _e:
-            print("[GPS] manual send arm failed:", repr(_e))
+        code, _info = actions.gps_stamp(telemetry, cfg)
 
-        if armed:
-            try:
-                telemetry.tick(cfg)
-            except Exception as _e:
-                print("[GPS] manual send tick failed:", repr(_e))
-
-        result = "fail" if not armed else "stamped"
-
-        # No payload was built (RTC not yet synced, sampling in flight, or no
-        # values) — nothing was recorded, so do not claim it was.
-        if armed:
-            try:
-                if telemetry.manual_pending():
-                    telemetry.clear_manual()
-                    self._send_state = "nostamp"
-                    self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
-                    self._draw()
-                    try:
-                        btn.reset()
-                    except Exception:
-                        pass
-                    return
-            except Exception:
-                pass
-
-        if armed:
-            # A payload was built and committed (queued to flash or handed to
-            # the sender) — count it regardless of what the network does next.
+        if code == actions.OK:
+            # Committed (queued to flash or handed to the sender) — count it
+            # regardless of what the network does next.
             self._stamp_count += 1
             self._outcome_before_ms = before_ms
             self._outcome_watch_until_ms = time.ticks_add(time.ticks_ms(), 6000)
+            self._send_state = "stamped"
+        elif code == actions.ERR_NOT_STAMPED:
+            # No payload was built (RTC not synced, no fix and no values, a
+            # sample in flight) — nothing was recorded, so don't claim it was.
+            self._outcome_watch_until_ms = 0
+            self._send_state = "nostamp"
+            try:
+                btn.reset()
+            except Exception:
+                pass
         else:
             self._outcome_watch_until_ms = 0
+            self._send_state = "fail"
 
-        self._send_state = result
         self._send_result_until_ms = time.ticks_add(time.ticks_ms(), 1500)
         self._draw()
 

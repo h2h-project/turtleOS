@@ -39,10 +39,10 @@ def show_toggle_mode(oled, current_turtle_mode):
             pass
 
     try:
-        from config import load_config, save_config
-        cfg = load_config() or {}
-        cfg["turtle_mode"] = new_turtle_mode
-        save_config(cfg)
+        from src.app import actions
+        code, _info = actions.set_turtle_mode(new_turtle_mode)
+        if code != actions.OK:
+            print("[TOGGLEMODE] save failed: code", code)
     except Exception as e:
         print("[TOGGLEMODE] save failed:", repr(e))
 

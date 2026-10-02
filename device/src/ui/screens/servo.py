@@ -32,7 +32,7 @@ SERVO_HARD_MIN_US = 400
 SERVO_HARD_MAX_US = 2600
 
 # Wait this long after the double click before starting the sweep.
-WIND_TEST_DELAY_MS = 2000
+WIND_TEST_DELAY_MS = 500
 
 # Cosmetic gear animation: four rotations over one complete sweep.
 GEAR_ROTATION_TURNS = 4.0
@@ -179,25 +179,10 @@ class ServoScreen:
         except Exception:
             self._servo_configured = False
 
-        if not self._servo_configured:
-            self._connected = False
-            return
-
-        pwm = None
-
-        try:
-            pwm = self._make_pwm()
-            self._connected = True
-
-        except Exception:
-            self._connected = False
-
-        finally:
-            if pwm is not None:
-                try:
-                    pwm.deinit()
-                except Exception:
-                    pass
+        # No trial PWM here: PWM init always succeeds on ESP32-S3, so it proves
+        # nothing, and a create+deinit on GPIO7 tears down the LEDC channel the
+        # NavController's Servo already holds on the same pin.
+        self._connected = self._servo_configured
 
 
     # ----------------------------------------------------------------
@@ -520,7 +505,7 @@ class ServoScreen:
         self._wind_result = None
 
         self._draw(
-            "Wind test 2s",
+            "Wind test 0.5s",
             current_ma=self._read_current_ma(),
             angle_deg=self._read_angle_deg(),
         )
@@ -579,7 +564,7 @@ class ServoScreen:
             Advance to the next carousel screen.
 
         DOUBLE CLICK
-            Wait 2 seconds, then run one complete luff wind-finder sweep.
+            Wait 0.5 seconds, then run one complete luff wind-finder sweep.
 
         TRIPLE CLICK
             No Servo-screen action.

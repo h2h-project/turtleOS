@@ -105,10 +105,11 @@ DEFAULTS = {
     "joke_mode": False,
 
     # --- Servo ---
-    # Set to true only when the MG996R servo is physically wired to D8/GPIO7.
-    # PWM init always succeeds regardless of physical connection, so this flag
-    # is the only reliable way to know if a servo is actually present.
-    "servo_present": False,
+    # The MG996R servo is wired to D8/GPIO7 on every current turtle, so this is
+    # on by default. PWM init always succeeds regardless of physical connection,
+    # so this flag is the only way to say a servo is NOT present — set it false
+    # on a bench board with no servo attached.
+    "servo_present": True,
 
     # --- Mission destination (turtle mode) ---
     # The grand-mission target, assigned on hopeturtles.org and pushed to the

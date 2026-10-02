@@ -32,7 +32,7 @@ SERVO_HARD_MIN_US = 400
 SERVO_HARD_MAX_US = 2600
 
 # Wait this long after the double click before starting the sweep.
-WIND_TEST_DELAY_MS = 2000
+WIND_TEST_DELAY_MS = 500
 
 # Cosmetic gear animation: four rotations over one complete sweep.
 GEAR_ROTATION_TURNS = 4.0
@@ -179,25 +179,10 @@ class ServoScreen:
         except Exception:
             self._servo_configured = False
 
-        if not self._servo_configured:
-            self._connected = False
-            return
-
-        pwm = None
-
-        try:
-            pwm = self._make_pwm()
-            self._connected = True
-
-        except Exception:
-            self._connected = False
-
-        finally:
-            if pwm is not None:
-                try:
-                    pwm.deinit()
-                except Exception:
-                    pass
+        # No trial PWM here: PWM init always succeeds on ESP32-S3, so it proves
+        # nothing, and a create+deinit on GPIO7 tears down the LEDC channel the
+        # NavController's Servo already holds on the same pin.
+        self._connected = self._servo_configured
 
 
     # ----------------------------------------------------------------
@@ -229,7 +214,7 @@ class ServoScreen:
 
         if _ch:
             try:
-                _ch.draw(fb, o.width, icon_y=1)
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
@@ -327,7 +312,7 @@ class ServoScreen:
 
         if _ch:
             try:
-                _ch.draw(fb, o.width, icon_y=1)
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
@@ -520,7 +505,7 @@ class ServoScreen:
         self._wind_result = None
 
         self._draw(
-            "Wind test 2s",
+            "Wind test 0.5s",
             current_ma=self._read_current_ma(),
             angle_deg=self._read_angle_deg(),
         )
@@ -540,9 +525,11 @@ class ServoScreen:
             result = finder.run()
             self._wind_result = result
             self._draw_wind_result(result)
+            self._view = "wind"
 
         except Exception as e:
             print("[WIND] failed:", repr(e))
+            self._view = "failed"   # keep the failure on screen; no blink redraw
 
             self._draw(
                 "Wind failed",
@@ -577,7 +564,7 @@ class ServoScreen:
             Advance to the next carousel screen.
 
         DOUBLE CLICK
-            Wait 2 seconds, then run one complete luff wind-finder sweep.
+            Wait 0.5 seconds, then run one complete luff wind-finder sweep.
 
         TRIPLE CLICK
             No Servo-screen action.
@@ -597,6 +584,7 @@ class ServoScreen:
         self._servo_configured = None
         gc.collect()
 
+        self._view = "normal"
         self._draw()
         self._probe()
 
@@ -610,12 +598,24 @@ class ServoScreen:
 
         _tick_next = time.ticks_ms()
         _tick_every = 500
+        _ble = _ch.BleWatch() if _ch else None
 
         while True:
             try:
                 action = btn.poll_action()
             except Exception:
                 action = None
+
+            # Static screen: redraw only for the header's Bluetooth "+",
+            # keeping whichever view is up (a wind-finder result stays on
+            # screen until the next click).
+            if (action is None and _ble is not None and _ble.changed()
+                    and self._view != "failed"):
+                if self._view == "wind" and self._wind_result is not None:
+                    self._draw_wind_result(self._wind_result)
+                else:
+                    self._draw(current_ma=self._last_current_ma,
+                               angle_deg=self._last_angle_deg)
 
             # Single click: next carousel screen.
             if action == "single":

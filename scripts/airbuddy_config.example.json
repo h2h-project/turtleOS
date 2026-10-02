@@ -14,5 +14,5 @@
     "oled_col_offset": 2,
     "turtle_mode": false,
     "joke_mode": true,
-    "servo_present": false
+    "servo_present": true
 }
