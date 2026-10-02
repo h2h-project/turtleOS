@@ -119,7 +119,9 @@ device/               ← everything deployed to the microcontroller
     │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
     │   ├── wifi_manager_null.py  ← no-op stub for no-WiFi builds
     │   ├── telemetry_client.py   ← POST telemetry readings
-    │   ├── ble_service.py        ← Turtle Wrangler BLE peripheral (GATT contract v1, docs/wrangler/)
+    │   ├── ble_service.py        ← Turtle Wrangler BLE peripheral: radio, window, bonding, GATT table
+    │   ├── ble_telemetry.py      ← packs the Turtle-service characteristics (contract v1)
+    │   ├── ble_commands.py       ← command/result runner + opcode table (contract v1)
     │   └── net_caps.py           ← wifi_supported() probe
     └── lib/
         └── urequests.py          ← lightweight HTTP (no SSL by default)
@@ -160,7 +162,7 @@ Sequential steps run inside an animated `Booter` progress bar on the OLED (`devi
 | 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
 | 7 | **10DOF IMU, AS5600 sailpoint** (turtle_mode) | `step_imu()` probes the GY-87 **on I2C_EXT** (MPU6050 at 0x68, or 0x69 if AD0 is high; enables I2C bypass, finds the on-board QMC5883L/HMC5883L, then the BMP180 at 0x77) and keeps the single `GY87` instance in `_rt_imu` — NavController, the compass screen and the telemetry scheduler all receive it via `run(imu=...)`; nothing re-probes. A standalone GY-271 with no IMU still reports green (`QMC5883L standalone`). Then, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
-| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu` kwargs) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
+| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu`, `ble` kwargs; `ble` is the Turtle Wrangler `BleService`, see [Bluetooth](#bluetooth--turtle-wrangler-docswrangler)) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
 
 After the pipeline, `main.py`:
 1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`) — in turtle_mode this is just a blank fill, since `TurtleWaitingScreen` (built in step 8) draws the real first frame itself once `run()`'s main loop starts.
@@ -494,6 +496,54 @@ straggler back-fill is sketched in the `journey.py` header comment for later.
 
 ---
 
+## Bluetooth — Turtle Wrangler (`docs/wrangler/`)
+
+turtleOS is a BLE GATT peripheral for **Turtle Wrangler**, a near-field
+Android app. It's additive: the WiFi telemetry pipeline is unchanged, and
+the turtle never needs a phone to navigate. The wire format is **GATT
+contract v1** in `docs/wrangler/README.md`, which is the source of truth:
+change the contract there first. The build log and test status are in
+`docs/wrangler/01_firmware_ble.md`.
+
+| Piece | Where |
+|---|---|
+| Radio lifecycle, advertising, wrangle window, bonding, GATT table | `src/net/ble_service.py` (`init()` / `instance()`; built once in `step_init_runtime()`, turtle mode only) |
+| Turtle service values (Position, Nav, Targets, Sail, Power, IMU, Status, Shore) | `src/net/ble_telemetry.py` — getters from `run()` via `ble.attach_sources()`; packed only while a phone is connected |
+| Command/Result channel, opcode table | `src/net/ble_commands.py` (`OPCODES`) |
+| What every command (and OLED gesture) actually does | `src/app/actions.py` |
+| Bluetooth screen (on/off, pairing code, forget phones) | `src/ui/screens/bluetooth.py` |
+| Header "+" / waiting-screen rune | `connection_header.ble_on()` / `ble_visible()` / `BleWatch` |
+
+**Services:** Turtle `26d00001-…` (advertised), Command `26d00002-…`, and
+the standard Device Information `0x180A` (manufacturer, model, firmware
+`VERSION_NUM`, serial `device_id`). The turtle advertises its name as
+`device_name`.
+
+**Rules:**
+- **One code path per action.** An OLED gesture and its Bluetooth
+  command both call the same `actions.*` function. That function returns a
+  contract result code and writes config through `actions.write_config()`,
+  which mirrors into the live config the background tick reads. Never
+  write config directly from a screen or a handler.
+- **`ble.tick()` runs from `_bg_tick()`**, so it runs whichever screen is
+  showing. Blocking paths that never call `tick_fn` (the bench sweep, the
+  boot pipeline) simply pause Bluetooth work, while NimBLE keeps the link
+  up.
+- **Security:** commands need a bonded, encrypted, MITM-authenticated link
+  (`ble_require_bond`, default true; false is for bench work only).
+  Pairing uses a passkey shown on the OLED and is accepted **only while
+  the Bluetooth screen is showing**. Bonds live in `/ble_bonds.json`
+  (device-owned; excluded from the sync/install uploads).
+- **Wrangle window:** advertise for `ble_window_min` after boot, after
+  wake and on each Bluetooth-screen visit. `ble_enabled: false` is the
+  mission lockdown, and only the Bluetooth screen can undo it.
+- **Testing:** `tests/ble_decode.py` (decode nRF Connect hex) and
+  `tests/ble_fuzz_host.py` (fuzz the command channel on the host) run on
+  the laptop. `tests/ble_spike.py` / `ble_coex.py` are the Phase 0
+  hardware spikes.
+
+---
+
 ## Configuration (`config.py` / `config.json`)
 
 `load_config()` reads `config.json`, applies defaults, and migrates legacy keys. `save_config(cfg)` writes back atomically. **Writers use `update_config(changes)`**, which reloads, merges, normalizes and saves in one step. Calling `save_config()` on a dict loaded earlier silently reverts anything written in between (a Bluetooth command, the boot API sync, another screen).
@@ -769,6 +819,15 @@ The GY-87's BMP180 barometer sits at 0x77, which is also where a BME280 with SDO
 ### 18. The GY-87 is probed once — inject it, don't re-probe
 `step_imu()` builds the one `GY87` instance. It reaches `NavController(imu=)` → `HeadingSource(mag=, imu=)`, `CompassScreen(heading_src=)` and `TelemetryScheduler(imu=, heading_getter=)`. Re-probing from a screen re-runs the MPU6050 init and bypass sequence mid-bus and was the source of the old triplicated probe ladders. The GY-87 is only ever probed on **I2C_EXT**: its MPU6050 uses the factory address 0x68, which on I2C_SYS is the DS3231. The driver reads WHO_AM_I before writing anything, so a wrong-bus probe is a harmless read, but `step_imu()` never asks I2C_SYS for an IMU at all.
 
+### 19. The BLE IRQ handler only records — except the bond store
+`BleService._irq()` runs in MicroPython scheduler context. It appends to
+`_events` / `_cmd_inbox` and sets flags; `tick()` on the main loop does
+the printing, advertising, packing and command execution. Never do file,
+config or network work there, and never run a command handler there. The
+one exception is `_IRQ_GET_SECRET` / `_IRQ_SET_SECRET` / `_IRQ_PASSKEY_ACTION`:
+NimBLE needs their answer synchronously, so they read and write
+`_secrets` and `/ble_bonds.json` and call `gap_passkey()` inline.
+
 ---
 
 ## Key file locations at a glance
@@ -798,5 +857,9 @@ The GY-87's BMP180 barometer sits at 0x77, which is also where a BME280 with SDO
 | Air sensor + reading | `device/src/sensors/air.py` |
 | GPS parser | `device/src/sensors/ublox6gps.py` |
 | HTTP client | `device/src/lib/urequests.py` |
+| Gesture/command actions (shared by OLED + Bluetooth) | `device/src/app/actions.py` |
+| Bluetooth peripheral / telemetry / commands | `device/src/net/ble_service.py`, `ble_telemetry.py`, `ble_commands.py` |
+| Bluetooth screen | `device/src/ui/screens/bluetooth.py` |
+| GATT contract + Wrangler plans | `docs/wrangler/README.md`, `01_firmware_ble.md`, `02_android_app.md` |
 | XIAO installer scripts | `scripts/install_turtleOS.sh`, `scripts/install_airOS.sh` |
 | XIAO update (Synker) scripts | `scripts/sync_turtleOS.sh`, `scripts/sync_airOS.sh` |

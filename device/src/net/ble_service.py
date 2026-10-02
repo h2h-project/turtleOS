@@ -8,8 +8,9 @@
 #
 # Serves the Turtle service: Contract info + Turtle name (static) and the
 # eight telemetry characteristics packed by src/net/ble_telemetry.py
-# (Phase 3), plus the Command service (0201 Command / 0202 Result) run by
-# src/net/ble_commands.py (Phase 4).
+# (Phase 3), the Command service (0201 Command / 0202 Result) run by
+# src/net/ble_commands.py (Phase 4), and the standard Device Information
+# service 0x180A (Phase 7): manufacturer, model, firmware, serial.
 #
 # BONDING
 #   LE Secure Connections, MITM, IO capability DisplayOnly: the turtle shows
@@ -129,6 +130,27 @@ def _save_secrets():
         print("[BLE] bond save failed:", repr(e))
 
 
+MANUFACTURER = "Hope Turtles"
+
+
+def _device_info(cfg):
+    """(manufacturer, model, firmware, serial) for the 0x180A service."""
+    model = "turtleShell"
+    try:
+        from src.hal.platform import platform_tag
+        model = "turtleShell " + platform_tag()
+    except Exception:
+        pass
+    firmware = "?"
+    try:
+        from src.app.booter import VERSION_NUM
+        firmware = VERSION_NUM
+    except Exception:
+        pass
+    serial = str((cfg or {}).get("device_id") or "")
+    return MANUFACTURER, model, firmware, serial
+
+
 def advertised_name(cfg):
     """device_name (turtles_tb.name), or Turtle-<last 4 of device_id>
     before the first online boot has saved one."""
@@ -142,6 +164,7 @@ def advertised_name(cfg):
 class BleService:
     def __init__(self, cfg):
         self._name = advertised_name(cfg)
+        self._dis = _device_info(cfg)
         self._window_min = int((cfg or {}).get("ble_window_min", 10) or 0)
         self._ble = None
         self._active = False
@@ -288,7 +311,19 @@ class BleService:
                 (_uuid(0x0201), _F_WRITE),              # Command
                 (_uuid(0x0202), _F_READ | _F_NOTIFY),   # Result
             ))
-            (handles, (h_cmd, h_res)) = self._ble.gatts_register_services((svc, cmd_svc))
+            import bluetooth as _bt
+            dis_svc = (_bt.UUID(0x180A), (
+                (_bt.UUID(0x2A29), _F_READ),            # Manufacturer Name String
+                (_bt.UUID(0x2A24), _F_READ),            # Model Number String
+                (_bt.UUID(0x2A26), _F_READ),            # Firmware Revision String
+                (_bt.UUID(0x2A25), _F_READ),            # Serial Number String
+            ))
+            (handles, (h_cmd, h_res), dis_handles) = self._ble.gatts_register_services(
+                (svc, cmd_svc, dis_svc))
+            for h, text in zip(dis_handles, self._dis):
+                b = str(text).encode()[:64]
+                self._ble.gatts_set_buffer(h, max(len(b), 1))
+                self._ble.gatts_write(h, b)
             self._ble.gatts_set_buffer(h_cmd, CMD_BUFFER, False)
             self._ble.gatts_set_buffer(h_res, 64)
             h_info, h_name = handles[0], handles[1]

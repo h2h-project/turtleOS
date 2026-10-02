@@ -494,6 +494,47 @@ actions/config → result bytes). Not yet run on the turtle.
 
 ---
 
+### Phase 7 status — host work DONE; hardware checks deferred (2026-10-02)
+
+- **Device Information `0x180A`** is registered as the third GATT service:
+  Manufacturer `Hope Turtles`, Model `turtleShell <platform_tag>`,
+  Firmware `VERSION_NUM` (`src/app/booter.py`), Serial `device_id`.
+  Verified on the host that all three services register with the right
+  values.
+- **Malformed input:** `tests/ble_fuzz_host.py` drives the real
+  `CommandRunner` + `actions` + `config` with random writes: known and
+  unknown opcodes; empty, short, exact and over-long payloads; random
+  bytes; random nav states. It checks that the runner never raises, that
+  there is exactly one final result echoing opcode + seq, that nothing
+  stays busy, and that `ERR_BUSY` comes back during `IN_PROGRESS`.
+  **33,000 writes over 4 seeds: 0 problems.** Rerun after any change to
+  `ble_commands.py` or `actions.py`:
+  `python3 tests/ble_fuzz_host.py 10000 <seed>`.
+- **Reconnection:** Result `0202` is readable after a reconnect (since
+  Phase 4). A dropped link cancels the in-flight poll, but a queued
+  reboot / radio-off / sleep still happens.
+- **Docs:** `CLAUDE.md` now has a Bluetooth section (architecture,
+  rules, test tools), gotcha 19 (IRQ records only, except the bond
+  store), and the new files in the layout and key-file tables.
+
+**Deferred hardware checks (with the Phase 5/6 checklists, from the app):**
+- [ ] nRF Connect / the app reads `0x180A`: Hope Turtles · turtleShell
+      xiao_esp32s3 · 2.4.1 · 18
+- [ ] Drop the link mid-command (e.g. during a bench sweep); after
+      reconnecting, reading `0202` returns that command's final result
+- [ ] Coexistence under real load: the app connected with every
+      characteristic subscribed while telemetry posts on schedule; compare
+      POST latency with the Phase 0 numbers
+- [ ] Recheck the ~90 ms post-BLE latency offset seen in Phase 0
+- [ ] Current draw on battery (BLE off / advertising / connected) to set
+      the `ble_window_min` default
+
+**Firmware side complete.** All 21 contract opcodes and every
+characteristic are implemented; what remains is on-device testing,
+best done from the Wrangler app (`02_android_app.md`).
+
+---
+
 ## Out of scope for this plan
 
 - **Turtle-to-turtle BLE.** That's the bale mesh vision in
