@@ -377,6 +377,38 @@ These are the field-critical commands, and `GPS_STAMP` comes first.
 
 ---
 
+### Phase 5 status — BUILT; device testing deferred to the app (2026-10-02)
+
+The 11 commands are in `ble_commands.OPCODES`:
+- journey: `0x01`/`0x02`
+- destination: `0x03`–`0x06`
+- GPS: `GPS_STAMP` `0x20`, `GPS_SET_ENABLED` `0x21`
+- telemetry: `0x22` mode, `0x23` interval
+- `API_HANDSHAKE` `0x24`: `IN_PROGRESS`, then `OK` / `ERR_API_FAILED`,
+  with a 30 s timeout
+
+Each handler calls the same `src/app/actions.py` function as its OLED
+gesture, and only packs the contract's result payload. The full path
+(raw bytes → runner → real `actions`/`config`/`gpsfix` → result bytes)
+was verified on the host for all 22 cases, including every error code.
+Testing these by hand in nRF Connect was judged too tedious; they will
+be exercised from the Wrangler app instead.
+
+**Deferred device-test checklist (run from the app):**
+- [ ] `GPS_STAMP` refused in auto (WRONG_STATE), accepted in manual, and the
+      OLED GPS screen's count agrees with `stamps_session`
+- [ ] `JOURNEY_START` with and without a fix; `JOURNEY_END` with
+      `arrival_stamped` 1 and 0; the journey appears on hopeturtles.org
+- [ ] `DEST_SET_HERE` / `MISSION` / `COORDS` / `CLEAR` each change the
+      Targets characteristic and log `[NAV] route changed`
+- [ ] `TELEMETRY_SET_MODE` / `INTERVAL` reflected on the Logging screen and in
+      Status
+- [ ] `GPS_SET_ENABLED` 0/1 reflected in Status (flag only — GnssModule has
+      no power control)
+- [ ] `API_HANDSHAKE` reaches OK online and `ERR_API_FAILED` with WiFi off
+
+---
+
 ## Phase 6 — commands: sail, connectivity, system
 
 - `NAV_LUFF_SWEEP` (0x10) calls `NavController.begin_luff_sweep()`,
