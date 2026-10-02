@@ -765,9 +765,21 @@ def run(
     # Turtle Wrangler: hand the BLE service getters for everything its
     # telemetry characteristics report (src/net/ble_telemetry.py). Getters,
     # not values — nav and telemetry are built lazily and may be rebuilt.
+    def _ble_enter_sleep():
+        # Bluetooth SLEEP: the Sleep screen's own Good night -> sleep -> wake
+        # flow. Runs nested inside the BLE tick; the screen underneath
+        # redraws on its next cycle after waking.
+        scr = get_screen("sleep")
+        if scr is not None and hasattr(scr, "go_to_sleep"):
+            scr.go_to_sleep(btn, _bg_tick)
+
     if ble is not None:
         try:
             ble.attach_sources({
+                "wifi": lambda: wifi,
+                "bg": lambda: _background_process,
+                "servo_screen": lambda: get_screen("servo"),
+                "enter_sleep": _ble_enter_sleep,
                 "nav": lambda: _nav_cell[0],
                 "ina": lambda: _ina_dev,
                 "imu": lambda: _imu_dev,

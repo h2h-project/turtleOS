@@ -151,6 +151,22 @@ class SleepScreen:
                 except Exception:
                     pass
 
+    def go_to_sleep(self, btn, tick_fn=None):
+        """"Good night!" -> sleep until a single click -> "Good morning!".
+        Shared by the double-click here and the Bluetooth SLEEP command
+        (which reaches it through run()'s enter_sleep source)."""
+        self._toggle_on = True
+        self._set_led(True)                # LED on during goodnight message
+        self._draw(sleeping=True)          # "Good night!" + toggle ON
+        time.sleep_ms(3500)                # hold for 3.5 s
+        self._set_led(False)
+        self._do_sleep(btn, tick_fn)       # blocks until single click
+
+        # Wake confirmation
+        self._toggle_on = False
+        self._draw(waking=True)            # "Good morning!"
+        time.sleep_ms(2000)
+
     def show_live(self, btn, tick_fn=None):
         try:
             btn.reset()
@@ -181,17 +197,7 @@ class SleepScreen:
                 return "single"
 
             if action == "double":
-                self._toggle_on = True
-                self._set_led(True)                # LED on during goodnight message
-                self._draw(sleeping=True)          # "Good night!" + toggle ON
-                time.sleep_ms(3500)                # hold for 3.5 s
-                self._set_led(False)
-                self._do_sleep(btn, tick_fn)       # blocks until single click
-
-                # Wake confirmation
-                self._toggle_on = False
-                self._draw(waking=True)            # "Good morning!"
-                time.sleep_ms(2000)
+                self.go_to_sleep(btn, tick_fn)
                 self._draw()                       # back to normal idle screen
 
             time.sleep_ms(25)

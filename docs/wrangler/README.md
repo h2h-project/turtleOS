@@ -322,8 +322,8 @@ empty.
 
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
-| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV) · BUSY (sweep already running) |
-| `0x11` | SERVO_BENCH_SWEEP | — | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct · NO_HARDWARE (`servo_present` false) |
+| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV) · BUSY (sweep already running) |
+| `0x11` | SERVO_BENCH_SWEEP | — | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) |
 
 - The two sweeps are different operations and both exist on the OLED.
   NAV_LUFF_SWEEP is the non-blocking autonomous sweep and is what the app
@@ -360,7 +360,7 @@ empty.
 
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
-| `0x30` | WIFI_SET_ENABLED | `<B>` 0/1 | WiFi screen, double-click | on: IN_PROGRESS → OK · WIFI_FAILED; off: OK |
+| `0x30` | WIFI_SET_ENABLED | `<B>` 0/1 | WiFi screen, double-click | on: IN_PROGRESS → OK once the turtle has an IP · WIFI_FAILED after 25 s; off: OK |
 | `0x31` | WIFI_SET_CREDENTIALS | `<B>` ssid_len, ssid bytes, password bytes (rest of the payload) | **App-only** | IN_PROGRESS → OK · WIFI_FAILED (saved, but the connect failed) · BAD_LENGTH (SSID > 32 or password > 63 bytes, or the MTU is too small) |
 | `0x32` | CONNECTION_MODE_SET | `<B>` 0 wifi_auto · 1 wifi_manual | **App-only** | OK · BAD_VALUE (2 = lora is reserved) |
 | `0x33` | BLE_SET_ENABLED | `<B>` 0 | Bluetooth screen, double-click | OK, then firmware disconnects and stops the radio |
@@ -378,7 +378,7 @@ empty.
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
 | `0x40` | SLEEP | — | Hold flow → Sleep screen, double-click | OK, then the turtle sleeps and BLE shuts down |
-| `0x41` | SET_TURTLE_MODE | `<B>` 0 = airOS | Quint-click on the waiting screen / triple-click on the Version screen | OK, then the turtle reboots into airOS (no BLE service) |
+| `0x41` | SET_TURTLE_MODE | `<B>` 0 = airOS | Quint-click on the waiting screen / triple-click on the Version screen | `0`: OK, then the turtle reboots into airOS (no BLE service) · `1`: OK, nothing to do (already turtleOS) |
 | `0x42` | REBOOT | — | **App-only** (the OLED equivalent is a power cycle) | OK, then `machine.reset()` |
 | `0x43` | COMPASS_SET_OFFSET | `<h>` degrees, −180…180 | **App-only** (`compass_offset_deg` has no OLED writer) | OK · BAD_VALUE |
 

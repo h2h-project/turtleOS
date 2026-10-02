@@ -263,9 +263,20 @@ class TurtleData:
                 sweep = 1 if snap.get("sweeping") else 0
             except Exception:
                 pass
-        # confidence comes from the bench sweep (Phase 6); the nav sweep has none
+        # The nav sweep gives no confidence; the last bench sweep does. Its wind
+        # angle stands in until a nav sweep has produced one.
+        conf = None
+        try:
+            from src.app.actions import last_bench_result
+            b = last_bench_result()
+            if b is not None:
+                conf = b.get("confidence_pct")
+                if wind is None:
+                    wind = b.get("wind")
+        except Exception:
+            pass
         return struct.pack("<HHBB", _x10_u16(sail, True), _x10_u16(wind, True),
-                           sweep, NA_U8)
+                           sweep, _u8(conf))
 
     def sweeping(self):
         nav = self._g("nav")

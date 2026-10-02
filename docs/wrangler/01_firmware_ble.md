@@ -429,6 +429,52 @@ be exercised from the Wrangler app instead.
 
 ---
 
+### Phase 6 status — BUILT; device testing deferred (2026-10-02)
+
+All 21 contract opcodes are now in `ble_commands.OPCODES`. Phase 6 added:
+- sail: `0x10` NAV_LUFF_SWEEP (IN_PROGRESS, polls `nav.sweeping()`) and
+  `0x11` SERVO_BENCH_SWEEP;
+- connectivity: `0x30` WIFI_SET_ENABLED, `0x31` WIFI_SET_CREDENTIALS,
+  `0x32` CONNECTION_MODE_SET;
+- system: `0x40` SLEEP, `0x41` SET_TURTLE_MODE, `0x43` COMPASS_SET_OFFSET
+  (applied live via `HeadingSource.set_offset`).
+
+How the harder ones work:
+- **Bench sweep.** It calls the new `ServoScreen.run_bench_sweep()` (the
+  sweep blocks the main loop by design, with progress on the OLED). It
+  starts one tick after IN_PROGRESS so that notification goes out first.
+  Every bench result (OLED or BLE) is recorded via
+  `actions.note_bench_result()`. The Sail characteristic now reports its
+  confidence: jitter ratio 1× = 0 %, ≥ 5× = 100 %.
+- **WiFi.** It never touches the radio from the main loop when the
+  background thread exists: `request_wifi_check(cfg, force=True)`, then
+  "connected" means `wlan.ifconfig()` shows an IP (25 s timeout).
+  Credentials save first, then disconnect, then reconnect. If WiFi was off
+  at boot (`NullWiFiManager`), it connects inline like the WiFi screen
+  (12 s).
+- **Sleep.** It reuses the new `SleepScreen.go_to_sleep()` through run()'s
+  `enter_sleep` source, nested in the BLE tick. BLE is suspended while
+  asleep.
+
+Verified on the host for 17 cases (raw bytes → runner → real
+actions/config → result bytes). Not yet run on the turtle.
+
+**Deferred device-test checklist:**
+- [ ] **OLED regression (do first on the next sync):** Sleep-screen
+      double-click still goes Good night → sleep → Good morning; the Servo
+      screen's double-click sweep still shows its result.
+- [ ] `1101` bench sweep: progress on the OLED, `11-01-01` then
+      `11-01-00-…`; the link survives the blocking sweep; Sail
+      `confidence_pct` is set afterwards.
+- [ ] `4002` SLEEP: OK, then Good night; the phone disconnects; wake with a
+      click; advertising resumes.
+- [ ] `31…` WIFI_SET_CREDENTIALS re-joining the current network: IN_PROGRESS
+      then OK within ~10 s (the WiFi/BLE coexistence case from Phase 0).
+- [ ] `30..00` / `30..01` WiFi off/on; `0x10` nav sweep from ACQUIRE;
+      `0x41 1` no-op; `0x43` compass offset visible on the Compass screen.
+
+---
+
 ## Phase 7 — Device Information service and hardening
 
 - The standard `0x180A` service: manufacturer `Hope Turtles`, model

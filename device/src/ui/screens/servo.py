@@ -71,6 +71,7 @@ class ServoScreen:
 
         # Completed wind result remains visible until another action.
         self._wind_result = None
+        self._view = "normal"
 
 
     # ----------------------------------------------------------------
@@ -526,6 +527,11 @@ class ServoScreen:
             self._wind_result = result
             self._draw_wind_result(result)
             self._view = "wind"
+            try:
+                from src.app import actions
+                actions.note_bench_result(result)
+            except Exception:
+                pass
 
         except Exception as e:
             print("[WIND] failed:", repr(e))
@@ -537,6 +543,25 @@ class ServoScreen:
                 angle_deg=self._last_angle_deg,
             )
 
+
+    def run_bench_sweep(self):
+        """One complete bench sweep outside the carousel (Bluetooth
+        SERVO_BENCH_SWEEP). Blocks for the whole sweep and draws its
+        progress/result on the OLED like the double-click does. Returns the
+        WindFinder result dict, or {"ok": False, "error": ...}."""
+        self._probe()
+        if not self._connected:
+            return {"ok": False, "error": "no servo"}
+        if self._get_as5600() is None:
+            return {"ok": False, "error": "no AS5600"}
+        self._view = "normal"
+        try:
+            self._run_wind_finder()
+        finally:
+            self._release_pwm()
+        if self._view == "wind" and self._wind_result:
+            return self._wind_result
+        return {"ok": False, "error": "sweep failed"}
 
     # ----------------------------------------------------------------
     # Cleanup
