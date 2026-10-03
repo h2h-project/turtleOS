@@ -179,7 +179,7 @@ prompt_required() {
     while true; do
         read -r -p "$prompt: " reply
         if [[ -n "${reply}" ]]; then echo "$reply"; return; fi
-        echo "  (This field is required — please enter a value.)"
+        echo "  (This field is required — please enter a value.)" >&2
     done
 }
 
@@ -192,7 +192,7 @@ prompt_yes_no() {
         case "$(echo "$reply" | tr '[:upper:]' '[:lower:]')" in
             y|yes) echo "true";  return ;;
             n|no)  echo "false"; return ;;
-            *)     echo "  (Please answer y or n.)" ;;
+            *)     echo "  (Please answer y or n.)" >&2 ;;
         esac
     done
 }

@@ -181,7 +181,7 @@ prompt_required() {
     while true; do
         read -r -p "$prompt: " reply
         if [[ -n "${reply}" ]]; then echo "$reply"; return; fi
-        echo "  (This field is required — please enter a value.)"
+        echo "  (This field is required — please enter a value.)" >&2
     done
 }
 
@@ -194,7 +194,7 @@ prompt_yes_no() {
         case "$(echo "$reply" | tr '[:upper:]' '[:lower:]')" in
             y|yes) echo "true";  return ;;
             n|no)  echo "false"; return ;;
-            *)     echo "  (Please answer y or n.)" ;;
+            *)     echo "  (Please answer y or n.)" >&2 ;;
         esac
     done
 }
@@ -424,30 +424,86 @@ echo "Don't stress — you can always re-run this installer or edit"
 echo "config.json on the device later to change any of these settings."
 echo
 
+echo "--- Operating mode ---"
+echo "  1) turtleOS — hope turtle: sail servo, compass, navigation, Bluetooth (default)"
+echo "  2) airOS    — air-quality monitor: CO2, TVOC, temperature, humidity"
+while true; do
+    read -r -p "Start up in which mode? [default: 1]: " MODE_REPLY
+    case "${MODE_REPLY:-1}" in
+        1) TURTLE_MODE="true";  break ;;
+        2) TURTLE_MODE="false"; break ;;
+        *) echo "  (Please enter 1 or 2.)" ;;
+    esac
+done
+
+if [[ "$TURTLE_MODE" == "true" ]]; then
+    API_BASE="http://hopeturtles.org"
+    DASHBOARD="hopeturtles.org"
+    DASHBOARD_URL="https://hopeturtles.org"
+else
+    API_BASE="http://air2.earthen.io"
+    DASHBOARD="air2.earthen.io"
+    DASHBOARD_URL="http://air2.earthen.io"
+fi
+
+echo
 echo "--- Network ---"
 WIFI_ENABLED="$(prompt_yes_no "Enable WiFi? (required for telemetry uploads)" "y")"
 
 WIFI_SSID=""
 WIFI_PASSWORD=""
+TELEMETRY_MODE="off"
 TELEMETRY_ENABLED="false"
 TELEMETRY_POST_EVERY_S=120
-API_BASE="http://hopeturtles.org"
+MISSION_CONNECTION_MODE="wifi_auto"
 
 if [[ "$WIFI_ENABLED" == "true" ]]; then
     WIFI_SSID="$(prompt_required "WiFi network name (SSID)")"
     WIFI_PASSWORD="$(prompt_required "WiFi password")"
-    TELEMETRY_ENABLED="$(prompt_yes_no "Enable telemetry uploads to your hopeturtles.org dashboard?" "y")"
-    if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+
+    echo
+    echo "How should readings be logged to your $DASHBOARD dashboard?"
+    echo "  1) auto   — post a reading on a fixed interval (default)"
+    echo "  2) manual — only when you stamp a position by hand on the GPS screen"
+    echo "  3) off    — never log"
+    while true; do
+        read -r -p "Telemetry mode [default: 1]: " TEL_REPLY
+        case "${TEL_REPLY:-1}" in
+            1) TELEMETRY_MODE="auto";   break ;;
+            2) TELEMETRY_MODE="manual"; break ;;
+            3) TELEMETRY_MODE="off";    break ;;
+            *) echo "  (Please enter 1, 2, or 3.)" ;;
+        esac
+    done
+    [[ "$TELEMETRY_MODE" != "off" ]] && TELEMETRY_ENABLED="true"
+    if [[ "$TELEMETRY_MODE" == "auto" ]]; then
         echo "  tip: hit return to use the default value"
         TELEMETRY_POST_EVERY_S="$(prompt_default "How often to upload readings (seconds)" "120")"
+    fi
+
+    if [[ "$TURTLE_MODE" == "true" ]]; then
+        echo
+        echo "When should the turtle try to connect to WiFi to upload stored readings?"
+        echo "  1) automatically — retry on a backoff (15 min, growing to 12 h) (default)"
+        echo "  2) manually      — only when you triple-click into the connectivity screens."
+        echo "                     Best for a launched turtle: no home WiFi at sea, so"
+        echo "                     automatic scans just waste battery."
+        while true; do
+            read -r -p "Connection mode [default: 1]: " MCM_REPLY
+            case "${MCM_REPLY:-1}" in
+                1) MISSION_CONNECTION_MODE="wifi_auto";   break ;;
+                2) MISSION_CONNECTION_MODE="wifi_manual"; break ;;
+                *) echo "  (Please enter 1 or 2.)" ;;
+            esac
+        done
     fi
 fi
 
 echo
 echo "--- Device registration ---"
-echo "Your device ID and key come from your hopeturtles.org account."
-echo "If you haven't registered your turtle yet, visit:"
-echo "  https://hopeturtles.org"
+echo "Your device ID and key come from your $DASHBOARD account."
+echo "If you haven't registered your device yet, visit:"
+echo "  $DASHBOARD_URL"
 echo "and create an account, then register your device to receive these."
 echo
 
@@ -468,17 +524,49 @@ fi
 
 echo
 echo "--- Sensors and hardware ---"
-GPS_ENABLED="$(prompt_yes_no "Is a GPS module wired to the UART pins (D6/D7)?" "n")"
-SERVO_PRESENT="$(prompt_yes_no "Is the MG996R sail servo wired to pin D8 / GPIO7?" "y")"
+GPS_ENABLED="$(prompt_yes_no "Is a GPS module attached (the stacked L76K GNSS board, or one on D6/D7)?" "y")"
 
-echo
-echo "--- Compass calibration ---"
-echo "Point the turtle North, note the raw heading shown on the Compass screen,"
-echo "then enter the negative of that number here to zero the offset."
-echo "Example: if the raw reading is 80 when pointing North, enter -80."
-echo "Leave blank to use 0 and calibrate later."
-COMPASS_INPUT="$(prompt_default "Compass offset (degrees)" "0")"
-COMPASS_OFFSET_DEG="${COMPASS_INPUT:-0}"
+# Turtle-only hardware and tuning. In airOS mode these keep the firmware
+# defaults so config.json is still complete if the device is later switched
+# back to turtle_mode.
+SERVO_PRESENT="true"
+COMPASS_OFFSET_DEG=0
+ARRIVAL_RADIUS_M=300
+GPS_LOSS_SAFE_S=120
+LOW_BATT_PCT=20
+SAIL_MIN_DEG=10
+SAIL_MAX_DEG=170
+LUFF_SWEEP_DPS=8
+LUFF_RESWEEP_S=600
+LUFF_THRESHOLD_MULT=5.0
+NAV_CYCLE_MS=300
+BLE_ENABLED="true"
+BLE_WINDOW_MIN=10
+
+if [[ "$TURTLE_MODE" == "true" ]]; then
+    SERVO_PRESENT="$(prompt_yes_no "Is the MG996R sail servo wired to pin D8 / GPIO7?" "y")"
+
+    echo
+    echo "--- Compass calibration ---"
+    echo "Point the turtle North, note the raw heading shown on the Compass screen,"
+    echo "then enter the negative of that number here to zero the offset."
+    echo "Example: if the raw reading is 80 when pointing North, enter -80."
+    echo "Leave blank to use 0 and calibrate later."
+    COMPASS_INPUT="$(prompt_default "Compass offset (degrees)" "0")"
+    COMPASS_OFFSET_DEG="${COMPASS_INPUT:-0}"
+
+    echo
+    echo "--- Bluetooth (Turtle Wrangler app) ---"
+    echo "Bluetooth lets the Turtle Wrangler phone app read and steer the turtle"
+    echo "up close.  Turn it off for a mission voyage — it can only be turned back"
+    echo "on from the Bluetooth screen on the turtle itself."
+    BLE_ENABLED="$(prompt_yes_no "Enable Bluetooth?" "y")"
+    if [[ "$BLE_ENABLED" == "true" ]]; then
+        echo "The turtle advertises for a few minutes after boot, after waking, and"
+        echo "each time you open the Bluetooth screen.  0 = advertise all the time."
+        BLE_WINDOW_MIN="$(prompt_default "Bluetooth pairing window (minutes, 0-240)" "10")"
+    fi
+fi
 
 echo
 echo "--- Display ---"
@@ -496,24 +584,24 @@ DEST_NAME="Unassigned"
 DEST_LAT="0.0"
 DEST_LON="0.0"
 
-echo
-echo "--- Navigation tuning ---"
-echo "These control autopilot behaviour.  Press Enter to accept each default."
-echo "All values can be adjusted later by editing config.json on the device."
-echo
+if [[ "$TURTLE_MODE" == "true" ]]; then
+    echo
+    echo "--- Navigation tuning ---"
+    echo "These control autopilot behaviour.  Press Enter to accept each default."
+    echo "All values can be adjusted later by editing config.json on the device."
+    echo
 
-ARRIVAL_RADIUS_M="$(prompt_default "Arrival radius — distance that counts as 'arrived' (metres)" "5000")"
-GPS_LOSS_SAFE_S="$(prompt_default "GPS loss timeout — feather sail after this many seconds without a fix" "120")"
-LOW_BATT_PCT="$(prompt_default "Low-battery threshold — feather sail below this charge level (0-90 %)" "20")"
-SAIL_MIN_DEG="$(prompt_default "Sail servo minimum angle — lower physical stop (degrees)" "10")"
-SAIL_MAX_DEG="$(prompt_default "Sail servo maximum angle — upper physical stop (degrees)" "170")"
-LUFF_SWEEP_DPS="$(prompt_default "Luff sweep speed (degrees/second, 2-30)" "8")"
-LUFF_RESWEEP_S="$(prompt_default "Luff re-sweep interval in SAIL-NAV mode (seconds)" "600")"
-LUFF_THRESHOLD_MULT="$(prompt_default "Luff detection sensitivity multiplier (1.5-20.0)" "5.0")"
-NAV_CYCLE_MS="$(prompt_default "Autopilot cycle interval (milliseconds, 100-2000)" "300")"
+    ARRIVAL_RADIUS_M="$(prompt_default "Arrival radius — distance that counts as 'arrived' (metres, 20-5000)" "$ARRIVAL_RADIUS_M")"
+    GPS_LOSS_SAFE_S="$(prompt_default "GPS loss timeout — feather sail after this many seconds without a fix" "$GPS_LOSS_SAFE_S")"
+    LOW_BATT_PCT="$(prompt_default "Low-battery threshold — feather sail below this charge level (0-90 %)" "$LOW_BATT_PCT")"
+    SAIL_MIN_DEG="$(prompt_default "Sail servo minimum angle — lower physical stop (degrees)" "$SAIL_MIN_DEG")"
+    SAIL_MAX_DEG="$(prompt_default "Sail servo maximum angle — upper physical stop (degrees)" "$SAIL_MAX_DEG")"
+    LUFF_SWEEP_DPS="$(prompt_default "Luff sweep speed (degrees/second, 2-30)" "$LUFF_SWEEP_DPS")"
+    LUFF_RESWEEP_S="$(prompt_default "Luff re-sweep interval in SAIL-NAV mode (seconds)" "$LUFF_RESWEEP_S")"
+    LUFF_THRESHOLD_MULT="$(prompt_default "Luff detection sensitivity multiplier (1.5-20.0)" "$LUFF_THRESHOLD_MULT")"
+    NAV_CYCLE_MS="$(prompt_default "Autopilot cycle interval (milliseconds, 100-2000)" "$NAV_CYCLE_MS")"
+fi
 
-# turtle_mode is always true for this installer; XIAO has no LED so morse_bless stays off
-TURTLE_MODE="true"
 JOKE_MODE="false"
 MORSE_BLESS="false"
 
@@ -535,16 +623,22 @@ cat > "$TMP_CONFIG" <<EOF
   "joke_mode": $JOKE_MODE,
   "morse_bless": $MORSE_BLESS,
   "gps_enabled": $GPS_ENABLED,
+  "gps_module": "l76k",
   "servo_present": $SERVO_PRESENT,
   "oled_col_offset": $OLED_COL_OFFSET,
   "wifi_enabled": $WIFI_ENABLED,
   "wifi_ssid": "$(escape_json_string "$WIFI_SSID")",
   "wifi_password": "$(escape_json_string "$WIFI_PASSWORD")",
+  "telemetry_mode": "$TELEMETRY_MODE",
   "telemetry_enabled": $TELEMETRY_ENABLED,
   "telemetry_post_every_s": $TELEMETRY_POST_EVERY_S,
+  "mission_connection_mode": "$MISSION_CONNECTION_MODE",
   "api_base": "$(escape_json_string "$API_BASE")",
   "device_id": "$(escape_json_string "$DEVICE_ID")",
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
+  "ble_enabled": $BLE_ENABLED,
+  "ble_window_min": $BLE_WINDOW_MIN,
+  "ble_require_bond": true,
   "timezone_offset_min": $TZ_JSON,
   "compass_offset_deg": $COMPASS_OFFSET_DEG,
   "mission_dest_full_name": "$(escape_json_string "$DEST_NAME")",
@@ -755,7 +849,12 @@ cat <<'WAVES'
 
 WAVES
 
-echo "Your hope turtle is ready.  Wire up your hardware and it's time to sail!"
+if [[ "$TURTLE_MODE" == "true" ]]; then
+    echo "Your hope turtle is ready.  Wire up your hardware and it's time to sail!"
+else
+    echo "Your device is set to airOS mode.  Wire up your air sensors and start monitoring!"
+    echo "(To switch to turtleOS later, set \"turtle_mode\": true in config.json.)"
+fi
 echo
 echo "Watch the first boot live (press Ctrl+D inside the REPL to reboot, Ctrl+] to exit):"
 echo
@@ -766,5 +865,5 @@ echo "  ./scripts/sync_turtleOS.sh"
 echo
 echo "Full wiring guide: wiring_guide.md"
 echo "Hardware list:     hardware_stack.md"
-echo "Project home:      https://hopeturtles.org"
+echo "Project home:      $DASHBOARD_URL"
 echo
