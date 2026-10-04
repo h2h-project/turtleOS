@@ -181,7 +181,9 @@ reads everything once on connect, then relies on notifications.
 **`0114` Power** — `voltage_mV u16`, `current_mA i16`, `soc_pct u8`
 - Source: the shared `ina_dev` (INA219). `soc_pct` is the estimate from
   `NavController._battery_pct()` and must not be computed a second time.
-  `current_mA` is positive when charging.
+  `current_mA` is the INA219's raw reading: **negative = charging**
+  (current flowing into the pack), positive = discharging. That's the
+  same sign the OLED's battery overlay interprets (`turtle_waiting.py`).
 
 **`0115` IMU / baro** — `pitch_x10 i16`, `roll_x10 i16`,
 `pressure_hPa_x10 u16`
