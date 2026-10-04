@@ -104,6 +104,27 @@ with its result displayed.
 
 ---
 
+### Phase 1 status — DONE (2026-10-04)
+
+The repo is **h2h-project/turtle_wrangler**: Kotlin + Compose, AGP 9.4.1,
+Gradle 9.8.0, Kotlin 2.4.20, minSdk 31, compile/targetSdk 37, with
+MapLibre chosen for Phase 3. Tested on a Redmi Note 13 (HyperOS 3,
+Android 16) against turtle 18 (Applemore), firmware 2.5.0:
+- scan;
+- connect (contract v1, MTU 185, all subscriptions);
+- passkey pairing from the OLED;
+- the Device Information card;
+- a command round trip ("Test command: Done").
+
+Found and fixed: Android sometimes drops the very first link about 0.4 s
+in (status 22). Setup now stops on a drop (keeping the real reason) and
+retries once automatically. HyperOS needs **Developer options → Install
+via USB** (Mi account) before `adb install` works, and asks to confirm
+each install on the phone. The decoders are covered by JVM tests using
+real bytes from Applemore.
+
+---
+
 ## Phase 2 — Dashboard
 
 - Heading, bearing to target, distance to target, battery (V / mA /
