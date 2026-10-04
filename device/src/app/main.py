@@ -787,6 +787,8 @@ def run(
                 "status": lambda: status,
                 "cfg": lambda: _cfg_cell[0],
                 "telemetry": lambda: telemetry,
+                "air": lambda: air,
+                "rtc": lambda: rtc,
             })
         except Exception as e:
             print("[BLE] attach sources failed:", repr(e))

@@ -26,6 +26,8 @@ LAYOUTS = {
     "0116": ("Status", "<IBBHHH", ["flags", "telemetry_mode", "connection_mode",
                                    "interval_s", "queue_count", "stamps_session"]),
     "0117": ("Shore sync / journey", "<III", ["last_shore_sync", "journey_id", "device_now"]),
+    "0118": ("Environment", "<hHhhH", ["aht_temp_x10", "aht_rh_x10", "bmp_temp_x10",
+                                       "rtc_temp_x10", "pressure_hPa_x10"]),
 }
 
 ENUMS = {

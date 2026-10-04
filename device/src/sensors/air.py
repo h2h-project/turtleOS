@@ -969,6 +969,21 @@ class AirSensor:
         except Exception:
             return 0
 
+    def aht_now(self):
+        """(temp_c, humidity) straight from the AHT21/AHT10, or None.
+
+        One direct measurement (~80 ms) with none of read_quick()'s ENS160
+        retry work — for the Bluetooth Environment characteristic, which
+        refreshes every few seconds while a phone is connected."""
+        try:
+            self._ensure_hw()
+            a = getattr(self, "_aht", None)
+            if a is None:
+                return None
+            return a.read()
+        except Exception:
+            return None
+
     def read_quick(self, source="summary"):
         """
         Faster read intended for live UI refresh.

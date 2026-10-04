@@ -33,6 +33,7 @@ POWER = 0x0114
 IMU = 0x0115
 STATUS = 0x0116
 SHORE = 0x0117
+ENVIRONMENT = 0x0118
 
 # (short id, refresh ms, force-notify ms or 0)
 SCHEDULE = (
@@ -44,6 +45,7 @@ SCHEDULE = (
     (IMU, 1000, 0),
     (STATUS, 2000, 0),
     (SHORE, 5000, 60000), # device_now ticks every second; notify it 1/min
+    (ENVIRONMENT, 5000, 0),  # control-bottle conditions; AHT21 read ~80 ms
 )
 
 _NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
@@ -159,6 +161,8 @@ class TurtleData:
     """Packs each characteristic from getter callables:
 
         nav()        NavController or None
+        air()        AirSensor or None (AHT21 temp + humidity)
+        rtc()        run()'s rtc_info dict (DS3231 "temp_c")
         ina()        INA219 or None
         imu()        GY87 or None
         gps()        GnssModule or None
@@ -400,6 +404,31 @@ class TurtleData:
         return struct.pack("<IBBHHH", f, mode, conn, interval,
                            min(self._queue, NA_U16 - 1), stamps)
 
+    def environment(self):
+        """Conditions inside the control bottle:
+        <hHhhH> aht_temp_x10, aht_rh_x10, bmp_temp_x10, rtc_temp_x10, pressure_hPa_x10."""
+        aht_t = aht_rh = bmp_t = rtc_t = press = None
+        air = self._g("air")
+        if air is not None and hasattr(air, "aht_now"):
+            r = air.aht_now()
+            if r is not None:
+                aht_t, aht_rh = r
+        imu = self._g("imu")
+        if imu is not None and getattr(imu, "baro", None) is not None:
+            try:
+                r = imu.baro_read()
+                if r is not None:
+                    bmp_t = r[0]
+                    if r[1] is not None and float(r[1]) > 0:
+                        press = float(r[1])
+            except Exception:
+                pass
+        rtc = self._g("rtc")
+        if isinstance(rtc, dict):
+            rtc_t = rtc.get("temp_c")
+        return struct.pack("<hHhhH", _x10_i16(aht_t), _x10_u16(aht_rh),
+                           _x10_i16(bmp_t), _x10_i16(rtc_t), _x10_u16(press))
+
     def shore(self):
         jid = 0
         try:
@@ -429,6 +458,8 @@ class TurtleData:
             return self.status()
         if cid == SHORE:
             return self.shore()
+        if cid == ENVIRONMENT:
+            return self.environment()
         return None
 
     def period(self, cid, base_ms):

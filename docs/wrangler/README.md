@@ -122,6 +122,7 @@ reads everything once on connect, then relies on notifications.
 | `0115` | IMU / baro | R N | `<hhH>` | 6 | 1 Hz |
 | `0116` | Status | R N | `<IBBHHH>` | 12 | on change |
 | `0117` | Shore sync / journey | R N | `<III>` | 12 | on change, + 1/min for the clock |
+| `0118` | Environment *(added 2026-10-04)* | R N | `<hHhhH>` | 10 | 0.2 Hz, on change |
 
 **`0101` Contract info** — `contract_version u8`, `turtle_mode u8`
 - `contract_version` = **1**. The app reads this before anything else.
@@ -225,6 +226,22 @@ reads everything once on connect, then relies on notifications.
   its start time. 0 means no journey is open.
 - `device_now`: the turtle's RTC in unix seconds, or 0 when not synced.
   The app can show clock drift against the phone's clock.
+
+**`0118` Environment** — `aht_temp_x10 i16`, `aht_rh_x10 u16`,
+`bmp_temp_x10 i16`, `rtc_temp_x10 i16`, `pressure_hPa_x10 u16`
+- Conditions **inside the control bottle**, for spotting overheating and
+  (through humidity) a leak.
+- **AHT21:** air temperature and relative humidity, the headline
+  "bottle" reading, via `AirSensor.aht_now()`.
+- **BMP180:** temperature and pressure, from the shared `GY87`. Pressure
+  is also in `0115`, repeated here so this one characteristic is the
+  whole picture.
+- **DS3231:** the RTC's die temperature, i.e. the board temperature,
+  from `run()`'s `rtc` dict (refreshed about every 70 s).
+- Each missing sensor reads as its sentinel.
+- **Added within v1** (a new characteristic is not a breaking change).
+  An app must treat it as optional: a turtle on older firmware doesn't
+  have it.
 
 ### Command protocol
 
