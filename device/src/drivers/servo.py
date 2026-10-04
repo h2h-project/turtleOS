@@ -8,14 +8,29 @@ HARD_MIN_US = 400
 HARD_MAX_US = 2600
 
 
+def _quiet_pwm(pin, freq):
+    """A PWM on pin sending no pulses (duty 0) until the first real write.
+
+    A bare PWM(Pin(n)) starts at 50 % duty — at 50 Hz a 10 ms pulse, which
+    makes a servo twitch and hunt from boot until the first angle is
+    written. MicroPython 1.28 can refuse the keyword constructor on a pin
+    that already has a PWM ("PWM is inactive"), so fall back to fetching
+    the pin's PWM and re-initialising it."""
+    try:
+        return PWM(Pin(pin), freq=freq, duty_u16=0)
+    except Exception:
+        p = PWM(Pin(pin))
+        p.init(freq=freq, duty_u16=0)
+        return p
+
+
 class Servo:
     def __init__(self, pin, freq=50, min_us=1000, max_us=2000):
         self.pin = pin
         self.freq = freq
         self.min_us = min_us
         self.max_us = max_us
-        self.pwm = PWM(Pin(pin))
-        self.pwm.freq(freq)
+        self.pwm = _quiet_pwm(pin, freq)
 
     def write_us(self, us):
         us = max(self.min_us, min(self.max_us, us))
@@ -42,7 +57,7 @@ class Servo:
         try:
             self.pwm.duty_u16(duty)
         except Exception:
-            self.pwm = PWM(Pin(self.pin), freq=self.freq)
+            self.pwm = _quiet_pwm(self.pin, self.freq)
             self.pwm.duty_u16(duty)
 
     def center(self):

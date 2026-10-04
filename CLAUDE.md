@@ -569,6 +569,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
 | `compass_offset_deg` | int | `0` | magnetic declination correction |
 | `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
+| `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |

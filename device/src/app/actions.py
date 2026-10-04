@@ -657,6 +657,9 @@ def nav_luff_sweep(nav):
             return ERR_NO_HARDWARE, {}
         if nav.sweeping():
             return ERR_BUSY, {}
+        if not nav.autopilot_sail():
+            print("[NAV] luff sweep refused: autopilot_sail is off")
+            return ERR_WRONG_STATE, {"state": "AUTOPILOT_OFF"}
         if nav.begin_luff_sweep():
             print("[NAV] luff sweep started")
             return IN_PROGRESS, {}

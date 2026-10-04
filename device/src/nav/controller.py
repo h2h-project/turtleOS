@@ -28,6 +28,9 @@ class NavController:
         self._feather_applied = False
         self._servo_us = None          # last pulse written to the servo (us)
         self._manual_until = None      # ticks_ms: hand control ends (SERVO_SET_ANGLE)
+        # autopilot_sail false: the autopilot never moves the servo (no
+        # steering, feathering or luff sweeps); only hand control does.
+        self._autopilot = bool(cfg.get("autopilot_sail", True))
         # The servo's full travel, just inside its end stops (per servo
         # model; config.py). Hand control spans exactly this range.
         self._min_us = int(cfg.get("servo_min_us", 500))
@@ -79,7 +82,7 @@ class NavController:
 
     def begin_luff_sweep(self):
         """Start a sweep (ACQUIRE first-fix, or manual re-sweep in SAIL_NAV)."""
-        if sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
+        if not self._autopilot or sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
             return False
         return self._sweep.start()
 
@@ -93,6 +96,10 @@ class NavController:
 
     def servo_present(self):
         return self._servo is not None
+
+    def autopilot_sail(self):
+        """False when config autopilot_sail is off: hand control only."""
+        return self._autopilot
 
     def manual_sail(self, deg, hold_ms):
         """Move the servo by hand to deg (0..180 of its full travel).
@@ -227,6 +234,14 @@ class NavController:
         # re-sweep) until the hold runs out. A sweep can't be active here —
         # manual_sail() refuses during one.
         if self.manual_hold_s(now) > 0:
+            self._last_nav_ms = None
+            return
+
+        # Autopilot sail control switched off (config autopilot_sail): GPS and
+        # route keep updating above, but nothing here touches the servo.
+        if isinstance(cfg, dict):
+            self._autopilot = bool(cfg.get("autopilot_sail", True))
+        if not self._autopilot and not self._sweep.active():   # a running sweep finishes
             self._last_nav_ms = None
             return
 
