@@ -160,6 +160,35 @@ real bytes from Applemore.
 - **Cross-track gauge** from `0111 Nav`. It shows "—" until the firmware
   computes XTE (the contract sends `0x7FFF` meanwhile).
 
+### Phase 3 status — BUILT, awaiting phone test (2026-10-04)
+
+- **Navigate tab.** It has three cards:
+  - **Course:** distance, bearing, turn, nav state, and the cross-track
+    gauge (the scale is ±25 m and grows with the error).
+  - **Destination:** "Your target" and "Mission target", with the active
+    one marked, and the distance of each from the turtle.
+  - **Journey:** state from Status bit 3, plus start time and elapsed
+    time from `journey_id`.
+- **Confirmation first.** Every action asks before sending. The set-here
+  dialog says it uses the turtle's GPS and shows the turtle's current
+  fix, or warns that there is none.
+- **After a set-here,** the app offers "Start journey now?".
+- **Result payloads are read back:**
+  - the `JOURNEY_START` id;
+  - the `DEST_SET_HERE` lat/lon;
+  - the `JOURNEY_END` `arrival_stamped`, where 0 shows "Journey ended —
+    arrival point not recorded (no GPS)".
+- **Pick on map.** A MapLibre 13.6.1 full-screen picker: pan under a
+  fixed crosshair. It uses the OpenFreeMap `liberty` style (OSM vector
+  tiles, no API key). This is the app's only internet use, so it needs
+  data or WiFi on the phone; the phone's own location is never used.
+  The map shows three markers:
+  - the turtle (solid green);
+  - your target (a dark ring);
+  - the mission (grey).
+- **Commands are serialised.** The ViewModel's `busy` flag disables the
+  buttons while one is in flight.
+
 ---
 
 ## Phase 4 — GPS (manual position stamps)
