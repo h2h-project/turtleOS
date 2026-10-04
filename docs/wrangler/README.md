@@ -117,7 +117,7 @@ reads everything once on connect, then relies on notifications.
 | `0110` | Position | R N | `<iiBBH>` | 12 | 1 Hz (one per GPS epoch) |
 | `0111` | Nav | R N | `<HHIhBBB>` | 13 | 1 Hz |
 | `0112` | Targets | R N | `<iiiiB>` | 17 | on change |
-| `0113` | Sail | R N | `<HHBB>` | 6 | 2 Hz while sweeping, else 1 Hz |
+| `0113` | Sail | R N | `<HHBBHB>` | 9 (6 before 2026-10-05) | 2 Hz while sweeping, else 1 Hz |
 | `0114` | Power | R N | `<HhB>` | 5 | 0.2 Hz, or immediately on ≥ 1 % SoC change |
 | `0115` | IMU / baro | R N | `<hhH>` | 6 | 1 Hz |
 | `0116` | Status | R N | `<IBBHHH>` | 12 | on change |
@@ -169,7 +169,9 @@ reads everything once on connect, then relies on notifications.
   without a separate command.
 
 **`0113` Sail** — `sail_angle_x10 u16`, `wind_angle_x10 u16`,
-`sweep_state u8`, `confidence_pct u8`
+`sweep_state u8`, `confidence_pct u8`, then *(appended within v1,
+2026-10-05; older firmware sends only the first 6 bytes)*
+`servo_pos_x10 u16`, `manual_hold_s u8`
 - `sail_angle`: AS5600 angle via `snapshot()["sail"]`.
 - `wind_angle`: the latest result from whichever sweep ran last (nav
   sweep: `NavController.wind_angle()`; bench sweep: the `WindFinder`
@@ -178,6 +180,14 @@ reads everything once on connect, then relies on notifications.
   running.
 - `confidence_pct`: comes from the bench sweep's jitter score. The nav
   sweep (`luff.py`) produces no confidence, so it reports `0xFF`.
+- `servo_pos`: the last servo position **commanded**, by the
+  autopilot or by hand, on the `SERVO_SET_ANGLE` scale: 0–180 spans the
+  servo's full travel, `servo_min_us` → `servo_max_us`.
+  `NavController.servo_position()`; `0xFFFF` until the servo has been
+  written. It is the command, not a measurement; `sail_angle` is the
+  measurement.
+- `manual_hold_s`: seconds of hand control left (0 = the autopilot
+  owns the servo). `NavController.manual_hold_s()`, capped at 254.
 
 **`0114` Power** — `voltage_mV u16`, `current_mA i16`, `soc_pct u8`
 - Source: the shared `ina_dev` (INA219). `soc_pct` is the estimate from
@@ -343,6 +353,15 @@ empty.
 |---|---|---|---|---|
 | `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV) · BUSY (sweep already running) |
 | `0x11` | SERVO_BENCH_SWEEP | — | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) |
+| `0x12` | SERVO_SET_ANGLE *(added 2026-10-05)* | `<B>` 0–180 | **App-only** (Navigate servo dial) | OK `<H>` pulse written (µs) · BAD_VALUE (> 180) · BUSY (a luff sweep is moving the servo) · NO_HARDWARE (no NavController or `servo_present` false) |
+
+`SERVO_SET_ANGLE` maps 0–180 linearly onto `servo_min_us` →
+`servo_max_us`, the servo's own end stops (config), **not** onto the
+autopilot's `sail_min_deg` / `sail_max_deg` limits. Each command pauses
+the autopilot's servo writes (steering, feathering, the scheduled
+re-sweep) for 60 s (`actions.SERVO_MANUAL_HOLD_MS`). After that,
+navigation takes the servo back on its own. The app sends one command
+at a time while the dial is dragged, always with the latest angle.
 
 - The two sweeps are different operations and both exist on the OLED.
   NAV_LUFF_SWEEP is the non-blocking autonomous sweep and is what the app

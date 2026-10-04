@@ -416,6 +416,17 @@ def _op_set_turtle_mode(ctx, payload):
     return OK, b"", ("after", AFTER_RESULT_MS, _reset)
 
 
+def _op_servo_set_angle(ctx, payload):
+    """0x12 SERVO_SET_ANGLE <B> 0..180 of the servo's full travel. OK <H>
+    the pulse written (us). Pauses autopilot servo writes for 60 s. The
+    app's dial sends a stream of these while dragging, one at a time."""
+    from src.app import actions
+    code, info = actions.servo_set_angle(_get(ctx, "nav"), payload[0])
+    if code == OK:
+        return code, struct.pack("<H", info["us"]), None
+    return code, b"", None
+
+
 def _op_compass_set_offset(ctx, payload):
     """0x43 COMPASS_SET_OFFSET <h> degrees, -180..180; applied live."""
     from src.app import actions
@@ -447,6 +458,7 @@ OPCODES = {
     0x24: (0, _op_api_handshake),
     0x10: (0, _op_nav_luff_sweep),
     0x11: (0, _op_servo_bench_sweep),
+    0x12: (1, _op_servo_set_angle),
     0x30: (1, _op_wifi_set_enabled),
     0x31: (("min", 2), _op_wifi_set_credentials),
     0x32: (1, _op_connection_mode_set),

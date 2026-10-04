@@ -673,6 +673,41 @@ def nav_luff_sweep(nav):
         return ERR_INTERNAL, {}
 
 
+# Hand control pauses the autopilot's servo writes this long after the
+# last move, then steering resumes on its own.
+SERVO_MANUAL_HOLD_MS = 60_000
+
+
+def servo_set_angle(nav, deg):
+    """Move the sail servo by hand: deg 0..180 spans its full travel
+    (servo_min_us..servo_max_us, one end stop to the other). App-only
+    (Turtle Wrangler's servo dial); no OLED equivalent.
+
+    OK               info: {"deg", "us"}
+    ERR_BAD_VALUE    deg outside 0..180
+    ERR_BUSY         a luff sweep is moving the servo
+    ERR_NO_HARDWARE  no NavController, or servo_present is false
+    """
+    try:
+        try:
+            d = int(deg)
+        except Exception:
+            return ERR_BAD_VALUE, {}
+        if not 0 <= d <= 180:
+            return ERR_BAD_VALUE, {}
+        if nav is None or not nav.servo_present():
+            return ERR_NO_HARDWARE, {}
+        if nav.sweeping():
+            return ERR_BUSY, {}
+        us = nav.manual_sail(d, SERVO_MANUAL_HOLD_MS)
+        if us is None:
+            return ERR_INTERNAL, {}
+        return OK, {"deg": d, "us": us}
+    except Exception as e:
+        print("[SAIL] manual set err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
 # Last servo bench sweep (Servo screen double-click or SERVO_BENCH_SWEEP),
 # reported by the Sail characteristic: wind angle + confidence.
 _bench = None

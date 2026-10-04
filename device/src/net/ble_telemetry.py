@@ -279,8 +279,17 @@ class TurtleData:
                     wind = b.get("wind")
         except Exception:
             pass
-        return struct.pack("<HHBB", _x10_u16(sail, True), _x10_u16(wind, True),
-                           sweep, _u8(conf))
+        # Appended within v1 (2026-10-05): the commanded servo position on
+        # the 0..180 dial scale (full travel) and seconds of hand control left.
+        pos = hold = None
+        if nav is not None:
+            try:
+                pos = nav.servo_position()
+                hold = min(nav.manual_hold_s(), 254)
+            except Exception:
+                pass
+        return struct.pack("<HHBBHB", _x10_u16(sail, True), _x10_u16(wind, True),
+                           sweep, _u8(conf), _x10_u16(pos, True), _u8(hold))
 
     def sweeping(self):
         nav = self._g("nav")
