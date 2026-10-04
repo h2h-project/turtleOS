@@ -468,7 +468,7 @@ read it without knowing turtleOS:
 - Manufacturer Name String: `Hope Turtles`
 - Model Number String: `turtleShell` (with `platform_tag()` appended)
 - Firmware Revision String: `VERSION_NUM` from `src/app/booter.py` (e.g.
-  `2.4.1`)
+  `2.5.0`)
 - Serial Number String: `device_id`
 
 ### Versioning

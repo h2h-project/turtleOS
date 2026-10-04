@@ -518,8 +518,11 @@ actions/config → result bytes). Not yet run on the turtle.
   store), and the new files in the layout and key-file tables.
 
 **Deferred hardware checks (with the Phase 5/6 checklists, from the app):**
-- [ ] nRF Connect / the app reads `0x180A`: Hope Turtles · turtleShell
-      xiao_esp32s3 · 2.4.1 · 18
+- [x] nRF Connect / the app reads `0x180A`: Hope Turtles · turtleShell
+      xiao_esp32s3 · 2.4.1 · 18. **Done 2026-10-04:** the first Turtle
+      Wrangler build (app Phase 1, Redmi Note 13 / HyperOS 3) scanned,
+      connected (contract v1, MTU 185), paired with the OLED passkey and
+      showed the Device card. turtleOS was bumped to **2.5.0** to mark it.
 - [ ] Drop the link mid-command (e.g. during a bench sweep); after
       reconnecting, reading `0202` returns that command's final result
 - [ ] Coexistence under real load: the app connected with every
