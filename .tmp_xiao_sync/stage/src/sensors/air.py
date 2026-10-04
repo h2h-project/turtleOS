@@ -724,6 +724,12 @@ class AirSensor:
         if self._env_values_reasonable(bme280_temp, bme280_rh):
             return float(bme280_temp), float(bme280_rh), "bme280"
 
+        # BMP280 (no humidity): pair its temperature with another sensor's RH
+        if bme280_rh is None and self._temp_ok(bme280_temp):
+            for other_rh in (aht21_rh, aht10_rh, scd41_rh):
+                if self._rh_ok(other_rh):
+                    return float(bme280_temp), float(other_rh), "bme280"
+
         # Then AHT21
         if self._env_values_reasonable(aht21_temp, aht21_rh):
             return float(aht21_temp), float(aht21_rh), "aht21"

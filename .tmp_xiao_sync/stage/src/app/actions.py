@@ -673,6 +673,38 @@ def nav_luff_sweep(nav):
         return ERR_INTERNAL, {}
 
 
+# Last servo bench sweep (Servo screen double-click or SERVO_BENCH_SWEEP),
+# reported by the Sail characteristic: wind angle + confidence.
+_bench = None
+
+# WindFinder's confidence is a jitter ratio against the calm baseline. 1x =
+# no luff above calm (0 %), >= 5x = unmistakable (100 %) — 5x is also the nav
+# sweep's own luff threshold (luff_threshold_mult default).
+BENCH_CONF_FULL_RATIO = 5.0
+
+
+def bench_confidence_pct(ratio):
+    try:
+        r = float(ratio)
+    except Exception:
+        return None
+    pct = (r - 1.0) / (BENCH_CONF_FULL_RATIO - 1.0) * 100.0
+    return int(max(0, min(100, round(pct))))
+
+
+def note_bench_result(result):
+    global _bench
+    if isinstance(result, dict) and result.get("ok"):
+        _bench = {"wind": result.get("wind_angle_deg"),
+                  "alt": result.get("opposite_angle_deg"),
+                  "confidence_pct": bench_confidence_pct(result.get("confidence"))}
+
+
+def last_bench_result():
+    """{"wind", "alt", "confidence_pct"} of the last good bench sweep, or None."""
+    return _bench
+
+
 def compass_set_offset(deg, heading=None):
     """Set compass_offset_deg (App-only; no OLED writer). Pass the shared
     HeadingSource (nav.heading_source()) to apply it immediately; otherwise
