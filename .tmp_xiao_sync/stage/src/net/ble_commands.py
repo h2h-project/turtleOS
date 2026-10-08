@@ -416,6 +416,17 @@ def _op_set_turtle_mode(ctx, payload):
     return OK, b"", ("after", AFTER_RESULT_MS, _reset)
 
 
+def _op_servo_set_angle(ctx, payload):
+    """0x12 SERVO_SET_ANGLE <B> 0..180 of the servo's full travel. OK <H>
+    the pulse written (us). Pauses autopilot servo writes for 60 s. The
+    app's dial sends a stream of these while dragging, one at a time."""
+    from src.app import actions
+    code, info = actions.servo_set_angle(_get(ctx, "nav"), payload[0])
+    if code == OK:
+        return code, struct.pack("<H", info["us"]), None
+    return code, b"", None
+
+
 def _op_compass_set_offset(ctx, payload):
     """0x43 COMPASS_SET_OFFSET <h> degrees, -180..180; applied live."""
     from src.app import actions
@@ -428,6 +439,35 @@ def _op_compass_set_offset(ctx, payload):
         except Exception:
             heading = None
     code, _info = actions.compass_set_offset(deg, heading)
+    return code, b"", None
+
+
+def _op_time_set(ctx, payload):
+    """0x44 TIME_SET <I> unix seconds UTC (the phone's clock). OK <B>
+    rtc_chip_written: 1 = the DS3231 was set too, 0 = system clock only."""
+    from src.app import actions
+    (secs,) = struct.unpack("<I", payload)
+    code, info = actions.time_set(secs, _get(ctx, "i2c"), _get(ctx, "rtc"))
+    if code == OK:
+        return code, struct.pack("<B", 1 if info.get("rtc_chip") else 0), None
+    return code, b"", None
+
+
+def _op_timezone_set(ctx, payload):
+    """0x46 TIMEZONE_SET <h> minutes from UTC, -720..840."""
+    from src.app import actions
+    (m,) = struct.unpack("<h", payload)
+    code, _info = actions.timezone_set(m)
+    return code, b"", None
+
+
+def _op_secure_mode_set(ctx, payload):
+    """0x45 SECURE_MODE_SET <B> 0/1. WRONG_STATE <B> 1 = turning on refused
+    (RTC battery fault)."""
+    from src.app import actions
+    code, info = actions.secure_mode_set(payload[0])
+    if code == actions.ERR_WRONG_STATE:
+        return code, struct.pack("<B", info.get("reason", 0xFF)), None
     return code, b"", None
 
 
@@ -447,6 +487,7 @@ OPCODES = {
     0x24: (0, _op_api_handshake),
     0x10: (0, _op_nav_luff_sweep),
     0x11: (0, _op_servo_bench_sweep),
+    0x12: (1, _op_servo_set_angle),
     0x30: (1, _op_wifi_set_enabled),
     0x31: (("min", 2), _op_wifi_set_credentials),
     0x32: (1, _op_connection_mode_set),
@@ -455,6 +496,9 @@ OPCODES = {
     0x41: (1, _op_set_turtle_mode),
     0x42: (0, _op_reboot),
     0x43: (2, _op_compass_set_offset),
+    0x44: (4, _op_time_set),
+    0x45: (1, _op_secure_mode_set),
+    0x46: (2, _op_timezone_set),
 }
 
 

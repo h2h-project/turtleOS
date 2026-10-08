@@ -726,6 +726,14 @@ def run(
     except Exception as e:
         print("[ACTIONS] cfg bind failed:", repr(e))
 
+    # Turtle clock: settle the RTC coin-cell check, note where the time came
+    # from, and arm GPS time when it can't be trusted (secure_mode off only).
+    try:
+        from src.app import clock as _clock
+        _clock.boot(rtc, i2c, lambda: _cfg_cell[0] or _gps_cfg)
+    except Exception as e:
+        print("[TIME] clock boot failed:", repr(e))
+
     # ------------------------------------------------------------
     # NAV CONTROLLER (turtle_mode only) — lazy singleton.
     # Ticked from _bg_tick and from the state screen; NavController
@@ -787,6 +795,9 @@ def run(
                 "status": lambda: status,
                 "cfg": lambda: _cfg_cell[0],
                 "telemetry": lambda: telemetry,
+                "air": lambda: air,
+                "rtc": lambda: rtc,
+                "i2c": lambda: i2c,
             })
         except Exception as e:
             print("[BLE] attach sources failed:", repr(e))

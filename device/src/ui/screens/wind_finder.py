@@ -13,6 +13,7 @@ import math
 # Sweep configuration
 # --------------------------------------------------------------------
 
+# Defaults only; ServoScreen passes the configured servo_min_us/servo_max_us.
 SWEEP_MIN_US = 500
 SWEEP_MAX_US = 2500
 SWEEP_STEP_US = 50
@@ -55,11 +56,15 @@ class WindFinder:
         read_angle_deg,
         read_current_ma=None,
         progress_cb=None,
+        min_us=SWEEP_MIN_US,
+        max_us=SWEEP_MAX_US,
     ):
         self._write_pulse_us = write_pulse_us
         self._read_angle_deg = read_angle_deg
         self._read_current_ma = read_current_ma
         self._progress_cb = progress_cb
+        self._min_us = int(min_us)
+        self._max_us = int(max_us)
 
 
     # ----------------------------------------------------------------
@@ -231,7 +236,7 @@ class WindFinder:
 
     def run(self):
         """
-        Run one complete 500 -> 2500 us luff sweep.
+        Run one complete min_us -> max_us luff sweep.
 
         IMPORTANT:
         Luff alone identifies the sail's wind-alignment AXIS. Unless another
@@ -250,8 +255,8 @@ class WindFinder:
         print(
             "[WIND] range={}..{} us  step={} us  "
             "settle={} ms  samples={} x {} ms".format(
-                SWEEP_MIN_US,
-                SWEEP_MAX_US,
+                self._min_us,
+                self._max_us,
                 SWEEP_STEP_US,
                 POSITION_SETTLE_MS,
                 SAMPLE_COUNT,
@@ -261,23 +266,23 @@ class WindFinder:
 
         print(
             "[WIND] moving to sweep start: {} us".format(
-                SWEEP_MIN_US
+                self._min_us
             )
         )
 
-        self._write_pulse_us(SWEEP_MIN_US)
+        self._write_pulse_us(self._min_us)
         time.sleep_ms(START_SETTLE_MS)
 
         results = []
 
         total_positions = (
-            ((SWEEP_MAX_US - SWEEP_MIN_US) // SWEEP_STEP_US) + 1
+            ((self._max_us - self._min_us) // SWEEP_STEP_US) + 1
         )
 
         index = 0
-        pulse = SWEEP_MIN_US
+        pulse = self._min_us
 
-        while pulse <= SWEEP_MAX_US:
+        while pulse <= self._max_us:
             progress = index / float(max(1, total_positions - 1))
 
             result = self._observe_position(

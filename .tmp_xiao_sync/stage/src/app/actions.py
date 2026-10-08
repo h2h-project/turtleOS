@@ -657,6 +657,9 @@ def nav_luff_sweep(nav):
             return ERR_NO_HARDWARE, {}
         if nav.sweeping():
             return ERR_BUSY, {}
+        if not nav.autopilot_sail():
+            print("[NAV] luff sweep refused: autopilot_sail is off")
+            return ERR_WRONG_STATE, {"state": "AUTOPILOT_OFF"}
         if nav.begin_luff_sweep():
             print("[NAV] luff sweep started")
             return IN_PROGRESS, {}
@@ -670,6 +673,41 @@ def nav_luff_sweep(nav):
         return ERR_WRONG_STATE, {"state": state}
     except Exception as e:
         print("[NAV] luff sweep err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+# Hand control pauses the autopilot's servo writes this long after the
+# last move, then steering resumes on its own.
+SERVO_MANUAL_HOLD_MS = 60_000
+
+
+def servo_set_angle(nav, deg):
+    """Move the sail servo by hand: deg 0..180 spans its full travel
+    (servo_min_us..servo_max_us, one end stop to the other). App-only
+    (Turtle Wrangler's servo dial); no OLED equivalent.
+
+    OK               info: {"deg", "us"}
+    ERR_BAD_VALUE    deg outside 0..180
+    ERR_BUSY         a luff sweep is moving the servo
+    ERR_NO_HARDWARE  no NavController, or servo_present is false
+    """
+    try:
+        try:
+            d = int(deg)
+        except Exception:
+            return ERR_BAD_VALUE, {}
+        if not 0 <= d <= 180:
+            return ERR_BAD_VALUE, {}
+        if nav is None or not nav.servo_present():
+            return ERR_NO_HARDWARE, {}
+        if nav.sweeping():
+            return ERR_BUSY, {}
+        us = nav.manual_sail(d, SERVO_MANUAL_HOLD_MS)
+        if us is None:
+            return ERR_INTERNAL, {}
+        return OK, {"deg": d, "us": us}
+    except Exception as e:
+        print("[SAIL] manual set err:", repr(e))
         return ERR_INTERNAL, {}
 
 
@@ -751,6 +789,68 @@ def set_turtle_mode(on):
         return OK, {"turtle_mode": on}
     except Exception as e:
         print("[SYSTEM] set turtle_mode err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def time_set(unix_s, i2c=None, rtc_info=None):
+    """Set the turtle's clock (App-only TIME_SET, from the phone's clock).
+    Sets machine.RTC() now and writes the DS3231 too when it answers, so
+    the time survives a reboot (if its coin cell is good).
+
+    OK             info: {"rtc_chip": bool}
+    ERR_BAD_VALUE  before 2020 or after 2099
+    """
+    try:
+        from src.app import clock
+        t = int(unix_s)
+        if not clock.TIME_MIN <= t <= clock.TIME_MAX:
+            return ERR_BAD_VALUE, {}
+        return OK, {"rtc_chip": clock.set_unix(t, clock.SRC_PHONE, i2c, rtc_info)}
+    except Exception as e:
+        print("[TIME] set err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def timezone_set(minutes):
+    """App-only TIMEZONE_SET: config timezone_offset_min, minutes from UTC
+    (the OLED Time screen adds it to the UTC clock).
+
+    OK             info: {"min"}
+    ERR_BAD_VALUE  outside -720..840 (UTC-12 .. UTC+14)
+    """
+    try:
+        m = int(minutes)
+        if not -720 <= m <= 840:
+            return ERR_BAD_VALUE, {}
+        if write_config({"timezone_offset_min": m}) is None:
+            return ERR_INTERNAL, {}
+        h, mm = divmod(abs(m), 60)
+        print("[TIME] time zone = UTC{}{}:{:02d}".format("-" if m < 0 else "+", h, mm))
+        return OK, {"min": m}
+    except Exception as e:
+        print("[TIME] time zone err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def secure_mode_set(on):
+    """App-only SECURE_MODE_SET.
+
+    OK               saved and in force
+    ERR_BAD_VALUE    not 0/1
+    ERR_WRONG_STATE  info: {"reason": 1} turning on refused, RTC battery fault
+    """
+    try:
+        v = int(on)
+        if v not in (0, 1):
+            return ERR_BAD_VALUE, {}
+        from src.app import clock
+        ok, reason = clock.set_secure_mode(v == 1)
+        if not ok:
+            print("[SECURE] refused: RTC battery fault")
+            return ERR_WRONG_STATE, {"reason": reason}
+        return OK, {}
+    except Exception as e:
+        print("[SECURE] set err:", repr(e))
         return ERR_INTERNAL, {}
 
 

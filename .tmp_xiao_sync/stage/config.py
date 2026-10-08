@@ -82,6 +82,12 @@ DEFAULTS = {
     "ble_window_min": 10,
     "ble_require_bond": True,
 
+    # --- Secure mode (docs/wrangler/README.md "Clock and secure mode") ---
+    # For missions where GPS may be spoofed: the clock never takes GPS time
+    # (more precautions will follow). Refused while the RTC coin cell is
+    # faulty — with it on, the DS3231 is the only time source at sea.
+    "secure_mode": False,
+
     # --- Time ---
     # Minutes offset from UTC.
     # Example: Jakarta = 420
@@ -110,6 +116,11 @@ DEFAULTS = {
     # so this flag is the only way to say a servo is NOT present — set it false
     # on a bench board with no servo attached.
     "servo_present": True,
+    # Sail-servo pulse range (us) the wind-finder sweep runs between, each
+    # just inside the servo's end stops. 500/2500 suits the MG996R; find
+    # another servo's stops by eye from the REPL and set them here.
+    "servo_min_us": 500,
+    "servo_max_us": 2500,
 
     # --- Mission destination (turtle mode) ---
     # The grand-mission target, assigned on hopeturtles.org and pushed to the
@@ -303,7 +314,7 @@ def _normalize_types(cfg):
 
     # --- Booleans ---
     for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present",
-                "ble_enabled", "ble_require_bond"):
+                "ble_enabled", "ble_require_bond", "secure_mode"):
         old_val = cfg.get(key, DEFAULTS[key])
         new_val = _to_bool(old_val, DEFAULTS[key])
         if old_val != new_val:
@@ -404,6 +415,19 @@ def _normalize_types(cfg):
         changed = True
     if cfg.get("compass_offset_deg") != compass_offset:
         cfg["compass_offset_deg"] = compass_offset
+        changed = True
+
+    # --- Servo pulse range ---
+    try:
+        s_min = max(400, min(2600, int(cfg.get("servo_min_us", DEFAULTS["servo_min_us"]))))
+        s_max = max(400, min(2600, int(cfg.get("servo_max_us", DEFAULTS["servo_max_us"]))))
+        if s_max - s_min < 200:
+            raise ValueError
+    except Exception:
+        s_min, s_max = DEFAULTS["servo_min_us"], DEFAULTS["servo_max_us"]
+    if cfg.get("servo_min_us") != s_min or cfg.get("servo_max_us") != s_max:
+        cfg["servo_min_us"] = s_min
+        cfg["servo_max_us"] = s_max
         changed = True
 
     # --- Destination name strings (mission + operator-set) ---

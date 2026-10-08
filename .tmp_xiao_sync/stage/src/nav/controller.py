@@ -26,6 +26,15 @@ class NavController:
         self._sailnav_since_ms = None
         self._next_sweep_ms = None     # periodic re-sweep schedule (SAIL_NAV)
         self._feather_applied = False
+        self._servo_us = None          # last pulse written to the servo (us)
+        self._manual_until = None      # ticks_ms: hand control ends (SERVO_SET_ANGLE)
+        # autopilot_sail false: the autopilot never moves the servo (no
+        # steering, feathering or luff sweeps); only hand control does.
+        self._autopilot = bool(cfg.get("autopilot_sail", True))
+        # The servo's full travel, just inside its end stops (per servo
+        # model; config.py). Hand control spans exactly this range.
+        self._min_us = int(cfg.get("servo_min_us", 500))
+        self._max_us = int(cfg.get("servo_max_us", 2500))
         self.fault = None
 
         # imu: the shared GY87 built at boot (src/drivers/gy87.py). Its mag is
@@ -73,12 +82,63 @@ class NavController:
 
     def begin_luff_sweep(self):
         """Start a sweep (ACQUIRE first-fix, or manual re-sweep in SAIL_NAV)."""
-        if sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
+        if not self._autopilot or sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
             return False
         return self._sweep.start()
 
     def sweeping(self):
         return self._sweep.active()
+
+    # Hand control of the sail (Turtle Wrangler's servo dial). 0..180 maps
+    # linearly onto servo_min_us..servo_max_us — one end stop to the other.
+    # Each move pauses autopilot servo writes for hold_ms; then steering
+    # resumes.
+
+    def servo_present(self):
+        return self._servo is not None
+
+    def autopilot_sail(self):
+        """False when config autopilot_sail is off: hand control only."""
+        return self._autopilot
+
+    def manual_sail(self, deg, hold_ms):
+        """Move the servo by hand to deg (0..180 of its full travel).
+        Returns the pulse written (us), or None: no servo, a sweep is
+        running (the caller checks sweeping() to report BUSY), or the write
+        failed."""
+        if self._servo is None or self._sweep.active():
+            return None
+        d = max(0, min(180, int(deg)))
+        us = self._min_us + (self._max_us - self._min_us) * d // 180
+        try:
+            self._servo.write_pulse(us)
+        except Exception as e:
+            print("[NAV] manual sail write failed:", repr(e))
+            return None
+        self._servo_us = us
+        self._manual_until = time.ticks_add(time.ticks_ms(), int(hold_ms))
+        self._feather_applied = False      # re-feather after the hold (ARRIVAL/SAFE)
+        self._pid.reset()                  # no integral wind-up from the paused loop
+        return us
+
+    def manual_hold_s(self, now_ms=None):
+        """Seconds of hand control left, or 0."""
+        if self._manual_until is None:
+            return 0
+        now = time.ticks_ms() if now_ms is None else now_ms
+        left = time.ticks_diff(self._manual_until, now)
+        if left <= 0:
+            self._manual_until = None
+            return 0
+        return (left + 999) // 1000
+
+    def servo_position(self):
+        """Last commanded servo position on the dial scale (0..180 of the
+        full travel, float), whoever wrote it; None if never written."""
+        if self._servo_us is None or self._max_us <= self._min_us:
+            return None
+        f = (self._servo_us - self._min_us) * 180.0 / (self._max_us - self._min_us)
+        return max(0.0, min(180.0, f))
 
     def sweep_status(self):
         return self._sweep_status
@@ -169,6 +229,21 @@ class NavController:
                 self._wps.sync(cfg)
             except Exception as e:
                 print("[NAV] route sync failed:", repr(e))
+
+        # Hand control: no autopilot servo writes (steering, feather, scheduled
+        # re-sweep) until the hold runs out. A sweep can't be active here —
+        # manual_sail() refuses during one.
+        if self.manual_hold_s(now) > 0:
+            self._last_nav_ms = None
+            return
+
+        # Autopilot sail control switched off (config autopilot_sail): GPS and
+        # route keep updating above, but nothing here touches the servo.
+        if isinstance(cfg, dict):
+            self._autopilot = bool(cfg.get("autopilot_sail", True))
+        if not self._autopilot and not self._sweep.active():   # a running sweep finishes
+            self._last_nav_ms = None
+            return
 
         state = sm.get_state()
         if state == sm.ACQUIRE:
@@ -293,7 +368,9 @@ class NavController:
         if self._servo is None:
             return
         try:
-            self._servo.angle(int(max(self._sail_min, min(self._sail_max, deg))))
+            d = int(max(self._sail_min, min(self._sail_max, deg)))
+            self._servo.angle(d)
+            self._servo_us = self._servo.pulse_us(d)
         except Exception:
             pass
 
@@ -306,6 +383,7 @@ class NavController:
         if self._servo is not None:
             try:
                 self._servo.center()
+                self._servo_us = self._servo.pulse_us(90)
             except Exception:
                 pass
 

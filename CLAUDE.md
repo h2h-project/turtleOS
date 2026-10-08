@@ -570,6 +570,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `compass_offset_deg` | int | `0` | magnetic declination correction |
 | `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
 | `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
+| `servo_min_us` / `servo_max_us` | int | `500` / `2500` | pulse range the Servo-screen wind-finder sweep runs between (just inside the servo's end stops); MG996R defaults. Clamped 400–2600, ≥200 apart. The sweep parks at the midpoint and stops PWM when done. |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |
@@ -807,6 +808,15 @@ Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-cl
 
 ### 14. `servo_present` is the authoritative wiring flag
 `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of whether a servo is physically wired, so software cannot detect physical connection. Always gate servo operations on `cfg["servo_present"]`.
+
+**Known servo pulse ranges** — set `servo_min_us` / `servo_max_us` in `config.json` (or `scripts/xiao_config.json`) to match the servo fitted:
+
+| Servo | Type | Measured end stops | `servo_min_us` | `servo_max_us` |
+|---|---|---|---|---|
+| MG996R | 180° positional, analog | — (calibrated safe range) | `500` | `2500` |
+| DS-R001 | 180° positional, digital | 740 / 2470 µs (by eye, Oct 2026) | `760` | `2450` |
+
+Configured values sit ~20 µs inside the measured stops so the servo never stalls against them. A range too wide for the fitted servo makes it buzz and hunt at the ends. To measure a new servo, boot into debug mode, then in the REPL: `from machine import Pin, PWM`, `p = PWM(Pin(7), freq=50, duty_u16=0)`, `us = lambda x: p.duty_u16(int(x * 65535 // 20000))`, and step `us(...)` outward from 1500 until the horn stops moving. Type the lines one at a time or use Ctrl-E paste mode, because REPL auto-indent mangles a pasted `def`. Finish with `p.deinit()`. The nav controller's `src/drivers/servo.py` still maps 0–180° to 1000–2000 µs (MG996R) and does not read these keys yet.
 
 ### 15. `turtle_mode` is read fresh each main-loop iteration
 The idle screen object (`turtle_waiting_scr`) is instantiated once at startup. Changing `turtle_mode` in config at runtime has no effect until the next power-cycle. Do not add hot-reload for this; the instantiation cost is too high mid-loop.

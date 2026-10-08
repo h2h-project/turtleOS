@@ -11,6 +11,10 @@
 from machine import UART, Pin
 import time
 
+# Set by src/app/clock.py while the clock is waiting for GPS time: called
+# with each RMC line read_nmea() returns. None the rest of the time.
+rmc_hook = None
+
 
 def _pmtk_sentence(body):
     """Build a $PMTK...* sentence with XOR checksum, CR+LF terminated."""
@@ -201,6 +205,11 @@ class GnssModule:
                 txt = ""
 
             if txt.startswith("$GP") or txt.startswith("$GN"):
+                if rmc_hook is not None and "RMC" in txt:
+                    try:
+                        rmc_hook(txt)
+                    except Exception:
+                        pass
                 return txt
         return None
 

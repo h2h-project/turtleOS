@@ -29,6 +29,8 @@
     "turtle_mode": true,
     "joke_mode": true,
     "servo_present": true,
+    "servo_min_us": 500,
+    "servo_max_us": 2500,
 
     "mission_dest_full_name": "Al Mawasi, Gaza",
     "mission_dest_short_name": "",

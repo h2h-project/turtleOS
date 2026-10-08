@@ -20,8 +20,9 @@ except Exception:
 #     500 us  -> one endpoint
 #     2500 us -> opposite endpoint
 #
-# The luff-test algorithm now lives in wind_finder.py. ServoScreen remains
-# the UI + hardware-access layer.
+# The range actually swept comes from config servo_min_us / servo_max_us
+# (per servo model). The luff-test algorithm lives in wind_finder.py;
+# ServoScreen remains the UI + hardware-access layer.
 # --------------------------------------------------------------------
 
 SERVO_PWM_HZ = 50
@@ -33,6 +34,13 @@ SERVO_HARD_MAX_US = 2600
 
 # Wait this long after the double click before starting the sweep.
 WIND_TEST_DELAY_MS = 500
+
+# After a sweep: drive back to the middle of the range, give it time to get there, then stop
+# sending pulses. The sweep ends on SWEEP_MAX_US (2500 us), and leaving that
+# pulse running holds a servo against its end stop (a narrower-range servo
+# stalls and buzzes indefinitely; a continuous-rotation one never stops
+# spinning) until the screen is left.
+SERVO_PARK_SETTLE_MS = 700
 
 # Cosmetic gear animation: four rotations over one complete sweep.
 GEAR_ROTATION_TURNS = 4.0
@@ -62,6 +70,8 @@ class ServoScreen:
 
         self._connected = None
         self._servo_configured = None
+        self._min_us = 500
+        self._max_us = 2500
 
         self._last_current_ma = None
         self._last_angle_deg = None
@@ -176,6 +186,8 @@ class ServoScreen:
             from config import load_config
             cfg = load_config() or {}
             self._servo_configured = bool(cfg.get("servo_present", False))
+            self._min_us = int(cfg.get("servo_min_us", 500))
+            self._max_us = int(cfg.get("servo_max_us", 2500))
 
         except Exception:
             self._servo_configured = False
@@ -521,9 +533,14 @@ class ServoScreen:
                 read_angle_deg=self._read_angle_deg,
                 read_current_ma=self._read_current_ma,
                 progress_cb=self._wind_progress,
+                min_us=self._min_us,
+                max_us=self._max_us,
             )
 
-            result = finder.run()
+            try:
+                result = finder.run()
+            finally:
+                self._park_and_release()
             self._wind_result = result
             self._draw_wind_result(result)
             self._view = "wind"
@@ -566,6 +583,18 @@ class ServoScreen:
     # ----------------------------------------------------------------
     # Cleanup
     # ----------------------------------------------------------------
+
+    def _park_and_release(self):
+        """Center the servo, then stop the PWM so nothing holds it."""
+        if self._pwm is not None:
+            try:
+                self._write_pulse_to_pwm(
+                    self._pwm, (self._min_us + self._max_us) // 2)
+                time.sleep_ms(SERVO_PARK_SETTLE_MS)
+            except Exception:
+                pass
+        self._release_pwm()
+
 
     def _release_pwm(self):
         if self._pwm is not None:

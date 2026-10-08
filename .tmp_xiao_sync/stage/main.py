@@ -215,7 +215,7 @@ def sync_rtc_from_ds3231():
             osf = bool(i2c.readfrom_mem(0x68, 0x0F, 1)[0] & 0x80)
             info["battery_ok"] = not osf
             if osf:
-                print("[RTC] WARNING: OSF set — DS3231 lost power (check battery)")
+                print("[RTC] battery fault: OSF set — DS3231 lost power (replace its coin cell)")
         except Exception:
             pass
 
@@ -1316,6 +1316,7 @@ def step_rtc():
                 info["synced"] = True
                 info["dt_utc"] = ntp.get("dt_utc")
                 info["unix"] = ntp.get("unix")
+                info["source"] = "ntp"
                 _ntp_src = " via NTP"
                 print("[RTC] NTP sync OK")
             else:
@@ -1338,13 +1339,10 @@ def step_rtc():
 
     h, mi = dt[4], dt[5]
 
+    # The turtle's own time zone (config, set from the phone), never the
+    # server's, so this line agrees with the Time screen.
     tz_min = None
-    try:
-        if isinstance(api_boot, dict):
-            tz_min = api_boot.get("tz_offset_min")
-    except Exception:
-        pass
-    if tz_min is None and cfg:
+    if cfg:
         try:
             tz_min = cfg.get("timezone_offset_min")
         except Exception:

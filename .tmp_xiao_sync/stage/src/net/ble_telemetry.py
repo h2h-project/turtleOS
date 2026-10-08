@@ -33,6 +33,7 @@ POWER = 0x0114
 IMU = 0x0115
 STATUS = 0x0116
 SHORE = 0x0117
+ENVIRONMENT = 0x0118
 
 # (short id, refresh ms, force-notify ms or 0)
 SCHEDULE = (
@@ -44,6 +45,7 @@ SCHEDULE = (
     (IMU, 1000, 0),
     (STATUS, 2000, 0),
     (SHORE, 5000, 60000), # device_now ticks every second; notify it 1/min
+    (ENVIRONMENT, 5000, 0),  # control-bottle conditions; AHT21 read ~80 ms
 )
 
 _NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
@@ -70,6 +72,9 @@ F_LINK_BONDED = 1 << 14
 F_REQUIRE_BOND = 1 << 15
 F_CMD_IN_PROGRESS = 1 << 16
 F_WIFI_CREDS = 1 << 17
+F_RTC_BATTERY_FAULT = 1 << 18
+F_SECURE_MODE = 1 << 19
+F_SECURE_BLOCKED = 1 << 20
 
 _TELEMETRY_MODES = {"off": 0, "auto": 1, "manual": 2}
 _CONN_MODES = {"wifi_auto": 0, "wifi_manual": 1, "lora": 2}
@@ -137,13 +142,14 @@ def _call(getter):
         return None
 
 
-def rtc_unix():
+def rtc_unix(raw=False):
     """Unix seconds from the RTC, or 0 when not synced (matches the
-    telemetry scheduler's epoch rule)."""
+    telemetry scheduler's epoch rule). raw=True returns whatever the clock
+    says, synced or not (Shore device_clock); 0 only if it can't be read."""
     try:
         from machine import RTC
         y, mo, d, _wd, hh, mm, ss, _sub = RTC().datetime()
-        if y < 2020:
+        if y < 2020 and not raw:
             return 0
         # Same epoch-independent conversion the scheduler uses — time.mktime()
         # counts from 2000 on ESP32 but 1970 elsewhere.
@@ -159,6 +165,8 @@ class TurtleData:
     """Packs each characteristic from getter callables:
 
         nav()        NavController or None
+        air()        AirSensor or None (AHT21 temp + humidity)
+        rtc()        run()'s rtc_info dict (DS3231 "temp_c")
         ina()        INA219 or None
         imu()        GY87 or None
         gps()        GnssModule or None
@@ -275,8 +283,17 @@ class TurtleData:
                     wind = b.get("wind")
         except Exception:
             pass
-        return struct.pack("<HHBB", _x10_u16(sail, True), _x10_u16(wind, True),
-                           sweep, _u8(conf))
+        # Appended within v1 (2026-10-05): the commanded servo position on
+        # the 0..180 dial scale (full travel) and seconds of hand control left.
+        pos = hold = None
+        if nav is not None:
+            try:
+                pos = nav.servo_position()
+                hold = min(nav.manual_hold_s(), 254)
+            except Exception:
+                pass
+        return struct.pack("<HHBBHB", _x10_u16(sail, True), _x10_u16(wind, True),
+                           sweep, _u8(conf), _x10_u16(pos, True), _u8(hold))
 
     def sweeping(self):
         nav = self._g("nav")
@@ -383,6 +400,16 @@ class TurtleData:
             f |= F_REQUIRE_BOND
         if self._g("cmd_busy"):
             f |= F_CMD_IN_PROGRESS
+        try:
+            from src.app import clock
+            if clock.battery_fault():
+                f |= F_RTC_BATTERY_FAULT
+            if clock.secure_active(cfg):
+                f |= F_SECURE_MODE
+            elif clock.secure_blocked(cfg):
+                f |= F_SECURE_BLOCKED
+        except Exception:
+            pass
         if str(cfg.get("wifi_ssid") or "").strip():
             f |= F_WIFI_CREDS
 
@@ -400,6 +427,31 @@ class TurtleData:
         return struct.pack("<IBBHHH", f, mode, conn, interval,
                            min(self._queue, NA_U16 - 1), stamps)
 
+    def environment(self):
+        """Conditions inside the control bottle:
+        <hHhhH> aht_temp_x10, aht_rh_x10, bmp_temp_x10, rtc_temp_x10, pressure_hPa_x10."""
+        aht_t = aht_rh = bmp_t = rtc_t = press = None
+        air = self._g("air")
+        if air is not None and hasattr(air, "aht_now"):
+            r = air.aht_now()
+            if r is not None:
+                aht_t, aht_rh = r
+        imu = self._g("imu")
+        if imu is not None and getattr(imu, "baro", None) is not None:
+            try:
+                r = imu.baro_read()
+                if r is not None:
+                    bmp_t = r[0]
+                    if r[1] is not None and float(r[1]) > 0:
+                        press = float(r[1])
+            except Exception:
+                pass
+        rtc = self._g("rtc")
+        if isinstance(rtc, dict):
+            rtc_t = rtc.get("temp_c")
+        return struct.pack("<hHhhH", _x10_i16(aht_t), _x10_u16(aht_rh),
+                           _x10_i16(bmp_t), _x10_i16(rtc_t), _x10_u16(press))
+
     def shore(self):
         jid = 0
         try:
@@ -407,8 +459,21 @@ class TurtleData:
             jid = int(journey.active_id() or 0)
         except Exception:
             jid = 0
-        return struct.pack("<III", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
-                           rtc_unix() & 0xFFFFFFFF)
+        # device_clock (the 4th u32) was appended within v1 on 2026-10-08.
+        try:
+            from src.app import clock
+            src = clock.source()
+        except Exception:
+            src = 0
+        tz = NA_I16
+        try:
+            v = (self._g("cfg") or {}).get("timezone_offset_min")
+            if v is not None and -720 <= int(v) <= 840:
+                tz = int(v)
+        except Exception:
+            pass
+        return struct.pack("<IIIIBh", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
+                           rtc_unix() & 0xFFFFFFFF, rtc_unix(raw=True) & 0xFFFFFFFF, src, tz)
 
     # -- dispatch -----------------------------------------------------------
     def pack(self, cid, now):
@@ -429,6 +494,8 @@ class TurtleData:
             return self.status()
         if cid == SHORE:
             return self.shore()
+        if cid == ENVIRONMENT:
+            return self.environment()
         return None
 
     def period(self, cid, base_ms):
@@ -440,8 +507,9 @@ class TurtleData:
 
 def notify_key(cid, value):
     """The part of a value whose change should trigger a notification.
-    Shore sync ignores its clock field (last 4 bytes) — that one goes out on
-    the once-a-minute forced notify instead."""
+    Shore sync ignores its two clock fields (device_now, device_clock: bytes
+    8..15) — they go out on the once-a-minute forced notify instead — but
+    keeps clock_source, so a newly set clock notifies at once."""
     if cid == SHORE and value is not None:
-        return value[:-4]
+        return value[:8] + value[16:]
     return value
