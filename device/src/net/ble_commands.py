@@ -453,6 +453,14 @@ def _op_time_set(ctx, payload):
     return code, b"", None
 
 
+def _op_timezone_set(ctx, payload):
+    """0x46 TIMEZONE_SET <h> minutes from UTC, -720..840."""
+    from src.app import actions
+    (m,) = struct.unpack("<h", payload)
+    code, _info = actions.timezone_set(m)
+    return code, b"", None
+
+
 def _op_secure_mode_set(ctx, payload):
     """0x45 SECURE_MODE_SET <B> 0/1. WRONG_STATE <B> 1 = turning on refused
     (RTC battery fault)."""
@@ -490,6 +498,7 @@ OPCODES = {
     0x43: (2, _op_compass_set_offset),
     0x44: (4, _op_time_set),
     0x45: (1, _op_secure_mode_set),
+    0x46: (2, _op_timezone_set),
 }
 
 

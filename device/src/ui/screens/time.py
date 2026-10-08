@@ -1,7 +1,6 @@
 # src/ui/screens/time.py
 
 import time
-import json
 import gc
 import machine
 
@@ -25,8 +24,6 @@ except Exception:
     CLOCK_W = 9
     CLOCK_H = 9
 
-CONFIG_FILE = "config.json"
-
 MONTHS = [
     "January","February","March","April","May","June",
     "July","August","September","October","November","December"
@@ -44,8 +41,8 @@ class TimeScreen:
         self.ds3231 = ds3231
         self.status = status if isinstance(status, dict) else {}
 
-        # API refresh happens once per screen open
-        self._tz_checked = False
+        # API refresh (server time) happens once per screen open
+        self._api_checked = False
 
     # -------------------------------------------------
     # RTC / tuples
@@ -54,8 +51,21 @@ class TimeScreen:
         # System RTC is expected to be UTC
         return time.localtime()
 
+    def _tz_min(self):
+        """timezone_offset_min from the live config when run() has bound it
+        (a Bluetooth TIMEZONE_SET changes it there), else this screen's
+        own copy, which may be from before the change."""
+        try:
+            from src.app import actions
+            cell = actions._cfg_cell
+            if cell and isinstance(cell[0], dict) and "timezone_offset_min" in cell[0]:
+                return cell[0].get("timezone_offset_min")
+        except Exception:
+            pass
+        return self.cfg.get("timezone_offset_min", None)
+
     def _get_user_time_tuple(self):
-        offset_min = self.cfg.get("timezone_offset_min", None)
+        offset_min = self._tz_min()
         if offset_min is None:
             return None
 
@@ -87,9 +97,9 @@ class TimeScreen:
     # API refresh (once) + offline-safe gating
     # -------------------------------------------------
     def _refresh_from_api_once(self):
-        if self._tz_checked:
+        if self._api_checked:
             return
-        self._tz_checked = True
+        self._api_checked = True
 
         if not urequests:
             return
@@ -141,27 +151,9 @@ class TimeScreen:
             if not isinstance(data, dict) or not data.get("ok"):
                 return
 
-            # timezone offset update (cache in config.json)
-            tz_off = data.get("timezone_offset_min", None)
-            if tz_off is None:
-                tz_off = data.get("tz_offset_min", None)
-
-            if tz_off is not None:
-                try:
-                    tz_off = int(tz_off)
-
-                    old = self.cfg.get("timezone_offset_min", None)
-                    try:
-                        old = int(old) if old is not None else None
-                    except Exception:
-                        old = None
-
-                    if old != tz_off:
-                        self.cfg["timezone_offset_min"] = tz_off
-                        with open(CONFIG_FILE, "w") as f:
-                            json.dump(self.cfg, f)
-                except Exception:
-                    pass
+            # The turtle's time zone is NOT taken from the server: it has no
+            # per-turtle setting (it came from the account) and overwrote what
+            # the phone set. timezone_offset_min comes from config / TIMEZONE_SET.
 
             # RTC sync from server epoch
             ts_ms = data.get("ts", None)
@@ -202,7 +194,7 @@ class TimeScreen:
 
     def _fmt_tz_offset(self):
         """Returns UTC offset string: "+7", "-5:30", or "UTC"."""
-        offset_min = self.cfg.get("timezone_offset_min", None)
+        offset_min = self._tz_min()
         if offset_min is None:
             return "UTC"
         try:
@@ -211,11 +203,11 @@ class TimeScreen:
             return "UTC"
         if offset_min == 0:
             return "UTC"
-        h = offset_min // 60
-        m = abs(offset_min % 60)
+        sign = "-" if offset_min < 0 else "+"
+        h, m = divmod(abs(offset_min), 60)     # -330 -> "-5:30", not "-6:30"
         if m == 0:
-            return "{:+d}".format(h)
-        return "{:+d}:{:02d}".format(h, m)
+            return "{}{}".format(sign, h)
+        return "{}{}:{:02d}".format(sign, h, m)
 
     def _fmt_date_short(self, t):
         """Returns compact date string e.g. '8 Mar 2026'."""

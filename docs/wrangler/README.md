@@ -121,7 +121,7 @@ reads everything once on connect, then relies on notifications.
 | `0114` | Power | R N | `<HhB>` | 5 | 0.2 Hz, or immediately on ≥ 1 % SoC change |
 | `0115` | IMU / baro | R N | `<hhH>` | 6 | 1 Hz |
 | `0116` | Status | R N | `<IBBHHH>` | 12 | on change |
-| `0117` | Shore sync / journey | R N | `<IIIIB>` | 17 (12 before 2026-10-08) | on change, + 1/min for the clock |
+| `0117` | Shore sync / journey | R N | `<IIIIBh>` | 19 (12 before 2026-10-08) | on change, + 1/min for the clock |
 | `0118` | Environment *(added 2026-10-04)* | R N | `<hHhhH>` | 10 | 0.2 Hz, on change |
 
 **`0101` Contract info** — `contract_version u8`, `turtle_mode u8`
@@ -233,7 +233,7 @@ reads everything once on connect, then relies on notifications.
 **`0117` Shore sync / journey** — `last_shore_sync u32`,
 `journey_id u32`, `device_now u32`, then *(appended within v1,
 2026-10-08; older firmware sends only the first 12 bytes)*
-`device_clock u32`, `clock_source u8`
+`device_clock u32`, `clock_source u8`, `tz_offset_min i16`
 - `last_shore_sync`: unix seconds of the last successful POST
   (`TelemetryState.get_last_sent()`). 0 means never.
 - `journey_id`: the open journey (`journey.active_id()`), which is also
@@ -248,6 +248,10 @@ reads everything once on connect, then relies on notifications.
 - `clock_source`: what last set the clock this boot. 0 not set · 1 RTC
   chip (DS3231) · 2 NTP · 3 GPS · 4 phone (`TIME_SET`). See
   [Clock and secure mode](#clock-and-secure-mode).
+- `tz_offset_min`: config `timezone_offset_min`, the turtle's local time
+  zone in minutes from UTC (e.g. 180 = UTC+3), which the OLED adds to
+  its UTC clock. `0x7FFF` = not configured (the OLED shows UTC). The
+  clock itself is always UTC.
 
 **`0118` Environment** — `aht_temp_x10 i16`, `aht_rh_x10 u16`,
 `bmp_temp_x10 i16`, `rtc_temp_x10 i16`, `pressure_hPa_x10 u16`
@@ -433,6 +437,7 @@ at a time while the dial is dragged, always with the latest angle.
 | `0x43` | COMPASS_SET_OFFSET | `<h>` degrees, −180…180 | **App-only** (`compass_offset_deg` has no OLED writer) | OK · BAD_VALUE |
 | `0x44` | TIME_SET *(added 2026-10-08)* | `<I>` unix seconds, UTC | **App-only** (Diagnostics "Set turtle clock to phone time") | OK `<B>` rtc_chip_written (1 = the DS3231 was set too · 0 = system clock only, lost at the next boot) · BAD_VALUE (before 2020 or after 2099) |
 | `0x45` | SECURE_MODE_SET *(added 2026-10-08)* | `<B>` 0 off · 1 on | **App-only** (Diagnostics "Secure mode") | OK · BAD_VALUE (> 1) · WRONG_STATE `<B>` 1 (turning on refused: RTC battery fault, or no RTC chip) |
+| `0x46` | TIMEZONE_SET *(added 2026-10-08)* | `<h>` minutes from UTC, −720…840 | **App-only** (sent with TIME_SET by "Set turtle clock to phone time") | OK · BAD_VALUE |
 
 - The app confirms 0x40–0x42 with the user before sending, because each
   one ends the connection.
@@ -443,6 +448,14 @@ at a time while the dial is dragged, always with the latest angle.
   so the time survives a reboot while the board stays powered, or
   always once the coin cell is replaced. The time comes from the phone's
   clock; a later NTP or API sync simply overwrites it.
+- "Set turtle clock to phone time" means: line the turtle up with the
+  phone, UTC **and** time zone. The app sends TIME_SET, then
+  TIMEZONE_SET with the phone's current UTC offset. The offset is a
+  fixed number, so it doesn't follow daylight-saving changes by itself.
+  The phone is the only writer of `timezone_offset_min` besides
+  `config.json` itself: turtleOS stopped taking it (2026-10-08) from
+  hopeturtles.org, which has no per-turtle time zone (the OLED Time
+  screen and the boot clock line used the account's).
 - SECURE_MODE_SET saves `secure_mode` to config and takes effect at
   once. Turning it **off** always works over a bonded link.
 
@@ -451,8 +464,6 @@ at a time while the dial is dragged, always with the latest angle.
   These move between OLED screens; the app has its own tabs.
 - The self-destruct / quad-click screen. It is a `joke_mode` animation
   and changes nothing.
-- `timezone_offset_min`. It is written only from the server during the
-  boot API step, never by a gesture.
 - The Destination menu's "3× cancel" is UI-only.
 
 ### Security: bonding with an on-screen passkey
@@ -568,7 +579,7 @@ read it without knowing turtleOS:
 - Manufacturer Name String: `Hope Turtles`
 - Model Number String: `turtleShell` (with `platform_tag()` appended)
 - Firmware Revision String: `VERSION_NUM` from `src/app/booter.py` (e.g.
-  `2.5.1`)
+  `2.5.2`)
 - Serial Number String: `device_id`
 
 ### Versioning

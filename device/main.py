@@ -1339,13 +1339,10 @@ def step_rtc():
 
     h, mi = dt[4], dt[5]
 
+    # The turtle's own time zone (config, set from the phone), never the
+    # server's, so this line agrees with the Time screen.
     tz_min = None
-    try:
-        if isinstance(api_boot, dict):
-            tz_min = api_boot.get("tz_offset_min")
-    except Exception:
-        pass
-    if tz_min is None and cfg:
+    if cfg:
         try:
             tz_min = cfg.get("timezone_offset_min")
         except Exception:

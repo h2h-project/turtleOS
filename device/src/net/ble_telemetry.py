@@ -465,8 +465,15 @@ class TurtleData:
             src = clock.source()
         except Exception:
             src = 0
-        return struct.pack("<IIIIB", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
-                           rtc_unix() & 0xFFFFFFFF, rtc_unix(raw=True) & 0xFFFFFFFF, src)
+        tz = NA_I16
+        try:
+            v = (self._g("cfg") or {}).get("timezone_offset_min")
+            if v is not None and -720 <= int(v) <= 840:
+                tz = int(v)
+        except Exception:
+            pass
+        return struct.pack("<IIIIBh", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
+                           rtc_unix() & 0xFFFFFFFF, rtc_unix(raw=True) & 0xFFFFFFFF, src, tz)
 
     # -- dispatch -----------------------------------------------------------
     def pack(self, cid, now):

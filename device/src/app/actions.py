@@ -811,6 +811,27 @@ def time_set(unix_s, i2c=None, rtc_info=None):
         return ERR_INTERNAL, {}
 
 
+def timezone_set(minutes):
+    """App-only TIMEZONE_SET: config timezone_offset_min, minutes from UTC
+    (the OLED Time screen adds it to the UTC clock).
+
+    OK             info: {"min"}
+    ERR_BAD_VALUE  outside -720..840 (UTC-12 .. UTC+14)
+    """
+    try:
+        m = int(minutes)
+        if not -720 <= m <= 840:
+            return ERR_BAD_VALUE, {}
+        if write_config({"timezone_offset_min": m}) is None:
+            return ERR_INTERNAL, {}
+        h, mm = divmod(abs(m), 60)
+        print("[TIME] time zone = UTC{}{}:{:02d}".format("-" if m < 0 else "+", h, mm))
+        return OK, {"min": m}
+    except Exception as e:
+        print("[TIME] time zone err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
 def secure_mode_set(on):
     """App-only SECURE_MODE_SET.
 

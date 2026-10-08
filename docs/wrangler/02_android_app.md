@@ -283,6 +283,14 @@ OLED hold-flow GPS logger.
   19–20) and sends `SECURE_MODE_SET` behind a confirm. Turning it on is
   disabled, and refused by the turtle, while the battery is faulty.
   Built and unit-tested; awaiting a phone + turtle test.
+- **Time zone** (added 2026-10-08, after the OLED showed 20:18 at UTC+3
+  while the app showed 18:18 at the phone's UTC+1: same clock, different
+  zones): "Set turtle clock to phone time" now sends TIME_SET then
+  TIMEZONE_SET with the phone's offset. The clock card reads like the
+  OLED: Turtle UTC, Turtle time zone, Turtle local time (Shore
+  `tz_offset_min`), then the phone's time with its zone. The firmware no
+  longer takes the time zone from hopeturtles.org (the +3 came from the
+  account, not the turtle).
 
 ---
 

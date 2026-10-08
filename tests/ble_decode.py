@@ -26,8 +26,8 @@ LAYOUTS = {
     "0115": ("IMU / baro", "<hhH", ["pitch_x10", "roll_x10", "pressure_hPa_x10"]),
     "0116": ("Status", "<IBBHHH", ["flags", "telemetry_mode", "connection_mode",
                                    "interval_s", "queue_count", "stamps_session"]),
-    "0117": ("Shore sync / journey", "<IIIIB", ["last_shore_sync", "journey_id", "device_now",
-                                                "device_clock", "clock_source"]),
+    "0117": ("Shore sync / journey", "<IIIIBh", ["last_shore_sync", "journey_id", "device_now",
+                                                 "device_clock", "clock_source", "tz_offset_min"]),
     "0118": ("Environment", "<hHhhH", ["aht_temp_x10", "aht_rh_x10", "bmp_temp_x10",
                                        "rtc_temp_x10", "pressure_hPa_x10"]),
 }
@@ -59,7 +59,7 @@ OPCODES = {0x01: "JOURNEY_START", 0x02: "JOURNEY_END", 0x03: "DEST_SET_HERE",
            0x30: "WIFI_SET_ENABLED", 0x31: "WIFI_SET_CREDENTIALS",
            0x32: "CONNECTION_MODE_SET", 0x33: "BLE_SET_ENABLED", 0x40: "SLEEP",
            0x41: "SET_TURTLE_MODE", 0x42: "REBOOT", 0x43: "COMPASS_SET_OFFSET",
-           0x44: "TIME_SET", 0x45: "SECURE_MODE_SET"}
+           0x44: "TIME_SET", 0x45: "SECURE_MODE_SET", 0x46: "TIMEZONE_SET"}
 
 FLAGS = ["wifi_connected", "api_ok", "gps_fixed", "journey_active", "wifi_enabled",
          "gps_enabled", "gps_hw_present", "imu_present", "mag_present",
