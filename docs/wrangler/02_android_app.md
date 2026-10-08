@@ -244,7 +244,16 @@ OLED hold-flow GPS logger.
   "Sent", as on the OLED.
 - A GPS on/off toggle → `GPS_SET_ENABLED`.
 
-### Phase 4 status — BUILT, awaiting phone test (2026-10-08)
+### Phase 4 status — DONE (2026-10-08)
+
+Phone-tested on Redmi (Android 16) against Applemore, turtleOS 2.5.2 /
+Wrangler 0.2.2: **GPS stamping works**, and **"Set turtle clock to phone
+time" sets both the UTC clock and the time zone**. The OLED Time screen
+and the app's clock card now agree. Not yet seen on a turtle: Stamped →
+Sent after a shore delivery, GPS setting an unset clock at its first
+fix, the RTC battery-fault warning, and secure mode. Check them in
+Phase 9 field testing.
+
 
 - **GPS tab**, top to bottom:
   - **Stamp card:** the turtle's fix (position, satellites, fix age),
@@ -282,7 +291,8 @@ OLED hold-flow GPS logger.
   its first fix. A Secure mode card shows on / off / blocked (bits
   19–20) and sends `SECURE_MODE_SET` behind a confirm. Turning it on is
   disabled, and refused by the turtle, while the battery is faulty.
-  Built and unit-tested; awaiting a phone + turtle test.
+  Built and unit-tested (`tests/clock_host.py`); not yet seen on a
+  turtle.
 - **Time zone** (added 2026-10-08, after the OLED showed 20:18 at UTC+3
   while the app showed 18:18 at the phone's UTC+1: same clock, different
   zones): "Set turtle clock to phone time" now sends TIME_SET then
@@ -290,7 +300,7 @@ OLED hold-flow GPS logger.
   OLED: Turtle UTC, Turtle time zone, Turtle local time (Shore
   `tz_offset_min`), then the phone's time with its zone. The firmware no
   longer takes the time zone from hopeturtles.org (the +3 came from the
-  account, not the turtle).
+  account, not the turtle). Phone-tested on Applemore.
 
 ---
 
