@@ -72,6 +72,9 @@ F_LINK_BONDED = 1 << 14
 F_REQUIRE_BOND = 1 << 15
 F_CMD_IN_PROGRESS = 1 << 16
 F_WIFI_CREDS = 1 << 17
+F_RTC_BATTERY_FAULT = 1 << 18
+F_SECURE_MODE = 1 << 19
+F_SECURE_BLOCKED = 1 << 20
 
 _TELEMETRY_MODES = {"off": 0, "auto": 1, "manual": 2}
 _CONN_MODES = {"wifi_auto": 0, "wifi_manual": 1, "lora": 2}
@@ -139,13 +142,14 @@ def _call(getter):
         return None
 
 
-def rtc_unix():
+def rtc_unix(raw=False):
     """Unix seconds from the RTC, or 0 when not synced (matches the
-    telemetry scheduler's epoch rule)."""
+    telemetry scheduler's epoch rule). raw=True returns whatever the clock
+    says, synced or not (Shore device_clock); 0 only if it can't be read."""
     try:
         from machine import RTC
         y, mo, d, _wd, hh, mm, ss, _sub = RTC().datetime()
-        if y < 2020:
+        if y < 2020 and not raw:
             return 0
         # Same epoch-independent conversion the scheduler uses — time.mktime()
         # counts from 2000 on ESP32 but 1970 elsewhere.
@@ -396,6 +400,16 @@ class TurtleData:
             f |= F_REQUIRE_BOND
         if self._g("cmd_busy"):
             f |= F_CMD_IN_PROGRESS
+        try:
+            from src.app import clock
+            if clock.battery_fault():
+                f |= F_RTC_BATTERY_FAULT
+            if clock.secure_active(cfg):
+                f |= F_SECURE_MODE
+            elif clock.secure_blocked(cfg):
+                f |= F_SECURE_BLOCKED
+        except Exception:
+            pass
         if str(cfg.get("wifi_ssid") or "").strip():
             f |= F_WIFI_CREDS
 
@@ -445,8 +459,14 @@ class TurtleData:
             jid = int(journey.active_id() or 0)
         except Exception:
             jid = 0
-        return struct.pack("<III", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
-                           rtc_unix() & 0xFFFFFFFF)
+        # device_clock (the 4th u32) was appended within v1 on 2026-10-08.
+        try:
+            from src.app import clock
+            src = clock.source()
+        except Exception:
+            src = 0
+        return struct.pack("<IIIIB", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
+                           rtc_unix() & 0xFFFFFFFF, rtc_unix(raw=True) & 0xFFFFFFFF, src)
 
     # -- dispatch -----------------------------------------------------------
     def pack(self, cid, now):
@@ -480,8 +500,9 @@ class TurtleData:
 
 def notify_key(cid, value):
     """The part of a value whose change should trigger a notification.
-    Shore sync ignores its clock field (last 4 bytes) — that one goes out on
-    the once-a-minute forced notify instead."""
+    Shore sync ignores its two clock fields (device_now, device_clock: bytes
+    8..15) — they go out on the once-a-minute forced notify instead — but
+    keeps clock_source, so a newly set clock notifies at once."""
     if cid == SHORE and value is not None:
-        return value[:-4]
+        return value[:8] + value[16:]
     return value

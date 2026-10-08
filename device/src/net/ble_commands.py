@@ -442,6 +442,27 @@ def _op_compass_set_offset(ctx, payload):
     return code, b"", None
 
 
+def _op_time_set(ctx, payload):
+    """0x44 TIME_SET <I> unix seconds UTC (the phone's clock). OK <B>
+    rtc_chip_written: 1 = the DS3231 was set too, 0 = system clock only."""
+    from src.app import actions
+    (secs,) = struct.unpack("<I", payload)
+    code, info = actions.time_set(secs, _get(ctx, "i2c"), _get(ctx, "rtc"))
+    if code == OK:
+        return code, struct.pack("<B", 1 if info.get("rtc_chip") else 0), None
+    return code, b"", None
+
+
+def _op_secure_mode_set(ctx, payload):
+    """0x45 SECURE_MODE_SET <B> 0/1. WRONG_STATE <B> 1 = turning on refused
+    (RTC battery fault)."""
+    from src.app import actions
+    code, info = actions.secure_mode_set(payload[0])
+    if code == actions.ERR_WRONG_STATE:
+        return code, struct.pack("<B", info.get("reason", 0xFF)), None
+    return code, b"", None
+
+
 # opcode -> (payload length, handler). Length: int = exact, ("min", n) = at
 # least n, None = anything.
 OPCODES = {
@@ -467,6 +488,8 @@ OPCODES = {
     0x41: (1, _op_set_turtle_mode),
     0x42: (0, _op_reboot),
     0x43: (2, _op_compass_set_offset),
+    0x44: (4, _op_time_set),
+    0x45: (1, _op_secure_mode_set),
 }
 
 

@@ -215,7 +215,7 @@ def sync_rtc_from_ds3231():
             osf = bool(i2c.readfrom_mem(0x68, 0x0F, 1)[0] & 0x80)
             info["battery_ok"] = not osf
             if osf:
-                print("[RTC] WARNING: OSF set — DS3231 lost power (check battery)")
+                print("[RTC] battery fault: OSF set — DS3231 lost power (replace its coin cell)")
         except Exception:
             pass
 
@@ -1316,6 +1316,7 @@ def step_rtc():
                 info["synced"] = True
                 info["dt_utc"] = ntp.get("dt_utc")
                 info["unix"] = ntp.get("unix")
+                info["source"] = "ntp"
                 _ntp_src = " via NTP"
                 print("[RTC] NTP sync OK")
             else:

@@ -244,6 +244,46 @@ OLED hold-flow GPS logger.
   "Sent", as on the OLED.
 - A GPS on/off toggle → `GPS_SET_ENABLED`.
 
+### Phase 4 status — BUILT, awaiting phone test (2026-10-08)
+
+- **GPS tab**, top to bottom:
+  - **Stamp card:** the turtle's fix (position, satellites, fix age),
+    then in Manual a 72 dp "Stamp position" button (one tap = one
+    `GPS_STAMP`) with "Logged this boot" from `stamps_session`. In
+    Auto/Off it's replaced by "Switch to manual to take stamps", which
+    confirms first.
+  - **Shore delivery:** `queue_count` ("3 readings waiting to send" /
+    "All sent"), `last_shore_sync`, and WiFi state.
+  - **Stamp log** (the latest 50 shown, 500 kept per turtle on the
+    phone), grouped by journey. Every tap is logged, failures included,
+    with the reason in words (`NOT_STAMPED` reasons, `WRONG_STATE` =
+    not in manual mode). `has_position = 0` shows "Stamped — no
+    position". The position shown is the turtle's from the latest
+    telemetry; the stamp result doesn't echo one.
+  - **Logging mode:** Off · Auto · Manual → `TELEMETRY_SET_MODE`; Off
+    confirms first.
+  - **GPS module:** on/off switch → `GPS_SET_ENABLED`; off confirms
+    first (the turtle can't navigate without it).
+- **Stamped → Sent:** a stamp is marked Sent once `queue_count` is 0 and
+  `last_shore_sync` is at or after the stamp's turtle time (estimated
+  from `device_now`). This is the app's version of the OLED's
+  `_poll_send_outcome`; there's no per-stamp delivery report in v1.
+- **Turtle clock** (added 2026-10-08, after a field turtle whose DS3231
+  coin cell was flat refused every stamp with "turtle clock not set"):
+  Diagnostics shows the turtle's clock even when it's wrong (Shore
+  `device_clock`), the phone's clock and the difference, with "Set
+  turtle clock to phone time" → `TIME_SET`. The GPS stamp card shows the
+  same button whenever `rtc_synced` is off. Needs firmware with
+  `device_clock` / `TIME_SET`.
+- **Clock source, RTC battery, secure mode** (added 2026-10-08, turtleOS
+  2.5.1 / Wrangler 0.2.1; contract "Clock and secure mode"): the clock
+  card shows what set the time (Shore `clock_source`) and a clock-chip
+  battery fault (Status bit 18), and says GPS will set an unset clock at
+  its first fix. A Secure mode card shows on / off / blocked (bits
+  19–20) and sends `SECURE_MODE_SET` behind a confirm. Turning it on is
+  disabled, and refused by the turtle, while the battery is faulty.
+  Built and unit-tested; awaiting a phone + turtle test.
+
 ---
 
 ## Phase 5 — Diagnostics
@@ -273,6 +313,13 @@ gesture leaves Settings.
 - **Shore WiFi:** enabled toggle → `WIFI_SET_ENABLED`; SSID + password →
   `WIFI_SET_CREDENTIALS`. Report separately that the credentials were
   saved and whether the connect succeeded.
+- **Current network:** show the turtle's saved WiFi network name (SSID)
+  so the user can see which network it will use, **never the password**.
+  Contract v1 can't do this yet: it only has `wifi_credentials_set`,
+  `wifi_enabled` and `wifi_connected` (Status bits 17, 4, 0). Needs a
+  contract addition first (README.md): e.g. a read-only SSID
+  characteristic or a `WIFI_GET_SSID` command, returned only to a bonded
+  link like every other WiFi command. The password stays write-only.
 - **Connection mode** (WiFi auto / WiFi manual) → `CONNECTION_MODE_SET`.
 - **Telemetry interval** (≥ 10 s) → `TELEMETRY_SET_INTERVAL`.
 - **Bluetooth:** wrangle-window status. **"Turn off Bluetooth for the

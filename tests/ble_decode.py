@@ -26,7 +26,8 @@ LAYOUTS = {
     "0115": ("IMU / baro", "<hhH", ["pitch_x10", "roll_x10", "pressure_hPa_x10"]),
     "0116": ("Status", "<IBBHHH", ["flags", "telemetry_mode", "connection_mode",
                                    "interval_s", "queue_count", "stamps_session"]),
-    "0117": ("Shore sync / journey", "<III", ["last_shore_sync", "journey_id", "device_now"]),
+    "0117": ("Shore sync / journey", "<IIIIB", ["last_shore_sync", "journey_id", "device_now",
+                                                "device_clock", "clock_source"]),
     "0118": ("Environment", "<hHhhH", ["aht_temp_x10", "aht_rh_x10", "bmp_temp_x10",
                                        "rtc_temp_x10", "pressure_hPa_x10"]),
 }
@@ -40,6 +41,7 @@ ENUMS = {
     "sweep_state": ["idle", "nav sweep", "bench sweep"],
     "telemetry_mode": ["off", "auto", "manual"],
     "connection_mode": ["wifi_auto", "wifi_manual", "lora"],
+    "clock_source": ["not set", "RTC chip", "NTP", "GPS", "phone"],
 }
 
 RESULTS = {0x00: "OK", 0x01: "IN_PROGRESS", 0x10: "ERR_UNKNOWN_OPCODE",
@@ -56,13 +58,15 @@ OPCODES = {0x01: "JOURNEY_START", 0x02: "JOURNEY_END", 0x03: "DEST_SET_HERE",
            0x23: "TELEMETRY_SET_INTERVAL", 0x24: "API_HANDSHAKE",
            0x30: "WIFI_SET_ENABLED", 0x31: "WIFI_SET_CREDENTIALS",
            0x32: "CONNECTION_MODE_SET", 0x33: "BLE_SET_ENABLED", 0x40: "SLEEP",
-           0x41: "SET_TURTLE_MODE", 0x42: "REBOOT", 0x43: "COMPASS_SET_OFFSET"}
+           0x41: "SET_TURTLE_MODE", 0x42: "REBOOT", 0x43: "COMPASS_SET_OFFSET",
+           0x44: "TIME_SET", 0x45: "SECURE_MODE_SET"}
 
 FLAGS = ["wifi_connected", "api_ok", "gps_fixed", "journey_active", "wifi_enabled",
          "gps_enabled", "gps_hw_present", "imu_present", "mag_present",
          "ina219_present", "baro_present", "as5600_present", "servo_present",
          "rtc_synced", "link_bonded", "ble_require_bond", "command_in_progress",
-         "wifi_credentials_set"]
+         "wifi_credentials_set", "rtc_battery_fault", "secure_mode",
+         "secure_mode_blocked"]
 
 
 def _fmt(name, code, v):
@@ -74,7 +78,7 @@ def _fmt(name, code, v):
         return "%.1f" % (v / 10)
     if name in ENUMS and 0 <= v < len(ENUMS[name]):
         return "%d (%s)" % (v, ENUMS[name][v])
-    if name in ("last_shore_sync", "device_now", "journey_id") and v:
+    if name in ("last_shore_sync", "device_now", "journey_id", "device_clock") and v:
         import datetime
         t = datetime.datetime.fromtimestamp(v, datetime.timezone.utc)
         return "%d (%s UTC)" % (v, t.strftime("%Y-%m-%d %H:%M:%S"))

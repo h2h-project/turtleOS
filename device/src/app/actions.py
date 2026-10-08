@@ -792,6 +792,47 @@ def set_turtle_mode(on):
         return ERR_INTERNAL, {}
 
 
+def time_set(unix_s, i2c=None, rtc_info=None):
+    """Set the turtle's clock (App-only TIME_SET, from the phone's clock).
+    Sets machine.RTC() now and writes the DS3231 too when it answers, so
+    the time survives a reboot (if its coin cell is good).
+
+    OK             info: {"rtc_chip": bool}
+    ERR_BAD_VALUE  before 2020 or after 2099
+    """
+    try:
+        from src.app import clock
+        t = int(unix_s)
+        if not clock.TIME_MIN <= t <= clock.TIME_MAX:
+            return ERR_BAD_VALUE, {}
+        return OK, {"rtc_chip": clock.set_unix(t, clock.SRC_PHONE, i2c, rtc_info)}
+    except Exception as e:
+        print("[TIME] set err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
+def secure_mode_set(on):
+    """App-only SECURE_MODE_SET.
+
+    OK               saved and in force
+    ERR_BAD_VALUE    not 0/1
+    ERR_WRONG_STATE  info: {"reason": 1} turning on refused, RTC battery fault
+    """
+    try:
+        v = int(on)
+        if v not in (0, 1):
+            return ERR_BAD_VALUE, {}
+        from src.app import clock
+        ok, reason = clock.set_secure_mode(v == 1)
+        if not ok:
+            print("[SECURE] refused: RTC battery fault")
+            return ERR_WRONG_STATE, {"reason": reason}
+        return OK, {}
+    except Exception as e:
+        print("[SECURE] set err:", repr(e))
+        return ERR_INTERNAL, {}
+
+
 def api_outcome(telemetry, before_ms):
     """Final result of an api_handshake(), or None while it is still running:
     OK or ERR_API_FAILED once the scheduler records a new attempt."""

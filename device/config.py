@@ -82,6 +82,12 @@ DEFAULTS = {
     "ble_window_min": 10,
     "ble_require_bond": True,
 
+    # --- Secure mode (docs/wrangler/README.md "Clock and secure mode") ---
+    # For missions where GPS may be spoofed: the clock never takes GPS time
+    # (more precautions will follow). Refused while the RTC coin cell is
+    # faulty — with it on, the DS3231 is the only time source at sea.
+    "secure_mode": False,
+
     # --- Time ---
     # Minutes offset from UTC.
     # Example: Jakarta = 420
@@ -303,7 +309,7 @@ def _normalize_types(cfg):
 
     # --- Booleans ---
     for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present",
-                "ble_enabled", "ble_require_bond"):
+                "ble_enabled", "ble_require_bond", "secure_mode"):
         old_val = cfg.get(key, DEFAULTS[key])
         new_val = _to_bool(old_val, DEFAULTS[key])
         if old_val != new_val:

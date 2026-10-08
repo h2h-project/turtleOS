@@ -121,7 +121,7 @@ reads everything once on connect, then relies on notifications.
 | `0114` | Power | R N | `<HhB>` | 5 | 0.2 Hz, or immediately on ≥ 1 % SoC change |
 | `0115` | IMU / baro | R N | `<hhH>` | 6 | 1 Hz |
 | `0116` | Status | R N | `<IBBHHH>` | 12 | on change |
-| `0117` | Shore sync / journey | R N | `<III>` | 12 | on change, + 1/min for the clock |
+| `0117` | Shore sync / journey | R N | `<IIIIB>` | 17 (12 before 2026-10-08) | on change, + 1/min for the clock |
 | `0118` | Environment *(added 2026-10-04)* | R N | `<hHhhH>` | 10 | 0.2 Hz, on change |
 
 **`0101` Contract info** — `contract_version u8`, `turtle_mode u8`
@@ -214,10 +214,10 @@ reads everything once on connect, then relies on notifications.
 | 4 | wifi_enabled | 15 | ble_require_bond (config) |
 | 5 | gps_enabled | 16 | command_in_progress |
 | 6 | gps_hw_present | 17 | wifi_credentials_set |
-| 7 | imu_present | 18–31 | reserved, sent as 0 |
-| 8 | mag_present | | |
-| 9 | ina219_present | | |
-| 10 | baro_present | | |
+| 7 | imu_present | 18 | rtc_battery_fault *(2026-10-08)* |
+| 8 | mag_present | 19 | secure_mode *(2026-10-08)* |
+| 9 | ina219_present | 20 | secure_mode_blocked *(2026-10-08)* |
+| 10 | baro_present | 21–31 | reserved, sent as 0 |
 
 - `telemetry_mode`: 0 off · 1 auto · 2 manual (the authoritative config
   key).
@@ -227,15 +227,27 @@ reads everything once on connect, then relies on notifications.
 - `stamps_session`: manual stamps taken this boot. This is the same
   number as the GPS screen's `Logged: N`.
 - The presence bits drive the app's sensor-health checklist.
+- Bits 18–20 are explained in [Clock and secure mode](#clock-and-secure-mode).
+  Older firmware sends them as 0.
 
 **`0117` Shore sync / journey** — `last_shore_sync u32`,
-`journey_id u32`, `device_now u32`
+`journey_id u32`, `device_now u32`, then *(appended within v1,
+2026-10-08; older firmware sends only the first 12 bytes)*
+`device_clock u32`, `clock_source u8`
 - `last_shore_sync`: unix seconds of the last successful POST
   (`TelemetryState.get_last_sent()`). 0 means never.
 - `journey_id`: the open journey (`journey.active_id()`), which is also
   its start time. 0 means no journey is open.
 - `device_now`: the turtle's RTC in unix seconds, or 0 when not synced.
   The app can show clock drift against the phone's clock.
+- `device_clock`: the same system clock **whatever it says**, even when
+  it isn't synced (year before 2020, e.g. a DS3231 whose coin cell is
+  flat restarts at 2000-01-01). Lets the app show a wrong clock instead
+  of nothing. 0 only when the clock can't be read. `rtc_synced` (Status
+  bit 13) still says whether it is trusted; fix it with `TIME_SET`.
+- `clock_source`: what last set the clock this boot. 0 not set · 1 RTC
+  chip (DS3231) · 2 NTP · 3 GPS · 4 phone (`TIME_SET`). See
+  [Clock and secure mode](#clock-and-secure-mode).
 
 **`0118` Environment** — `aht_temp_x10 i16`, `aht_rh_x10 u16`,
 `bmp_temp_x10 i16`, `rtc_temp_x10 i16`, `pressure_hPa_x10 u16`
@@ -419,9 +431,20 @@ at a time while the dial is dragged, always with the latest angle.
 | `0x41` | SET_TURTLE_MODE | `<B>` 0 = airOS | Quint-click on the waiting screen / triple-click on the Version screen | `0`: OK, then the turtle reboots into airOS (no BLE service) · `1`: OK, nothing to do (already turtleOS) |
 | `0x42` | REBOOT | — | **App-only** (the OLED equivalent is a power cycle) | OK, then `machine.reset()` |
 | `0x43` | COMPASS_SET_OFFSET | `<h>` degrees, −180…180 | **App-only** (`compass_offset_deg` has no OLED writer) | OK · BAD_VALUE |
+| `0x44` | TIME_SET *(added 2026-10-08)* | `<I>` unix seconds, UTC | **App-only** (Diagnostics "Set turtle clock to phone time") | OK `<B>` rtc_chip_written (1 = the DS3231 was set too · 0 = system clock only, lost at the next boot) · BAD_VALUE (before 2020 or after 2099) |
+| `0x45` | SECURE_MODE_SET *(added 2026-10-08)* | `<B>` 0 off · 1 on | **App-only** (Diagnostics "Secure mode") | OK · BAD_VALUE (> 1) · WRONG_STATE `<B>` 1 (turning on refused: RTC battery fault, or no RTC chip) |
 
 - The app confirms 0x40–0x42 with the user before sending, because each
   one ends the connection.
+- TIME_SET is for a turtle whose clock was never synced (no WiFi for NTP
+  or the API, and a DS3231 that lost power), which otherwise refuses
+  every stamp and journey with RTC_NOT_SYNCED. It sets `machine.RTC()`
+  immediately and writes the DS3231 (clearing its oscillator-stop flag)
+  so the time survives a reboot while the board stays powered, or
+  always once the coin cell is replaced. The time comes from the phone's
+  clock; a later NTP or API sync simply overwrites it.
+- SECURE_MODE_SET saves `secure_mode` to config and takes effect at
+  once. Turning it **off** always works over a bonded link.
 
 **Deliberately not in the contract:**
 - Carousel navigation (single-click advance, hold to enter the flow).
@@ -499,6 +522,45 @@ hull asks for it. Three new config keys:
   or from the app with BLE_SET_ENABLED 0, before release. The only way
   back is the button, which is intended.
 
+### Clock and secure mode
+
+Every record, stamp and journey is timed by the turtle's clock, so the
+firmware cares where that time came from. One config key *(added
+2026-10-08, turtleOS 2.5.1)*:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `secure_mode` | bool | `false` | For missions where GPS may be spoofed. The turtle never takes its time from GPS. Further precautions will hang off this key later. It **can't turn on while the RTC battery is faulty** (see below). |
+
+**Where the time comes from at boot,** in order:
+1. **The RTC chip (DS3231).** Accepted when it reads 2020 or later.
+2. **NTP,** when WiFi is up and the chip's time is missing or its
+   battery is faulty.
+3. **GPS,** when neither gave a trustworthy time and `secure_mode` is
+   off: the first valid GPS fix (`$G?RMC` status `A`, good checksum,
+   2026–2099, since a receiver's week-number rollover lands earlier) sets the system clock and writes the DS3231. It happens
+   once per boot, whenever the fix arrives, not during the boot screen.
+4. **The phone** (`TIME_SET`), at any time.
+
+`clock_source` in Shore says which one it was.
+
+**RTC battery fault** (Status bit 18). The DS3231's oscillator-stop
+flag (OSF) means the chip lost all power, i.e. its coin cell is flat or
+missing. The firmware logs `[RTC] battery fault` and the boot screen
+shows `[BAT LOW]`. Setting the time clears OSF, so the fault is also
+kept in a flash marker (`/rtc_battery_fault`). The marker clears only on
+a **power-on** boot where OSF is clear and the chip still holds a valid
+time, which proves the coin cell kept it through a power-off. After a
+new coin cell: set the clock, then power-cycle the turtle once. With no
+DS3231 detected, the battery counts as faulty too.
+
+**Secure mode** (Status bit 19 = on and in force). If config asks for
+`secure_mode` but the RTC battery is faulty, secure mode is **blocked**
+(bit 20): it doesn't count as on, but the turtle still refuses GPS time
+(it fails closed), and the app tells the user to replace the coin cell.
+On a real mission the RTC has to be sound, because with secure mode on
+it is the only time source at sea.
+
 ### Device Information service — `0x180A` (standard, read-only)
 
 This is the standard Bluetooth SIG service, so any generic scanner can
@@ -506,7 +568,7 @@ read it without knowing turtleOS:
 - Manufacturer Name String: `Hope Turtles`
 - Model Number String: `turtleShell` (with `platform_tag()` appended)
 - Firmware Revision String: `VERSION_NUM` from `src/app/booter.py` (e.g.
-  `2.5.0`)
+  `2.5.1`)
 - Serial Number String: `device_id`
 
 ### Versioning
