@@ -138,6 +138,25 @@ real bytes from Applemore.
   after Phase 8, shore data labelled "via hopeturtles.org". **Live,
   cached and shore data must never look the same.**
 
+### Phase 2 status — DONE (2026-10-08)
+
+- **Dashboard tab** plus the four bottom tabs (Dashboard, Navigate, GPS,
+  Diagnostics).
+- **Battery:** V / mA / SoC, a charging bolt, and a full-screen charging
+  graph.
+- **Bottle conditions:** the Environment (`0118`) tile and full-screen
+  graphs.
+- When disconnected, the top bar becomes a "Disconnected · Scan" button.
+- **Scan screen** (no turtle connected): green, no top bar. Found
+  turtles are full-strength cards at the top; remembered turtles are
+  faded "Not in range" cards with last-seen time and battery. The ASCII
+  turtle swims in the middle while scanning; the scan stops on the first
+  turtle found, and tapping "Scanning…" cancels it. "Connect to Server"
+  is a placeholder for Phase 8.
+- **Splash and icon:** the ASCII turtle swims (logo-2/logo-3 twice, 0.5 s
+  each) then smiles for 1 s; the launcher icon is the same turtle in
+  white on green (adaptive, vector).
+
 ---
 
 ## Phase 3 — Navigate
@@ -160,7 +179,17 @@ real bytes from Applemore.
 - **Cross-track gauge** from `0111 Nav`. It shows "—" until the firmware
   computes XTE (the contract sends `0x7FFF` meanwhile).
 
-### Phase 3 status — BUILT, awaiting phone test (2026-10-04)
+### Phase 3 status — DONE (2026-10-08), destination/journey phone test deferred
+
+Wrapped up with the destination and journey commands **not yet tested
+on a phone against a turtle**. Still to test (carried into Phase 9):
+set to turtle's position → "Start journey now?", use mission target,
+pick on map, clear, journey start/end (including the no-fix and
+clock-unset failures and the "arrival point not recorded" end).
+Added since the first build: a **servo dial** on Navigate (slide along
+the arc to move the sail servo, `SERVO_SET_ANGLE`).
+
+Built (2026-10-04):
 
 - **Navigate tab.** It has three cards:
   - **Course:** distance, bearing, turn, nav state, and the cross-track
@@ -327,6 +356,8 @@ the device-key `/v1` routes (`deviceAuth`):
 - End-to-end on real hardware: pairing, the full command set with every
   failure path provoked (no fix, clock unset, sweep in the wrong state,
   a bad WiFi password), window expiry, and sleep.
+- **Carried over from Phase 3:** the destination and journey commands
+  have not been phone-tested yet (see the Phase 3 status).
 - Internal distribution per Phase 0.
 - Route field issues to firmware or app. Contract changes go through
   README.md first, with a version bump if they are breaking.
