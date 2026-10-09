@@ -319,6 +319,33 @@ Phase 9 field testing.
   `API_HANDSHAKE`.
 - **Compass offset** → `COMPASS_SET_OFFSET`.
 
+### Phase 5 status — DONE (2026-10-09)
+
+Phone-tested on Applemore: the Diagnostics items work as built (most of
+the list checked by hand; nothing found wrong).
+
+
+turtleOS 2.5.3 / Wrangler 0.2.3. The Diagnostics tab replaces the Phase 1
+link panel (its "Test command" is gone). Top to bottom:
+- **Sensor health:** ● found / ○ not found for the GPS module (or
+  "Off"), compass, IMU, barometer, battery monitor, sail angle sensor,
+  sail servo (config) and clock (set / not set / battery fault).
+- **Navigation and shore link:** nav state, the SAFE reason, WiFi,
+  hopeturtles.org, and "Test hopeturtles.org link" → `API_HANDSHAKE`.
+- **Wind-finder:** latest wind and sail angle, "Run nav sweep" →
+  `NAV_LUFF_SWEEP` (progress from `sweep_state`; `WRONG_STATE` says which
+  nav state it needs, or that the autopilot is off). Under "Advanced",
+  "Run bench sweep" → `SERVO_BENCH_SWEEP` behind a confirm, with a modal
+  while it runs; the result is wind, the other side and confidence.
+- **Compass:** heading, offset and raw magnetometer heading. "The bow
+  points at true north now" (confirmed) sets offset = old − heading;
+  −5/−1/+1/+5 nudges and "Reset offset to 0°". Needed a contract
+  addition: Nav now ends with `compass_offset_deg` (15 bytes), because
+  the app couldn't read the current offset.
+- Then the turtle clock, secure mode, Bluetooth link and Device cards.
+- **Top bar:** the app icon's ASCII turtle before the name, green when
+  connected and grey when not; the "● Connected" text is gone.
+
 ---
 
 ## Phase 6 — Settings (gear icon, top-right)
@@ -333,11 +360,7 @@ gesture leaves Settings.
   saved and whether the connect succeeded.
 - **Current network:** show the turtle's saved WiFi network name (SSID)
   so the user can see which network it will use, **never the password**.
-  Contract v1 can't do this yet: it only has `wifi_credentials_set`,
-  `wifi_enabled` and `wifi_connected` (Status bits 17, 4, 0). Needs a
-  contract addition first (README.md): e.g. a read-only SSID
-  characteristic or a `WIFI_GET_SSID` command, returned only to a bonded
-  link like every other WiFi command. The password stays write-only.
+  Done with `WIFI_GET_SSID` (see the status below).
 - **Connection mode** (WiFi auto / WiFi manual) → `CONNECTION_MODE_SET`.
 - **Telemetry interval** (≥ 10 s) → `TELEMETRY_SET_INTERVAL`.
 - **Bluetooth:** wrangle-window status. **"Turn off Bluetooth for the
@@ -347,6 +370,29 @@ gesture leaves Settings.
   clock versus the phone clock (`device_now`).
 - **Danger zone:** Sleep, Reboot, Switch to airOS. Each is confirmed,
   and each ends the connection.
+
+### Phase 6 status — BUILT, awaiting phone test (2026-10-09)
+
+turtleOS 2.5.4 / Wrangler 0.2.4. The gear opens Settings over the tabs:
+the gear is highlighted, no tab is, and back or any tab closes it.
+- **Shore WiFi:** on/off switch → `WIFI_SET_ENABLED`; "Current network"
+  from the new `WIFI_GET_SSID` (0x34, contract addition: a command, so
+  it answers only a bonded link; never the password); "Change network"
+  → SSID + password (masked, Show/Hide) → `WIFI_SET_CREDENTIALS`. The
+  outcome separates saving from joining: "Saved, and the turtle joined
+  X" · "Saved. WiFi is off, so it didn't try" · "Saved, but couldn't
+  join X". The password is cleared from the form once sent.
+- **Shore link:** when to look for WiFi, Automatically / Only when asked
+  → `CONNECTION_MODE_SET`; logging interval in seconds (≥ 10) →
+  `TELEMETRY_SET_INTERVAL`.
+- **Bluetooth:** "Turn off Bluetooth for the voyage" (the screen's pink
+  element) → `BLE_SET_ENABLED 0`, behind a confirm that says only the
+  turtle's button brings it back. **Not done:** wrangle-window status
+  (time left open), since the contract doesn't report it.
+- **Device:** name, firmware, model, serial, and the clock against the
+  phone's. Moved here from Diagnostics.
+- **Danger zone:** Sleep, Reboot, Switch to airOS (dark outline
+  buttons), each confirmed and saying the connection ends.
 
 ---
 

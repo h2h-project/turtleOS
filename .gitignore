@@ -35,3 +35,6 @@ device/telemetry_last_sent.json
 device/journey_state.json
 device/nav_state.json
 device/ble_bonds.json
+
+# Sync staging (scripts/sync_turtleOS.sh rebuilds it every run)
+.tmp_xiao_sync/

@@ -115,7 +115,7 @@ reads everything once on connect, then relies on notifications.
 | `0101` | Contract info | R | `<BB>` | 2 | — |
 | `0102` | Turtle name | R | UTF-8, ≤ 64 bytes | ≤ 64 | — |
 | `0110` | Position | R N | `<iiBBH>` | 12 | 1 Hz (one per GPS epoch) |
-| `0111` | Nav | R N | `<HHIhBBB>` | 13 | 1 Hz |
+| `0111` | Nav | R N | `<HHIhBBBh>` | 15 (13 before 2026-10-09) | 1 Hz |
 | `0112` | Targets | R N | `<iiiiB>` | 17 | on change |
 | `0113` | Sail | R N | `<HHBBHB>` | 9 (6 before 2026-10-05) | 2 Hz while sweeping, else 1 Hz |
 | `0114` | Power | R N | `<HhB>` | 5 | 0.2 Hz, or immediately on ≥ 1 % SoC change |
@@ -144,7 +144,8 @@ reads everything once on connect, then relies on notifications.
 
 **`0111` Nav** — `heading_x10 u16`, `bearing_to_target_x10 u16`,
 `dist_to_target_m u32`, `xte_m i16`, `nav_state u8`, `fault u8`,
-`trim u8`
+`trim u8`, then *(appended within v1, 2026-10-09; older firmware sends
+only the first 13 bytes)* `compass_offset_deg i16`
 - Source: `NavController.snapshot()` and `heading_source()`.
 - `bearing_to_target` and `dist_to_target_m` are computed from the cached
   fix to `WaypointSequencer.current()` (`bearing.initial_bearing` /
@@ -157,6 +158,11 @@ reads everything once on connect, then relies on notifications.
 - `fault` (reason for SAFE): 0 none · 1 GPS never acquired · 2 GPS lost ·
   3 no waypoints configured · `0xFF` other (see the serial log).
 - `trim`: 0 CRUISE · 1 FEATHER (low battery) · `0xFF` n/a.
+- `compass_offset_deg`: config `compass_offset_deg`, −180…180, already
+  included in `heading`. The raw magnetometer heading is `heading −
+  compass_offset_deg`. Lets the app calibrate ("the bow points at true
+  north now") with `COMPASS_SET_OFFSET`: new offset = old offset −
+  heading, wrapped to −180…180.
 
 **`0112` Targets** — `set_lat_e7 i32`, `set_lon_e7 i32`,
 `mission_lat_e7 i32`, `mission_lon_e7 i32`, `active_source u8`
@@ -367,7 +373,7 @@ empty.
 
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
-| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV) · BUSY (sweep already running) |
+| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV; `0xFF` = the autopilot is off) · BUSY (sweep already running) |
 | `0x11` | SERVO_BENCH_SWEEP | — | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) |
 | `0x12` | SERVO_SET_ANGLE *(added 2026-10-05)* | `<B>` 0–180 | **App-only** (Navigate servo dial) | OK `<H>` pulse written (µs) · BAD_VALUE (> 180) · BUSY (a luff sweep is moving the servo) · NO_HARDWARE (no NavController or `servo_present` false) |
 
@@ -395,7 +401,7 @@ at a time while the dial is dragged, always with the latest angle.
 | `0x21` | GPS_SET_ENABLED | `<B>` 0/1 | GPS screen, double-click (auto/off) or triple-click (manual) | OK · NO_HARDWARE |
 | `0x22` | TELEMETRY_SET_MODE | `<B>` 0 off · 1 auto · 2 manual | Logging screen, double-click (cycles off → auto → manual) | OK · BAD_VALUE |
 | `0x23` | TELEMETRY_SET_INTERVAL | `<H>` seconds | **App-only** (config key, no OLED writer) | OK · BAD_VALUE (< 10) |
-| `0x24` | API_HANDSHAKE | — | Online screen, double-click on (fresh API handshake) | IN_PROGRESS → OK · API_FAILED · WRONG_STATE (WiFi down) |
+| `0x24` | API_HANDSHAKE | — | Online screen, double-click on (fresh API handshake) | IN_PROGRESS → OK · API_FAILED · WRONG_STATE (`telemetry_mode` is off) |
 
 - GPS_STAMP is the **most important command in the contract**. It behaves
   exactly like the OLED stamp: it commits the payload before returning
@@ -418,7 +424,11 @@ at a time while the dial is dragged, always with the latest angle.
 | `0x31` | WIFI_SET_CREDENTIALS | `<B>` ssid_len, ssid bytes, password bytes (rest of the payload) | **App-only** | IN_PROGRESS → OK · WIFI_FAILED (saved, but the connect failed) · BAD_LENGTH (SSID > 32 or password > 63 bytes, or the MTU is too small) |
 | `0x32` | CONNECTION_MODE_SET | `<B>` 0 wifi_auto · 1 wifi_manual | **App-only** | OK · BAD_VALUE (2 = lora is reserved) |
 | `0x33` | BLE_SET_ENABLED | `<B>` 0 | Bluetooth screen, double-click | OK, then firmware disconnects and stops the radio |
+| `0x34` | WIFI_GET_SSID *(added 2026-10-09)* | — | **App-only** (Settings "Current network") | OK + the saved SSID, UTF-8, ≤ 32 bytes (empty = none saved). **Never the password.** |
 
+- WIFI_GET_SSID is a command, not a characteristic, so it answers only a
+  bonded link like every other WiFi command (characteristic reads aren't
+  gated). The password is write-only: nothing in the contract returns it.
 - WIFI_SET_CREDENTIALS replaces the earlier SSID/password/apply triple.
   It saves both values atomically, then reconnects if `wifi_enabled`.
   Saving the credentials never depends on the connect succeeding. The
@@ -579,7 +589,7 @@ read it without knowing turtleOS:
 - Manufacturer Name String: `Hope Turtles`
 - Model Number String: `turtleShell` (with `platform_tag()` appended)
 - Firmware Revision String: `VERSION_NUM` from `src/app/booter.py` (e.g.
-  `2.5.2`)
+  `2.5.4`)
 - Serial Number String: `device_id`
 
 ### Versioning

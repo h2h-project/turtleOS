@@ -375,6 +375,17 @@ def _op_wifi_set_credentials(ctx, payload):
     return IN_PROGRESS, b"", ("poll", _wifi_attempt(ctx), WIFI_CONNECT_TIMEOUT_MS + 5_000)
 
 
+def _op_wifi_get_ssid(ctx, payload):
+    """0x34 WIFI_GET_SSID — OK + the saved SSID (UTF-8, empty = none). Never
+    the password: it is write-only over Bluetooth."""
+    cfg = _get(ctx, "cfg") or {}
+    try:
+        ssid = str(cfg.get("wifi_ssid") or "").strip().encode()[:32]
+    except Exception:
+        ssid = b""
+    return OK, ssid, None
+
+
 _CONN_MODES = ("wifi_auto", "wifi_manual")
 
 
@@ -492,6 +503,7 @@ OPCODES = {
     0x31: (("min", 2), _op_wifi_set_credentials),
     0x32: (1, _op_connection_mode_set),
     0x33: (1, _op_ble_set_enabled),
+    0x34: (0, _op_wifi_get_ssid),
     0x40: (0, _op_sleep),
     0x41: (1, _op_set_turtle_mode),
     0x42: (0, _op_reboot),

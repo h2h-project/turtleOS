@@ -1,1 +1,0 @@
-"""Hardware abstraction layer package."""

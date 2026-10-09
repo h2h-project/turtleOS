@@ -239,9 +239,14 @@ class TurtleData:
                     bearing = initial_bearing(lat, lon, wp[0], wp[1])
             except Exception:
                 pass
+        try:
+            off = int((self._g("cfg") or {}).get("compass_offset_deg", 0) or 0)
+            off = off if -180 <= off <= 180 else NA_I16
+        except Exception:
+            off = NA_I16
         # xte: no cross-track function yet -> sentinel (contract v1 note)
-        return struct.pack("<HHIhBBB", _x10_u16(heading, True), _x10_u16(bearing, True),
-                           dist, NA_I16 if xte is None else _x10_i16(xte), state, fault, trim)
+        return struct.pack("<HHIhBBBh", _x10_u16(heading, True), _x10_u16(bearing, True),
+                           dist, NA_I16 if xte is None else _x10_i16(xte), state, fault, trim, off)
 
     def targets(self):
         cfg = self._g("cfg") or {}
