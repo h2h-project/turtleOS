@@ -38,3 +38,4 @@ device/ble_bonds.json
 
 # Sync staging (scripts/sync_turtleOS.sh rebuilds it every run)
 .tmp_xiao_sync/
+.tmp_airbuddy_sync/
