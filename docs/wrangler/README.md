@@ -671,20 +671,12 @@ isolation.
 | Pink (dark) | `--color-pink-dark` | `#b8508e` | Text on pink-tinted backgrounds |
 | Pink (tint) | `--color-pink-tint` | `#fdf1f8` | Light pink fills — pills, badges, ghost-button fills |
 
-**Pink is a spotlight, not a workhorse color** — this mirrors how
-`hopeturtles.org` itself uses its fuchsia accent: the site's `:root`
-palette is overwhelmingly green, and its one bright fuchsia value
-(`#ff00ff`) appears exactly once, as the hover state on the commission
-page's single master call-to-action button (`main.css`,
-`[data-commission-submit]:hover`). Wrangler uses a softer, lighter pink
-throughout rather than that literal hex — easier to read as body text and
-borders — but keeps the same restraint: at most one pink element per
-screen, and on the app mockups pink never appears as a solid filled
-object. It's always a ghost button (white/transparent fill, pink border
-and text) or a light tint fill, never a saturated block — the ink should
-read as an accent outline, not a shout. If a screen has more than one
-pink element, or a pink element with a solid saturated fill, that's a
-signal something drifted from this convention, not a reason to add more.
+**Pink and fuchsia are Wrangler's accent colours** (changed 2026-10-12;
+the app first kept pink to one ghost element per screen). Green stays
+the base: the landing green carries the top-level chrome (top bar,
+drawers, Settings). Pink marks the target on the compass dial, the
+link bullet and notable actions; fuchsia (`#ff00ff`, the site's
+call-to-action hover) draws the sparklines and small live accents.
 
 **Typography**: `Aleo` (headings) paired with `Mulish` (body), loaded
 from the same Google Fonts request the main site uses:

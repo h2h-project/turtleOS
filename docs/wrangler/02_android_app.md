@@ -418,10 +418,80 @@ the gear is highlighted, no tab is, and back or any tab closes it.
   "connected, then dropped before any read completed" twice in a row,
   and tell the user to forget the turtle in Android's Bluetooth
   settings and pair again (optionally calling `removeBond()` itself).
-- Branding pass per the README's visual identity (one pink element per
-  screen, ghost style only).
+- Branding pass per the README's visual identity: green base, pink and
+  fuchsia accents.
 - No background foreground-service in v1. Near-field use doesn't need
   it.
+
+### Phase 7 status — IN PROGRESS (2026-10-12)
+
+turtleOS 2.5.5 / Wrangler 0.2.5.
+- **Auto-reconnect: DONE, phone-tested twice** (Reboot from Settings on
+  Applemore; back in about 40 s each time). After an unexpected drop
+  the app retries after 1, 2, 4, 8 and 16 s, then gives up. It doesn't
+  retry after a user disconnect, nor after Sleep, Bluetooth off or
+  Switch to airOS. Reboot does reconnect.
+- **Connecting drawer:** a drawer under the top bar lists each setup
+  step (link, packet size, services, contract, reading, live updates)
+  and what it found. On a failure it says which step stopped and why,
+  with the GATT status by name; a silent turtle (no MTU reply and no
+  contract reply) is reported as "turtleOS may be frozen". While
+  reconnecting it shows the drop, each try and a Stop button.
+- **Stale bond: BUILT, not yet tested.** Two drops in a row before any
+  read completes, while Android says "bonded", stop retrying. The drawer
+  explains it with both statuses and offers "Forget the old pairing"
+  (hidden `removeBond()`) or Android's Bluetooth settings. Test with
+  Forget phones on the turtle's Bluetooth screen.
+- **Branding:** top-level chrome (top bar, drawers, Settings) is white on
+  the landing green. The bottom tab bar became **the helm**, a drawer
+  opened by swiping down on the top bar, tapping its line, or tapping
+  the turtle on the Dashboard; elsewhere the turtle goes back to the
+  Dashboard. The header shows the section beside the turtle, and the
+  turtle's name with a link bullet (pink connected, flashing white
+  connecting, grey not) beside the gear. The splash shows H2H.
+- **turtleOS 2.5.5:** triple-click opens the Bluetooth screen first.
+- **Not done:** reading Result after a reconnect for a command the drop
+  cut off; the closed-window and contract-mismatch states.
+- **Seen, not yet explained:** turtleOS once froze as the phone
+  connected (no MTU reply, screen frozen); not reproduced since. After
+  a later reboot its telemetry uploads failed with `OSError(116)` and
+  `-202`, though it kept answering the phone throughout.
+
+---
+
+## Phase 7b — Live map
+
+A map to look at while connected: where the turtle is, where it's going
+and where it has been this session. Same rules as the Phase 3 picker:
+MapLibre with OpenFreeMap tiles (the app's only internet use), and only
+the **turtle's** position, never the phone's.
+
+- **Map card on Navigate**, above the Course card:
+  - the turtle from `0110` Position, with a heading arrow from `0111`
+    Nav `heading`; faded with "fix Ns old" when the fix is stale, and
+    no marker at all without a fix;
+  - your target and the mission target from `0112` Targets, the active
+    one marked as on the Destination card;
+  - a line from the turtle to the active target;
+  - the cross-track band: ±25 m either side of the course line (the
+    gauge's scale), with `xte` showing where the turtle sits in it.
+  The camera fits the turtle and the active target; panning by hand
+  stops the auto-fit until "Recentre" is tapped.
+- **Session trail.** Each new position notification adds a point (only
+  when it has moved more than a few metres), drawn as a thin line
+  behind the turtle. Kept in memory for this connection only, like the
+  battery sparkline; it starts empty on each connect and says so.
+- **GPS stamps on the map.** The stamp log's entries (GPS tab) appear
+  as small markers, Stamped and Sent styled differently; tap one for
+  its time and coordinates.
+- **Full-screen map**, opened from the card: the same layers with room
+  to pan and zoom, and "Pick a destination here" handing off to the
+  existing picker (which still asks before sending, via
+  `ConfirmDialog`).
+- **No internet:** the card says "Map needs data or WiFi on this phone"
+  and the rest of Navigate works as before. Offline tiles are
+  Phase 10.
+- **Contract:** nothing new; everything above is in v1 characteristics.
 
 ---
 
@@ -483,13 +553,40 @@ the device-key `/v1` routes (`deviceAuth`):
 
 ---
 
+## Phase 10 — offline maps (after field testing)
+
+At sea, or anywhere without data, the live map (Phase 7b) and the
+destination picker (Phase 3) go blank. Phase 10 lets the phone carry
+the map with it.
+
+- **Download an area before leaving shore.** In Settings, "Offline map":
+  pick an area on the map (the turtle's position, its mission target and
+  the line between them make a good default box) and a zoom range, see
+  the estimated size, and download. MapLibre's offline region API
+  stores the OpenFreeMap tiles, style, fonts and sprites on the phone.
+- **Manage regions:** list them with their size and date, update, and
+  delete. Warn when a region is old or the turtle has sailed out of
+  every saved region.
+- **Use them automatically.** With no connection, the map draws from the
+  saved regions; outside them it falls back to a plain background with
+  a lat/lon grid, so markers, the trail and the course line still show.
+- **Respect the tile host.** OpenFreeMap is free and keyless; keep
+  regions to a sensible size and zoom (cap the tile count), and check
+  its terms for bulk downloads before release. If bulk use isn't
+  allowed, a self-hosted PMTiles extract on hopeturtles.org is the
+  fallback.
+- **Still never the phone's location.** Choosing an area uses the
+  turtle's and the targets' positions, or a hand-drawn box.
+
+---
+
 ## Out of scope for v1
 
 - iOS. Core Bluetooth differs enough that it would be close to a
   separate app.
 - Ubuntu Touch. UBports' BLE support is thinner, and nothing drives the
   need.
-- Offline map tile caching (follow-up once the app is in the field).
+- Offline map tiles: moved to Phase 10, after field testing.
 - A multi-turtle live Bluetooth view. The app connects to one turtle at
   a time over BLE. Phase 8's "My turtles" list is the fleet view, via
   shore data.
