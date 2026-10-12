@@ -196,8 +196,12 @@ only the first 13 bytes)* `compass_offset_deg i16`
   owns the servo). `NavController.manual_hold_s()`, capped at 254.
 
 **`0114` Power** — `voltage_mV u16`, `current_mA i16`, `soc_pct u8`
-- Source: the shared `ina_dev` (INA219). `soc_pct` is the estimate from
-  `NavController._battery_pct()` and must not be computed a second time.
+- Source: the shared `ina_dev` (INA219). `voltage_mV` is
+  `INA219.battery_v()`, the pack's estimated rest voltage with the
+  I x `battery_r_ohm` swing removed (since 2026-10-12; it was the raw
+  bus register, which read ~0.1 V high whenever USB was charging).
+  `soc_pct` is the estimate from `NavController._battery_pct()`, derived
+  from the same voltage, and must not be computed a second time.
   `current_mA` is the INA219's raw reading: **negative = charging**
   (current flowing into the pack), positive = discharging. That's the
   same sign the OLED's battery overlay interprets (`turtle_waiting.py`).

@@ -312,7 +312,7 @@ class TurtleData:
         mv, ma = NA_U16, NA_I16
         if ina is not None:
             try:
-                v = ina.bus_voltage_v()
+                v = ina.battery_v()
                 if v is not None:
                     mv = min(int(round(float(v) * 1000)), NA_U16 - 1)
             except Exception:

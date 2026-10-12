@@ -164,7 +164,7 @@ class NavController:
         return self._wps.source()
 
     def battery_pct(self):
-        """State-of-charge estimate from the INA219 bus voltage, or None.
+        """State-of-charge estimate from the INA219 battery_v(), or None.
         The one SoC estimator — telemetry and Bluetooth read it here."""
         return self._battery_pct()
 
@@ -357,7 +357,7 @@ class NavController:
         if self._ina is None or not getattr(self._ina, "is_present", False):
             return None
         try:
-            v = self._ina.bus_voltage_v()
+            v = self._ina.battery_v()
             if v is None:
                 return None
             return max(0, min(100, int((float(v) - 3.30) / (4.20 - 3.30) * 100)))

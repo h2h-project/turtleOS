@@ -156,6 +156,10 @@ def run(
         try:
             from src.drivers.ina219 import INA219 as _INA219
             _gc()
+            try:
+                _INA219.BATT_R_OHM = float(load_config().get("battery_r_ohm", _INA219.BATT_R_OHM))
+            except Exception:
+                pass
             _ina_dev = _INA219(i2c, auto_init=True)
             if not _ina_dev.is_present:
                 _ina_dev = None
@@ -252,7 +256,7 @@ def run(
     waiting = WaitingScreen(
         room_get=_room_name,
         battery_present_get=lambda: _ina_dev is not None,
-        battery_level_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+        battery_level_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
     )
 
     def _mission_name():
@@ -283,7 +287,7 @@ def run(
                 oled,
                 nav_get=lambda: _nav_cell[0],
                 mission_get=_mission_name,
-                battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                battery_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
                 current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
             )
             _gc()
@@ -677,7 +681,7 @@ def run(
                     oled,
                     nav_get=lambda: _nav_cell[0],
                     mission_get=_mission_name,
-                    battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                    battery_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
                     current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
                 )
 

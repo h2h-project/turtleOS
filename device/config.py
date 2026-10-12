@@ -122,6 +122,14 @@ DEFAULTS = {
     "servo_min_us": 500,
     "servo_max_us": 2500,
 
+    # --- Battery ---
+    # Ohms between the INA219's VIN+ and the cell (cell internal resistance
+    # + leads). Removes the I*R swing so the battery reads the same plugged
+    # and unplugged. Calibrate: set 0, note V and mA on the Battery screen
+    # unplugged and charging, then R = (V_charging - V_unplugged) /
+    # (mA_charging + mA_unplugged) * 1000.
+    "battery_r_ohm": 0.5,
+
     # --- Mission destination (turtle mode) ---
     # The grand-mission target, assigned on hopeturtles.org and pushed to the
     # device by the Device API boot step (GET /v1/device -> mission_target_*).
@@ -428,6 +436,15 @@ def _normalize_types(cfg):
     if cfg.get("servo_min_us") != s_min or cfg.get("servo_max_us") != s_max:
         cfg["servo_min_us"] = s_min
         cfg["servo_max_us"] = s_max
+        changed = True
+
+    # --- Battery resistance ---
+    try:
+        r_batt = max(0.0, min(2.0, float(cfg.get("battery_r_ohm", DEFAULTS["battery_r_ohm"]))))
+    except Exception:
+        r_batt = DEFAULTS["battery_r_ohm"]
+    if cfg.get("battery_r_ohm") != r_batt:
+        cfg["battery_r_ohm"] = r_batt
         changed = True
 
     # --- Destination name strings (mission + operator-set) ---

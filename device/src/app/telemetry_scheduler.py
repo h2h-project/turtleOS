@@ -557,12 +557,20 @@ class TelemetryScheduler:
             return None
         try:
             bus_v  = self._ina.bus_voltage_v()
+            batt_v = self._ina.battery_v()
             cur_ma = self._ina.current_ma()
             pwr_mw = self._ina.power_mw()
             out = {}
+            # ina_bus_v carries the battery's rest-voltage estimate (I*R swing
+            # removed, see INA219.battery_v) because hopeturtles.org reads it
+            # as "battery voltage" and derives SoC from it. The raw VIN- bus
+            # reading, which jumps ~0.1 V when USB is plugged in, rides along
+            # as ina_raw_bus_v for diagnostics.
             if bus_v is not None:
-                out["ina_bus_v"] = round(float(bus_v), 2)
-                pct = self._estimate_batt_pct(bus_v)
+                out["ina_raw_bus_v"] = round(float(bus_v), 3)
+            if batt_v is not None:
+                out["ina_bus_v"] = round(float(batt_v), 2)
+                pct = self._estimate_batt_pct(batt_v)
                 if pct is not None:
                     out["ina_batt_pct"] = pct
             if cur_ma is not None:

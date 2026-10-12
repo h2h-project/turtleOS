@@ -283,7 +283,7 @@ class SummaryScreen:
         if self._ina is None or not getattr(self._ina, "is_present", False):
             return None
         try:
-            return self._ina.bus_voltage_v()
+            return self._ina.battery_v()
         except Exception:
             return None
 

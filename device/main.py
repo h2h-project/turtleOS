@@ -1620,6 +1620,7 @@ def step_init_runtime():
 
     try:
         from src.drivers.ina219 import INA219
+        INA219.BATT_R_OHM = float(cfg.get("battery_r_ohm", INA219.BATT_R_OHM))
         _ina = INA219(_rt_i2c, auto_init=True)
         _rt_ina = _ina if _ina.is_present else None
     except Exception:
@@ -1691,7 +1692,7 @@ def step_init_runtime():
                 oled,
                 nav_get=lambda: _rt_nav,
                 mission_get=_rt_mission_name,
-                battery_get=lambda: (_rt_ina.bus_voltage_v() if _rt_ina else None),
+                battery_get=lambda: (_rt_ina.battery_v() if _rt_ina else None),
                 current_get=lambda: (_rt_ina.current_ma() if _rt_ina else None),
             )
         except Exception as e:

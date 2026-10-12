@@ -399,6 +399,8 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **GY-87 fields (turtleOS 2.4+):** `_read_baro()` adds `bmp_pressure` (hPa), `bmp_temp` (°C) and `bmp_alt_m` (ISA altitude from 1013.25 hPa — a sanity number, it drifts with the weather); `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart.
 
+**Battery fields:** `ina_bus_v` is the **corrected** pack voltage (`INA219.battery_v()`), because hopeturtles.org reads that key as battery voltage and derives SoC from it; `ina_raw_bus_v` is the raw VIN- register for diagnostics. `ina_current_ma` keeps the raw INA219 sign (negative = charging).
+
 **`flags`:** `_build_full_payload()` always emits `flags.auto_log` / `flags.manual_registry`, and — while an operator journey is open — `flags.journey_id` (see [Journey tagging](#journey-tagging)). The whole `flags` object is stored verbatim in `raw_data.flags`.
 
 ---
@@ -572,6 +574,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
 | `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
 | `servo_min_us` / `servo_max_us` | int | `500` / `2500` | pulse range the Servo-screen wind-finder sweep runs between (just inside the servo's end stops); MG996R defaults. Clamped 400–2600, ≥200 apart. The sweep parks at the midpoint and stops PWM when done. |
+| `battery_r_ohm` | float | `0.5` | ohms between the INA219's VIN+ and the cell (cell + leads). `INA219.battery_v()` removes the I×R swing so the pack reads the same plugged and unplugged; every battery voltage/SoC (Battery screen, waiting-screen glyph, Wrangler Power, telemetry) uses it. Clamped 0–2. Calibrate: set `0`, read V and mA on the Battery screen unplugged and charging, R = ΔV / (mA_chg + mA_dis) × 1000. |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |

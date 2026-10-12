@@ -17,9 +17,10 @@ def _fmt_v(v):
 
 
 def _fmt_ma(v):
+    # Unsigned: the bolt / minus glyph beside it carries the direction.
     if v is None:
         return "---"
-    return "{:.0f}mA".format(float(v))
+    return "{:d}mA".format(int(round(abs(float(v)))))
 
 
 def _fmt_mw(v):
@@ -59,7 +60,7 @@ class BatteryScreen:
         try:
             return {
                 "present": True,
-                "bus_v":      ina.bus_voltage_v(),
+                "bus_v":      ina.battery_v(),
                 "current_ma": ina.current_ma(),
                 "power_mw":   ina.power_mw(),
             }
@@ -104,7 +105,28 @@ class BatteryScreen:
         line_gap = med_h + 3
         if present:
             o.f_med.write(_fmt_v(bus_v),                   0, body_y)
-            o.f_med.write(_fmt_ma(data.get("current_ma")), 0, body_y + line_gap)
+            cur = data.get("current_ma")
+            cur_txt = _fmt_ma(cur)
+            cur_y = body_y + line_gap
+            o.f_med.write(cur_txt, 0, cur_y)
+            # Same sign rule as the waiting screen: INA219 current <= 0 is
+            # charging (bolt), > 0 is the XIAO drawing from the pack (minus).
+            if cur is not None:
+                try:
+                    cw, _ = o._text_size(o.f_med, cur_txt)
+                except Exception:
+                    cw = len(cur_txt) * 8
+                mx = cw + 3
+                my = cur_y + (med_h - 8) // 2
+                try:
+                    if cur <= 0:
+                        from src.ui.glyphs import draw_bolt
+                        draw_bolt(fb, mx, my)
+                    else:
+                        from src.ui.glyphs import draw_minus
+                        draw_minus(fb, mx, my)
+                except Exception:
+                    pass
             o.f_med.write(_fmt_mw(data.get("power_mw")),   0, body_y + 2 * line_gap)
         else:
             o.f_med.write("No INA219", 0, body_y)
