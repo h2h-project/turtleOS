@@ -371,7 +371,15 @@ gesture leaves Settings.
 - **Danger zone:** Sleep, Reboot, Switch to airOS. Each is confirmed,
   and each ends the connection.
 
-### Phase 6 status — BUILT, awaiting phone test (2026-10-09)
+### Phase 6 status — DONE (2026-10-12)
+
+Phone-tested: the gear, Settings and its commands work as built.
+Wrangler 0.2.4 also adds a connecting drawer under the top bar that
+lists each setup handshake step as it happens, then slides away when
+connected. It replaces the status text in the top bar and the spinner
+row. On the Dashboard, the compass is now a full-width dial.
+
+Built (2026-10-09):
 
 turtleOS 2.5.4 / Wrangler 0.2.4. The gear opens Settings over the tabs:
 the gear is highlighted, no tab is, and back or any tab closes it.
