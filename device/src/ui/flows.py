@@ -21,6 +21,11 @@
 #   "Offline" and the pending unsent-telemetry count when WiFi is down.
 # - Removed the wifi_ok gates that previously hid Online/Device offline.
 #
+# PATCH (Oct 2026 - Bluetooth first):
+# - In turtle mode the Bluetooth screen now leads the carousel, so pairing
+#   with Turtle Wrangler is one triple-click away:
+#   Bluetooth -> Online -> Logging -> WiFi -> Device.
+
 # PATCH (Jul 2026 - Manual GPS logging):
 # - GPS screen moved OUT of the single-click and triple-click carousels and to
 #   the FRONT of the hold flow (GPS -> Battery -> Sleep -> Version), so a
@@ -429,6 +434,8 @@ def connectivity_carousel(
 
     Waiting
        ↓ (triple)
+    Bluetooth Screen (turtle mode only — pairing happens here)
+       ↓ single click always advances
     Online Screen (ALWAYS — shows "Offline" + pending queue when WiFi down)
        ↓ single click always advances
     Logging Screen
@@ -481,7 +488,41 @@ def connectivity_carousel(
     _request_wifi_check(telemetry, cfg=cfg, force=True)
 
     # ------------------------------------------------------------
-    # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.
+    # 0) BLUETOOTH SCREEN — turtle mode only (Turtle Wrangler), first so
+    #    pairing is one triple-click away. Opening it reopens the wrangle
+    #    window; double-click turns Bluetooth on/off.
+    # ------------------------------------------------------------
+    if bool((cfg or {}).get("turtle_mode", False)):
+        try:
+            from src.net import ble_service as _bles
+            _svc = _bles.instance()
+            _log_screen("bluetooth", "state={}  name={}".format(
+                _svc.state() if _svc else "none", _svc.name if _svc else "?"))
+        except Exception:
+            _log_screen("bluetooth")
+        ble_scr = get_screen("bluetooth")
+        if ble_scr and hasattr(ble_scr, "show_live"):
+            try:
+                a = ble_scr.show_live(btn, tick_fn=tick_fn)
+            except Exception:
+                a = wait_for_single(btn, tick_fn=tick_fn)
+        else:
+            draw_text(oled, "BLUETOOTH", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        sp = _handle_special(a)
+        if sp == "handled":
+            return
+        if sp in ("quad", "debug"):
+            return sp
+
+        if a != "single":
+            return _exit(a)
+
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ------------------------------------------------------------
+    # 1) ONLINE/API SCREEN — ALWAYS shown (first outside turtle mode).
     #    Viewable offline: shows "Offline" title + pending (unsent) count.
     # ------------------------------------------------------------
     try:
@@ -578,37 +619,6 @@ def connectivity_carousel(
         return
     if sp in ("quad", "debug"):
         return sp
-
-    # ------------------------------------------------------------
-    # 3b) BLUETOOTH SCREEN — turtle mode only (Turtle Wrangler). Opening it
-    #     reopens the wrangle window; double-click turns Bluetooth on/off.
-    # ------------------------------------------------------------
-    if bool((cfg or {}).get("turtle_mode", False)):
-        if a != "single":
-            return _exit(a)
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-        try:
-            from src.net import ble_service as _bles
-            _svc = _bles.instance()
-            _log_screen("bluetooth", "state={}  name={}".format(
-                _svc.state() if _svc else "none", _svc.name if _svc else "?"))
-        except Exception:
-            _log_screen("bluetooth")
-        ble_scr = get_screen("bluetooth")
-        if ble_scr and hasattr(ble_scr, "show_live"):
-            try:
-                a = ble_scr.show_live(btn, tick_fn=tick_fn)
-            except Exception:
-                a = wait_for_single(btn, tick_fn=tick_fn)
-        else:
-            draw_text(oled, "BLUETOOTH", y=24)
-            a = wait_for_single(btn, tick_fn=tick_fn)
-
-        sp = _handle_special(a)
-        if sp == "handled":
-            return
-        if sp in ("quad", "debug"):
-            return sp
 
     if a != "single":
         return _exit(a)

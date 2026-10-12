@@ -292,13 +292,13 @@ Any non-single click during a dwell exits the carousel early.
 Triple-click enters `connectivity_carousel()` — same in both modes:
 
 ```
-Waiting → Online screen
+Waiting → Bluetooth screen   (turtle mode only)
+            ↓ single click (always advances)
+         Online screen
             ↓ single click (always advances)
          Logging screen
             ↓ single click (always advances)
          WiFi screen
-            ↓ single click
-         Bluetooth screen   (turtle mode only)
             ↓ single click
          Device screen
             ↓ single click
@@ -306,7 +306,8 @@ Waiting → Online screen
 ```
 
 **Key rules:**
-- Online screen leads and is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
+- In turtle mode the Bluetooth screen leads, so pairing with Turtle Wrangler is one triple-click away. Otherwise the Online screen leads.
+- Online screen is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
 - The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
 - **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. Closing the window stops advertising but never drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.

@@ -490,8 +490,8 @@ and useful to any nearby phone.
 - **Pairing is only accepted while the Bluetooth screen is showing.**
   The passkey is drawn there, so no other screen needs a pairing
   overlay. A pairing attempt at any other time is rejected. The app then
-  tells the user: "Open the Bluetooth screen on the turtle (triple-click,
-  then single-click three times) to pair".
+  tells the user: "Open the Bluetooth screen on the turtle (triple-click)
+  to pair".
 - **Bond storage:** `/ble_bonds.json`, device-owned like
   `journey_state.json`. The sync/install scripts must exclude it, or a
   re-upload would un-pair every phone. Firmware implements
@@ -525,8 +525,9 @@ hull asks for it. Three new config keys:
   window is still open.
 - **Sleep shuts BLE down** completely (`BLE().active(False)`). Waking
   reopens a fresh window.
-- **Bluetooth screen:** new, in the connectivity carousel after WiFi:
-  Online → Logging → WiFi → **Bluetooth** → Device. It uses the same
+- **Bluetooth screen:** first in the connectivity carousel (since
+  turtleOS 2.5.5; it came after WiFi before that):
+  **Bluetooth** → Online → Logging → WiFi → Device. It uses the same
   skeleton as the WiFi screen (title, right-hand toggle, double-click
   flips `ble_enabled`). Body text:
   - off: "Off"

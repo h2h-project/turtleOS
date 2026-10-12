@@ -77,7 +77,7 @@ The foundation every later screen relies on.
   fails silently.
 - **Pairing UX.** The first command to a new turtle can return
   `ERR_NOT_BONDED`. Show: "To pair, open the Bluetooth screen on the
-  turtle (triple-click, then single-click three times) and enter the
+  turtle (triple-click) and enter the
   6-digit code it shows." Then trigger bonding
   (`createBond()` / encrypted access), which brings up Android's system
   passkey dialog. If Status bit 15 (`ble_require_bond`) is off, show a
