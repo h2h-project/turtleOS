@@ -7,7 +7,7 @@
 # directly — see connection_header.ble_visible().
 #
 # Serves the Turtle service: Contract info + Turtle name (static) and the
-# eight telemetry characteristics packed by src/net/ble_telemetry.py
+# telemetry characteristics packed by src/net/ble_telemetry.py (SCHEDULE)
 # (Phase 3), the Command service (0201 Command / 0202 Result) run by
 # src/net/ble_commands.py (Phase 4), and the standard Device Information
 # service 0x180A (Phase 7): manufacturer, model, firmware, serial.
@@ -53,6 +53,7 @@ CONTRACT_VERSION = 1
 
 ADV_INTERVAL_US = 500_000    # 0.5 s: found within a second or two, light on power
 PREFERRED_MTU = 185
+RESULT_BUFFER = 180        # Result attribute: a JOURNEY_TRACK page at MTU 185 (contract rule 8)
 
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
@@ -325,7 +326,7 @@ class BleService:
                 self._ble.gatts_set_buffer(h, max(len(b), 1))
                 self._ble.gatts_write(h, b)
             self._ble.gatts_set_buffer(h_cmd, CMD_BUFFER, False)
-            self._ble.gatts_set_buffer(h_res, 64)
+            self._ble.gatts_set_buffer(h_res, RESULT_BUFFER)
             h_info, h_name = handles[0], handles[1]
             self._handles = {"info": h_info, "name": h_name, "cmd": h_cmd, "res": h_res}
             for i, (cid, _base, _force) in enumerate(T.SCHEDULE):

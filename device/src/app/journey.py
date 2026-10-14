@@ -1,29 +1,49 @@
-# src/app/journey.py — active-journey state (turtle mode)
+# src/app/journey.py — journeys: the open one, the ones that ended, and the
+# start/end events telemetry still has to report (turtle mode)
 #
 # A "journey" is an operator-marked leg of travel. The user opens the Journey
-# screen (src/ui/screens/journey.py), double-clicks to flip the toggle ON, and
+# screen (src/ui/screens/journey.py) or Wrangler sends JOURNEY_START, and
 # from that moment every telemetry payload the scheduler builds carries this
 # journey's id under flags.journey_id (see
-# telemetry_scheduler._build_full_payload). Double-clicking the Journey screen
-# again stamps set_arrival and clears the journey, so the tagging stops.
+# telemetry_scheduler._build_full_payload). Ending it (the screen again, or
+# JOURNEY_END) stamps set_arrival and stops the tagging.
 #
 # The id is the unix second the journey started: monotonic per turtle, sortable,
-# and allocatable with no server round-trip. The record persists to
-# /journey_state.json so a journey survives a watchdog reboot or power cycle and
-# keeps tagging until the operator explicitly "arrives".
+# and allocatable with no server round-trip.
 #
-# State file shape (file absent, or {}, means no journey is active):
-#   {"id": 1725800000, "started_at": 1725800000, "departure": [lat, lon]}
+# Field names follow the turtle data dictionary (docs/wrangler/README.md,
+# "Turtle data dictionary"). One journey record:
+#   {"id", "started_at", "departure": [lat, lon],
+#    "destination": [lat, lon] | None, "destination_source": 0-4,
+#    "ended_at": unix s | None, "arrival": [lat, lon] | None}
+# "destination" is the active target when the record was last written (at
+# the start, then at the end); "destination_source" is the Targets
+# active_source code (src/nav/waypoints.py SRC_*). "ended_at" is None only
+# if the clock was lost in between; "arrival" is None without a GPS fix.
 #
-# This module is a process-wide singleton: the Journey screen and the telemetry
-# scheduler import the same module object, so a start()/end() on the screen side
-# is visible to the scheduler's next _build_full_payload() without any plumbing.
+# /journey_state.json (device-owned; the sync/install scripts exclude it):
+#   the open journey's fields at the top level (absent = none open), plus
+#   "history": ended journeys, newest first, at most HISTORY_MAX, and
+#   "events":  start/end events not yet put into a telemetry reading, oldest
+#              first, at most EVENTS_MAX. The scheduler takes them with
+#              pending_event() / event_taken() (v2 plan, Phase B).
+# A journey survives a watchdog reboot or power cycle and keeps tagging
+# until the operator ends it. Old firmware reading this file still finds
+# "id" at the top level and ignores the rest.
+#
+# This module is a process-wide singleton: the Journey screen, the Bluetooth
+# commands and the telemetry scheduler import the same module object.
 
 import json
 
 _STATE_PATH = "/journey_state.json"
 
-_cache = {}          # last known state ({} = no active journey)
+HISTORY_MAX = 20     # ended journeys kept (each well under 200 bytes)
+EVENTS_MAX = 10      # unreported events kept; the oldest go first
+
+_cache = {}          # the open journey ({} = none)
+_history = []        # ended journeys, newest first
+_events = []         # unreported start/end events, oldest first
 _loaded = False      # has _read() run at least once this power cycle?
 
 
@@ -55,23 +75,35 @@ def _now_unix_seconds():
 
 
 def _read():
-    global _cache, _loaded
-    st = {}
+    global _cache, _history, _events, _loaded
+    raw = {}
     try:
         with open(_STATE_PATH) as f:
             raw = json.load(f)
-        if isinstance(raw, dict) and raw.get("id"):
-            st = raw
+        if not isinstance(raw, dict):
+            raw = {}
     except Exception:
-        st = {}
-    _cache = st
+        raw = {}
+    hist = raw.get("history")
+    evs = raw.get("events")
+    _history = [h for h in hist if isinstance(h, dict)] if isinstance(hist, list) else []
+    _events = [e for e in evs if isinstance(e, dict)] if isinstance(evs, list) else []
+    _cache = {}
+    if raw.get("id"):
+        for k in raw:
+            if k not in ("history", "events"):
+                _cache[k] = raw[k]
     _loaded = True
     return _cache
 
 
-def _write(st):
-    global _cache
-    st = st if (isinstance(st, dict) and st.get("id")) else {}
+def _save():
+    """Write the open journey, history and events (tmp + rename)."""
+    st = dict(_cache) if _cache.get("id") else {}
+    if _history:
+        st["history"] = _history[:HISTORY_MAX]
+    if _events:
+        st["events"] = _events[-EVENTS_MAX:]
     try:
         tmp = _STATE_PATH + ".tmp"
         with open(tmp, "w") as f:
@@ -80,13 +112,33 @@ def _write(st):
         os.rename(tmp, _STATE_PATH)
     except Exception:
         pass
-    _cache = st
+
+
+def _ensure():
+    if not _loaded:
+        _read()
+
+
+def _active_target():
+    """(destination [lat, lon] or None, destination_source) — the final point
+    of whatever the nav loop steers for, resolved the way WaypointSequencer
+    does it."""
+    try:
+        from config import load_config
+        from src.nav.waypoints import WaypointSequencer
+        wps, src = WaypointSequencer._resolve(load_config() or {})
+        if wps:
+            last = wps[-1]
+            return [last[0], last[1]], src
+        return None, src
+    except Exception:
+        return None, 0
 
 
 def get(force=False):
-    """Return the active-journey dict, or {} when no journey is active."""
+    """Return the open journey's dict, or {} when no journey is open."""
     if force or not _loaded:
-        return _read()
+        _read()
     return _cache if isinstance(_cache, dict) else {}
 
 
@@ -98,19 +150,113 @@ def active_id():
     return get().get("id")
 
 
+def history():
+    """Ended journeys, newest first (copies)."""
+    _ensure()
+    return [dict(h) for h in _history]
+
+
+def last():
+    """The most recently ended journey, or None."""
+    _ensure()
+    return dict(_history[0]) if _history else None
+
+
 def start(lat, lon):
     """Begin a journey anchored at (lat, lon). Returns the record, or None if
     the RTC is not synced (no usable id — caller should surface the failure)."""
+    _ensure()
     now_s = _now_unix_seconds()
     if now_s < 1_000_000_000:
         return None
+    global _cache
     jid = int(now_s)
-    st = {"id": jid, "started_at": jid, "departure": [lat, lon]}
-    _write(st)
-    return st
+    dest, src = _active_target()
+    _cache = {"id": jid, "started_at": jid, "departure": [lat, lon],
+              "destination": dest, "destination_source": src}
+    _events.append({"event": "start", "journey": dict(_cache)})
+    _save()
+    return dict(_cache)
 
 
-def end():
-    """Clear the active journey. The arrival point is written to config
-    (set_arrival) by the caller, not stored here."""
-    _write({})
+def end(arrival=None):
+    """Close the open journey and keep it in the history. [arrival] is the
+    [lat, lon] the caller stamped (also written to config set_arrival), or
+    None without a fix. Returns the ended record, or None if none was open."""
+    _ensure()
+    global _cache, _history
+    if not _cache.get("id"):
+        return None
+    rec = dict(_cache)
+    now_s = _now_unix_seconds()
+    rec["ended_at"] = int(now_s) if now_s >= 1_000_000_000 else None
+    rec["arrival"] = [arrival[0], arrival[1]] if arrival else None
+    dest, src = _active_target()
+    if dest is not None:
+        rec["destination"], rec["destination_source"] = dest, src
+    _history = ([rec] + _history)[:HISTORY_MAX]
+    _cache = {}
+    _events.append({"event": "end", "journey": dict(rec)})
+    _save()
+    return dict(rec)
+
+
+def pending_event():
+    """The oldest start/end event no telemetry reading has carried yet, as
+    {"event": "start" | "end", "journey": record}, or None."""
+    _ensure()
+    return dict(_events[0]) if _events else None
+
+
+def event_taken():
+    """The scheduler put pending_event() into a reading: drop it."""
+    _ensure()
+    if _events:
+        del _events[0]
+        _save()
+
+
+# ---------------------------------------------------------------- track
+
+_QUEUE_PATH = "telemetry_queue.json"     # src/net/telemetry_client.QUEUE_FILE
+_NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
+TRACK_POINT = "<IiiB"                    # recorded_at, lat_e7, lon_e7, machine_state
+TRACK_POINT_SIZE = 13
+
+
+def _e7(deg):
+    return int(round(float(deg) * 1e7))
+
+
+def track_points(jid, path=None):
+    """The journey's track from the unsent telemetry queue, packed as
+    TRACK_POINT records (GATT JOURNEY_TRACK), oldest first: every queued
+    reading tagged flags.journey_id == jid that has a position. Readings
+    already sent to the server have left the queue and aren't here.
+
+    Reads the JSONL queue one line at a time (it can hold 5000 readings;
+    never load it whole), and only parses lines that mention the id."""
+    import struct
+    jid = int(jid)
+    key = str(jid)
+    out = bytearray()
+    try:
+        with open(path or _QUEUE_PATH) as f:
+            for line in f:
+                if key not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                    if (o.get("flags") or {}).get("journey_id") != jid:
+                        continue
+                    lat, lon = o.get("lat"), o.get("lon")
+                    if lat is None or lon is None:
+                        continue
+                    out += struct.pack(TRACK_POINT, int(o.get("recorded_at") or 0) & 0xFFFFFFFF,
+                                       _e7(lat), _e7(lon),
+                                       _NAV_STATES.get(o.get("machine_state"), 0xFF))
+                except Exception:
+                    continue
+    except OSError:
+        pass
+    return bytes(out)

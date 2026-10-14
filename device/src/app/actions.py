@@ -220,7 +220,7 @@ def journey_end(gps=None):
         loc = current_fix(gps)
         if loc is not None:
             save_set_fields({"set_arrival": [loc[0], loc[1]]})
-        journey.end()
+        journey.end([loc[0], loc[1]] if loc is not None else None)
         _stand_down()
 
         if loc is not None:

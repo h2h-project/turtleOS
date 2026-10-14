@@ -59,6 +59,9 @@ DEFAULTS = {
     "telemetry_mode": "auto",
     "telemetry_enabled": True,
     "telemetry_post_every_s": 120,
+    # While a journey is open, log at least this often (s) so a short field
+    # test has a usable track. 0 = just use telemetry_post_every_s. Min 10.
+    "journey_log_every_s": 0,
     "morse_bless": False,   # blink button LED in Morse before each send; only useful when LED is wired
 
     # --- Device Identity / API ---

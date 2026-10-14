@@ -240,7 +240,7 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 3 s** | Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
+| **Hold 3 s** | Bluetooth → Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).
@@ -265,7 +265,7 @@ Screens with a toggle switch (`wifi.py`, `online.py`, `logging.py`) use double-c
 
 Single-click enters `sensor_carousel()` configured for navigation screens (order set in `flows.py`; single-click always advances):
 0. **Servo** screen — **always first.** Sail servo status. **Single click advances; double click** waits 0.5 s then runs one full luff wind-finder sweep (`screens/wind_finder.py::WindFinder`, driven through `ServoScreen`'s raw-PWM callbacks). The result (wind angle + 180° alternate + jitter/confidence) stays on screen until the next action. `_make_pwm()` sets the frequency in the `PWM()` constructor — a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz) until `.freq()` lands, which is garbage to a servo. Idle loop polls the button every 2 ms with no periodic redraw (screen is static once probed) — see the sampling note under [the button](#user-interaction--the-button).
-1. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it follows Servo. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and clears the file. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
+1. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it follows Servo. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and moves the record into the file's history. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
 2. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
 3. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
 4. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
@@ -292,9 +292,7 @@ Any non-single click during a dwell exits the carousel early.
 Triple-click enters `connectivity_carousel()` — same in both modes:
 
 ```
-Waiting → Bluetooth screen   (turtle mode only)
-            ↓ single click (always advances)
-         Online screen
+Waiting → Online screen
             ↓ single click (always advances)
          Logging screen
             ↓ single click (always advances)
@@ -306,11 +304,11 @@ Waiting → Bluetooth screen   (turtle mode only)
 ```
 
 **Key rules:**
-- In turtle mode the Bluetooth screen leads, so pairing with Turtle Wrangler is one triple-click away. Otherwise the Online screen leads.
+- The Bluetooth screen is **not** in this carousel; it leads the hold flow (see below).
 - Online screen is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
 - The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
-- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. Closing the window stops advertising but never drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
+- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`, first screen of the **hold flow**, before Battery): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. Closing the window stops advertising but never drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
 
@@ -319,15 +317,15 @@ Waiting → Bluetooth screen   (turtle mode only)
 ## Manual GPS logging (hold flow)
 
 `telemetry_mode: "manual"` (set on the Logging screen: off → auto → manual) turns
-the GPS screen into a field logger. The hold flow now shows Battery first (skipped
-when no INA219 is attached), so recording a position is: hold 2 s, single click past
-Battery, then click.
+the GPS screen into a field logger. In turtle mode the hold flow opens on the
+Bluetooth screen, then Battery (skipped when no INA219 is attached), so recording a
+position is: hold 3 s, single click past Bluetooth and Battery, then click.
 
 ```
-Waiting --hold 3s--> Battery screen --single click--> GPS screen --double click--> Sleep --> Version --> Waiting
-                       (skipped if no INA219)           ↑ single click = record one reading
-                                                         ↑ triple click = toggle gps_enabled
-                                                         ↑ hold         = leave the flow
+Waiting --hold 3s--> [Bluetooth --single-->] Battery screen --single click--> GPS screen --double click--> Sleep --> Version --> Waiting
+                     (turtle mode)           (skipped if no INA219)           ↑ single click = record one reading
+                                                                              ↑ triple click = toggle gps_enabled
+                                                                              ↑ hold         = leave the flow
 ```
 
 In `manual` mode the GPS screen inverts the usual gestures — **single click stamps a
@@ -351,8 +349,9 @@ mapping stands (single advances, double toggles GPS).
   complete record. `_build_full_payload()` reads GPS before the "no values" gate for
   exactly this reason; a turtle carrying no air sensor is the normal case.
 - Whoever drains the GPS UART **must** publish to `src/nav/gpsfix.py`. The GPS screen
-  and `NavController` both consume the same single UART, and the telemetry scheduler
-  falls back to that cache when its own drain comes up empty. A screen that reads
+  and `NavController` both consume the same single UART. The telemetry scheduler
+  takes its position **from that cache** (the same fix Bluetooth Position sends) and
+  drains the UART itself only when the cache is stale (airOS), publishing what it reads. A screen that reads
   NMEA without publishing silently strips lat/lon from every stamp taken while it is
   open.
 - `device/telemetry_queue.json` is **device-owned**. The sync/install scripts exclude
@@ -399,7 +398,9 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **GY-87 fields (turtleOS 2.4+):** `_read_baro()` adds `bmp_pressure` (hPa), `bmp_temp` (°C) and `bmp_alt_m` (ISA altitude from 1013.25 hPa — a sanity number, it drifts with the weather); `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart.
 
-**Battery fields:** `ina_bus_v` is the **corrected** pack voltage (`INA219.battery_v()`), because hopeturtles.org reads that key as battery voltage and derives SoC from it; `ina_raw_bus_v` is the raw VIN- register for diagnostics. `ina_current_ma` keeps the raw INA219 sign (negative = charging).
+**Battery fields:** `ina_bus_v` is the **corrected** pack voltage (`INA219.battery_v()`), because hopeturtles.org reads that key as battery voltage and derives SoC from it; `ina_raw_bus_v` is the raw VIN- register for diagnostics.
+
+**Battery current sign — one rule everywhere:** `ina_current_ma` (telemetry JSON) and `current_mA` (Wrangler Power `0113`) are the INA219's **raw** reading, `INA219.current_ma()`: **negative = charging** (USB/solar into the pack), **positive = discharging** (the XIAO drawing from it). Never flip it on the turtle or on the wire. The waiting screen is the reference: bolt when `current_ma <= 0`, minus bar otherwise. Anything that wants "positive = charging" converts at the point of use: `INA219.charge_ma()` on the turtle, `chargeMaFromIna()` (`utils/batteryCurrent.js`) on hopeturtles.org, `Format.charge()` in Wrangler.
 
 **`flags`:** `_build_full_payload()` always emits `flags.auto_log` / `flags.manual_registry`, and — while an operator journey is open — `flags.journey_id` (see [Journey tagging](#journey-tagging)). The whole `flags` object is stored verbatim in `raw_data.flags`.
 
@@ -478,13 +479,38 @@ release-and-track). `src/app/journey.py` is a process-wide singleton backed by
 journey):
 
 ```json
-{"id": 1725800000, "started_at": 1725800000, "departure": [lat, lon]}
+{"id": 1725800000, "started_at": 1725800000, "departure": [lat, lon],
+ "destination": [lat, lon], "destination_source": 2,
+ "history": [ {…, "ended_at": 1725803600, "arrival": [lat, lon]} ],
+ "events":  [ {"event": "end", "journey": {…}} ]}
 ```
 
-`id` is the unix second the journey started — monotonic per turtle, sortable,
-allocatable with no server round-trip. The **Journey screen**
-(`src/ui/screens/journey.py`) opens a journey (needs a GPS fix; stamps
-`set_departure`) and closes it (stamps `set_arrival`; a lost fix still ends it).
+The open journey's fields sit at the top level (absent = none open), so older
+firmware still reads the file. `id` is the unix second the journey started —
+monotonic per turtle, sortable, allocatable with no server round-trip. The
+**Journey screen** (`src/ui/screens/journey.py`) and Wrangler's
+`JOURNEY_START`/`JOURNEY_END` (both through `actions.journey_start/end`) open a
+journey (needs a GPS fix; stamps `set_departure`) and close it (stamps
+`set_arrival`; a lost fix still ends it, with `arrival: null`).
+
+**The turtle remembers its journeys** (v2 plan Phase B, 2026-10-14): ending one
+moves its record (`ended_at`, `arrival`, the final `destination` and its
+`destination_source`, the Targets `active_source` code) into `history`, newest
+first, at most `HISTORY_MAX` (20). `journey.history()` / `journey.last()` read
+it. Field names follow the turtle data dictionary in `docs/wrangler/README.md`.
+
+**Journey events reach the server in the telemetry stream.** Each start and end
+also queues an event in the file's `events`. The scheduler builds a reading as
+soon as one is pending (in manual mode too; retried every 10 s if a reading
+can't be built yet) and that reading carries **`flags.journey_event`**
+(`"start"`/`"end"`) and **`flags.journey`** (the record). `flags.journey_id`
+keeps meaning "the journey open now", so an end event's reading is untagged and
+the ended journey's id is `flags.journey.id`. The event is dropped once a
+reading carrying it is built (handed to the sender or queued to flash). Every
+payload also carries `"schema": 2` (telemetry JSON v2, additive).
+
+**`journey_log_every_s`** (config, default 0 = off): while a journey is open the
+scheduler logs at least this often, so a short test has a usable track.
 
 While a journey is open, `TelemetryScheduler._build_full_payload()` adds
 **`flags.journey_id`** to every payload — auto, manual, and offline-queued
@@ -506,13 +532,17 @@ Android app. It's additive: the WiFi telemetry pipeline is unchanged, and
 the turtle never needs a phone to navigate. The wire format is **GATT
 contract v1** in `docs/wrangler/README.md`, which is the source of truth:
 change the contract there first. The build log and test status are in
-`docs/wrangler/01_firmware_ble.md`.
+`docs/wrangler/01_firmware_ble.md`. **This folder is the only copy** of the
+Wrangler docs; hopeTurtles.org's `docs/wrangler/` just points here. The v2
+plan (one data model for Bluetooth, telemetry JSON and the app API) is
+`docs/wrangler/03_v2_plan.md`.
 
 | Piece | Where |
 |---|---|
 | Radio lifecycle, advertising, wrangle window, bonding, GATT table | `src/net/ble_service.py` (`init()` / `instance()`; built once in `step_init_runtime()`, turtle mode only) |
-| Turtle service values (Position, Nav, Targets, Sail, Power, IMU, Status, Shore) | `src/net/ble_telemetry.py` — getters from `run()` via `ble.attach_sources()`; packed only while a phone is connected |
+| Turtle service values (Position, Nav, Targets, Sail, Power, IMU, Status, Shore, Environment, Journey) | `src/net/ble_telemetry.py` — getters from `run()` via `ble.attach_sources()`; packed only while a phone is connected |
 | Command/Result channel, opcode table | `src/net/ble_commands.py` (`OPCODES`) |
+| Journeys over Bluetooth (2.6.0): `0119` Journey, `JOURNEY_LIST` (history), `JOURNEY_TRACK` (paged points from the unsent queue, sized to the MTU) | `ble_telemetry.journey()`, `ble_commands._op_journey_list/_track`, `journey.track_points()`; host test `cd device && python3 ../tests/journey_host.py` |
 | What every command (and OLED gesture) actually does | `src/app/actions.py` |
 | Bluetooth screen (on/off, pairing code, forget phones) | `src/ui/screens/bluetooth.py` |
 | Header "+" / waiting-screen rune | `connection_header.ble_on()` / `ble_visible()` / `BleWatch` |
@@ -560,6 +590,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `telemetry_mode` | str | `"auto"` | **authoritative**: `"auto"` posts on the interval, `"manual"` only on hand-taken GPS stamps, `"off"` never |
 | `telemetry_enabled` | bool | `true` | derived mirror of `telemetry_mode != "off"`, rebuilt on every load; writers must set `telemetry_mode` |
 | `telemetry_post_every_s` | int | `120` | min 10 |
+| `journey_log_every_s` | int | `0` | while a journey is open, log at least this often; 0 = off, min 10 |
 | `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
 | `device_id` | str | `""` | |
 | `device_key` | str | `""` | |

@@ -34,6 +34,7 @@ IMU = 0x0115
 STATUS = 0x0116
 SHORE = 0x0117
 ENVIRONMENT = 0x0118
+JOURNEY = 0x0119          # turtleOS 2.6.0, v2 plan Phase C
 
 # (short id, refresh ms, force-notify ms or 0)
 SCHEDULE = (
@@ -46,6 +47,7 @@ SCHEDULE = (
     (STATUS, 2000, 0),
     (SHORE, 5000, 60000), # device_now ticks every second; notify it 1/min
     (ENVIRONMENT, 5000, 0),  # control-bottle conditions; AHT21 read ~80 ms
+    (JOURNEY, 2000, 0),      # open journey's departure + newest ended journey
 )
 
 _NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
@@ -309,12 +311,15 @@ class TurtleData:
 
     def power(self):
         ina = self._g("ina")
-        mv, ma = NA_U16, NA_I16
+        mv, ma, soc = NA_U16, NA_I16, None
         if ina is not None:
             try:
                 v = ina.battery_v()
                 if v is not None:
                     mv = min(int(round(float(v) * 1000)), NA_U16 - 1)
+                    # Same estimator and same sample as telemetry's ina_batt_pct.
+                    from src.drivers.ina219 import pct_from_volts
+                    soc = pct_from_volts(v)
             except Exception:
                 pass
             try:
@@ -323,13 +328,6 @@ class TurtleData:
                     ma = max(-32768, min(int(round(float(c))), NA_I16 - 1))
             except Exception:
                 pass
-        soc = None
-        nav = self._g("nav")
-        if nav is not None:
-            try:
-                soc = nav.battery_pct()
-            except Exception:
-                soc = None
         return struct.pack("<HhB", mv, ma, _u8(soc))
 
     def imu(self):
@@ -480,6 +478,24 @@ class TurtleData:
         return struct.pack("<IIIIBh", self._last_ok_ts & 0xFFFFFFFF, jid & 0xFFFFFFFF,
                            rtc_unix() & 0xFFFFFFFF, rtc_unix(raw=True) & 0xFFFFFFFF, src, tz)
 
+    def journey(self):
+        """0119 <IiiI>: open journey_id, its departure, newest ended id."""
+        jid, dlat, dlon, last_id = 0, NA_I32, NA_I32, 0
+        try:
+            from src.app import journey
+            rec = journey.get()
+            if rec.get("id"):
+                jid = int(rec["id"])
+                dep = _pair(rec.get("departure"))
+                if dep is not None:
+                    dlat, dlon = _e7(dep[0]), _e7(dep[1])
+            last = journey.last()
+            if last:
+                last_id = int(last.get("id") or 0)
+        except Exception:
+            pass
+        return struct.pack("<IiiI", jid & 0xFFFFFFFF, dlat, dlon, last_id & 0xFFFFFFFF)
+
     # -- dispatch -----------------------------------------------------------
     def pack(self, cid, now):
         self._refresh_files(now)
@@ -501,6 +517,8 @@ class TurtleData:
             return self.shore()
         if cid == ENVIRONMENT:
             return self.environment()
+        if cid == JOURNEY:
+            return self.journey()
         return None
 
     def period(self, cid, base_ms):

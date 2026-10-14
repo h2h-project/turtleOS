@@ -217,8 +217,16 @@ class DestinationScreen:
         # appeared dead and you could never reach the menu. Left at the
         # tested 500 ms default that every other screen uses.
 
+        # The background tick (telemetry, nav, BLE, two gc.collect()s) is
+        # throttled to every 500 ms and skipped mid-gesture, and the button is
+        # polled every 2 ms — same as the Servo screen. Running tick_fn on
+        # every 25 ms pass stretched the gap between polls past the ~100 ms a
+        # click lasts, so the second click of a double could be stepped over
+        # entirely: it emitted as "single" and advanced the carousel instead
+        # of opening the menu.
         self._draw_normal()
         _ble = _ch.BleWatch() if _ch else None
+        _tick_next = time.ticks_ms()
         while True:
             try:
                 action = btn.poll_action()
@@ -255,10 +263,13 @@ class DestinationScreen:
                 elif action == "sleep":
                     return "sleep"
 
-            if tick_fn is not None:
+            now = time.ticks_ms()
+            if (tick_fn is not None and time.ticks_diff(now, _tick_next) >= 0
+                    and not btn.is_interacting()):
                 try:
                     tick_fn()
                 except Exception:
                     pass
+                _tick_next = time.ticks_add(now, 500)
 
-            time.sleep_ms(25)
+            time.sleep_ms(2)

@@ -77,7 +77,7 @@ The foundation every later screen relies on.
   fails silently.
 - **Pairing UX.** The first command to a new turtle can return
   `ERR_NOT_BONDED`. Show: "To pair, open the Bluetooth screen on the
-  turtle (triple-click) and enter the
+  turtle (long press, 3 s) and enter the
   6-digit code it shows." Then trigger bonding
   (`createBond()` / encrypted access), which brings up Android's system
   passkey dialog. If Status bit 15 (`ble_require_bond`) is off, show a
@@ -492,6 +492,32 @@ the **turtle's** position, never the phone's.
   and the rest of Navigate works as before. Offline tiles are
   Phase 10.
 - **Contract:** nothing new; everything above is in v1 characteristics.
+
+### Phase 7b status — BUILT, not yet phone-tested (2026-10-12)
+
+Wrangler 0.2.6.
+- **Journey panel** at the top of Navigate: the journey map with a status
+  pill (Live / No journey / Waiting). No journey: the map is grey and shows
+  only the turtle. Live: colour, with departure, destination, the planned
+  leg between them (dashed), course line, session trail and the journey's
+  stamps.
+- **Start a journey** opens a modal with two steps, Departure and
+  Destination, each ticked off when ready; Start unlocks only with both.
+  Destination choices: turtle's current position, pick on map, mission
+  target (each still asks first). **Departure is always the turtle's own
+  fix:** JOURNEY_START takes no coordinates and nothing in v1 reports the
+  departure the turtle stamps. The app records the turtle's position at
+  the moment it starts a journey (per `journey_id`); journeys started on
+  the OLED show no departure on the map.
+- **Not drawable in v1:** route waypoints (`set_waypoints` /
+  `mission_waypoints` aren't on the wire) and the cross-track band
+  (`xte` is always the sentinel; the firmware has no cross-track yet).
+  A later contract version could add a departure in `0117` and a waypoint
+  read.
+- **Dashboard map card** shows the turtle's position; tap → Navigate.
+- **Full-screen map** from either card: pan/zoom, Recentre, legend, tap a
+  stamp for its time and coordinates, "Pick a destination here" → picker.
+- Map failure shows "Map needs data or WiFi on this phone".
 
 ---
 

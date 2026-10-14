@@ -4,6 +4,23 @@
 
 import time
 
+# Battery percent: linear between these rest voltages of the single Li-ion
+# cell, on INA219.battery_v() (the I x R swing removed, so it reads the same
+# charging and not). The one estimator: NavController (low-battery trim,
+# Bluetooth Power soc_pct) and telemetry (ina_batt_pct) both call it.
+BATT_EMPTY_V = 3.30
+BATT_FULL_V = 4.20
+
+
+def pct_from_volts(volts):
+    """Battery percent 0-100 from a battery_v() reading, or None."""
+    if volts is None:
+        return None
+    try:
+        return max(0, min(100, int((float(volts) - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100)))
+    except Exception:
+        return None
+
 
 class INA219:
     # Registers
@@ -194,6 +211,10 @@ class INA219:
         """Pack current in mA, positive = charging, negative = discharging."""
         c = self.current_ma()
         return None if c is None else -c
+
+    def battery_pct(self):
+        """Battery percent from battery_v() (see pct_from_volts), or None."""
+        return pct_from_volts(self.battery_v())
 
     def battery_v(self):
         """Estimated rest (open-circuit) voltage of the pack: VIN+ with the

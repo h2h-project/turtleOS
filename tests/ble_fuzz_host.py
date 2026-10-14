@@ -62,7 +62,13 @@ journey = types.ModuleType("src.app.journey")
 journey.active = lambda: bool(jr["rec"])
 journey.active_id = lambda: jr["rec"].get("id")
 journey.start = lambda la, lo: jr.__setitem__("rec", {"id": 1790930000}) or jr["rec"]
-journey.end = lambda: jr.__setitem__("rec", {})
+journey.end = lambda arrival=None: jr.__setitem__("rec", {})
+journey.get = lambda: jr["rec"]
+journey.history = lambda: [{"id": 1790920000, "ended_at": 1790923600, "departure": [50.85, -1.41],
+                            "destination": [50.86, -1.40], "destination_source": 2, "arrival": None}]
+journey.last = lambda: journey.history()[0]
+journey.TRACK_POINT_SIZE = 13
+journey.track_points = lambda jid: bytes(13 * 30)
 sys.modules["src.app.journey"] = journey
 src.app.journey = journey
 
@@ -186,6 +192,9 @@ class Svc:
 
     def link_bonded(self):
         return True
+
+    def mtu(self):
+        return 185
 
 
 def random_write(rng):

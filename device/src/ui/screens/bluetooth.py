@@ -1,6 +1,7 @@
 # src/ui/screens/bluetooth.py — Turtle Wrangler Bluetooth on/off (turtle mode)
 #
-# Connectivity carousel: Online -> Logging -> WiFi -> Bluetooth -> Device.
+# Hold flow: Bluetooth -> Battery -> GPS -> Sleep -> Version (first screen
+# on a long press from the waiting screen; see flows.sleep_flow).
 # Same skeleton as wifi.py / journey.py: a right-hand ToggleSwitch,
 # double-click flips it, single-click advances.
 #

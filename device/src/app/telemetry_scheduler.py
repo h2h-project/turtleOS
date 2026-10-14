@@ -84,6 +84,7 @@ class TelemetryScheduler:
         # report actual connectivity instead of the most recent retry.
         self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None, "last_ok_ms": None}
         self._send_now = False
+        self._next_event_try_ms = time.ticks_ms()   # see tick(): journey events
 
         # One-shot: set by send_manual() so the next payload is flagged as a
         # hand-taken registry stamp rather than an automatic sample.
@@ -303,87 +304,73 @@ class TelemetryScheduler:
 
         return False
 
-    @staticmethod
-    def _parse_rmc(line):
-        """Parse a $GPRMC sentence → (lat_deg, lon_deg) or (None, None)."""
-        try:
-            parts = line.split(",")
-            if len(parts) < 7 or parts[2] != "A":
-                return None, None
-            lat_raw, lat_dir = parts[3], parts[4]
-            lon_raw, lon_dir = parts[5], parts[6]
-            if not lat_raw or not lon_raw:
-                return None, None
-            lat_d = int(float(lat_raw) // 100)
-            lat = lat_d + (float(lat_raw) - lat_d * 100) / 60.0
-            if lat_dir == "S":
-                lat = -lat
-            lon_d = int(float(lon_raw) // 100)
-            lon = lon_d + (float(lon_raw) - lon_d * 100) / 60.0
-            if lon_dir == "W":
-                lon = -lon
-            if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
-                return None, None
-            if lat == 0.0 and lon == 0.0:
-                return None, None
-            return round(lat, 6), round(lon, 6)
-        except Exception:
-            return None, None
-
     _GPS_MAX_DELTA = 1.0        # degrees (~111 km); jump larger than this is suspect
     _GPS_RELOC_THRESH = 5       # clear reference after this many consecutive all-rejected ticks
+    _GPS_FRESH_MS = 5000        # a cache this new is someone else's live drain: just use it
+    _GPS_FALLBACK_MS = 300000   # oldest cached fix a reading may still carry
 
     def _read_gps_fix(self):
-        """Non-blocking: drain the UART buffer and return (lat, lon) from the
-        newest active RMC, or (None, None).
+        """The turtle's position for this reading: (lat, lon) or (None, None).
 
-        Drains to the end rather than returning on the first RMC: if the
-        buffer ever holds more than one epoch, the first sentence is the
-        oldest position in the queue, not the current one.
+        One fix, one source: the shared cache in src/nav/gpsfix.py, which is
+        also what Bluetooth Position (0110) sends, so a reading and the
+        Wrangler app always agree. In turtle mode NavController drains the
+        UART every nav cycle and keeps the cache fresh, so this just reads it.
+        Only when nobody has fed the cache lately (airOS, or nav not ticking)
+        does this drain the UART itself, and then it publishes what it reads
+        (RMC and GGA) back to the cache, like every other reader must.
         """
-        if self.gps is None:
+        try:
+            from src.nav import gpsfix
+        except Exception:
             return None, None
+        lat, lon, age_ms = gpsfix.get()
+        if lat is not None and age_ms is not None and age_ms < self._GPS_FRESH_MS:
+            return lat, lon
+        if self.gps is not None:
+            self._drain_gps_to_cache(gpsfix)
+        lat, lon, age_ms = gpsfix.get()
+        if lat is not None and age_ms is not None and age_ms < self._GPS_FALLBACK_MS:
+            return lat, lon
+        return None, None
+
+    def _drain_gps_to_cache(self, gpsfix):
+        """Drain the UART to the end and publish the newest believable RMC
+        (and any GGA) to gpsfix. A jump of more than _GPS_MAX_DELTA from the
+        last accepted fix is dropped as a glitch until it persists."""
         delta_rejects = 0
-        newest = None
+        accepted = False
         try:
             for _ in range(30):
                 line = self.gps.read_nmea()
                 if line is None:
                     break
-                if "RMC" in line:
-                    lat, lon = self._parse_rmc(line)
-                    if lat is None:
+                if "GGA" in line:
+                    gpsfix.note_gga(line)
+                    continue
+                if "RMC" not in line:
+                    continue
+                lat, lon, cog = gpsfix.parse_rmc(line)
+                if lat is None:
+                    continue
+                if self._last_gps_lat is not None:
+                    if (abs(lat - self._last_gps_lat) > self._GPS_MAX_DELTA or
+                            abs(lon - self._last_gps_lon) > self._GPS_MAX_DELTA):
+                        delta_rejects += 1
                         continue
-                    if self._last_gps_lat is not None:
-                        if (abs(lat - self._last_gps_lat) > self._GPS_MAX_DELTA or
-                                abs(lon - self._last_gps_lon) > self._GPS_MAX_DELTA):
-                            delta_rejects += 1
-                            continue
-                    self._last_gps_lat = lat
-                    self._last_gps_lon = lon
-                    self._gps_reject_streak = 0
-                    newest = (lat, lon)
+                self._last_gps_lat = lat
+                self._last_gps_lon = lon
+                self._gps_reject_streak = 0
+                gpsfix.update(lat, lon, cog)
+                accepted = True
         except Exception:
             pass
-        if newest is not None:
-            return newest
-        if delta_rejects > 0:
+        if not accepted and delta_rejects > 0:
             self._gps_reject_streak += 1
             if self._gps_reject_streak >= self._GPS_RELOC_THRESH:
                 self._last_gps_lat = None
                 self._last_gps_lon = None
                 self._gps_reject_streak = 0
-        # Fall back to the nav fix cache: in turtle mode NavController
-        # drains the same UART every nav cycle, so this buffer is usually
-        # empty by the time telemetry looks. Accept fixes < 5 min old.
-        try:
-            from src.nav.gpsfix import get as _navfix_get
-            lat, lon, age_ms = _navfix_get()
-            if lat is not None and age_ms is not None and age_ms < 300000:
-                return lat, lon
-        except Exception:
-            pass
-        return None, None
 
     def _build_payload_parts(self, reading, rtc_temp_c=None):
         values = {}
@@ -545,13 +532,6 @@ class TelemetryScheduler:
         except Exception:
             pass
 
-    @staticmethod
-    def _estimate_batt_pct(bus_v):
-        try:
-            return max(0, min(100, int((float(bus_v) - 3.30) / (4.20 - 3.30) * 100)))
-        except Exception:
-            return None
-
     def _read_battery(self):
         if self._ina is None or not self._ina.is_present:
             return None
@@ -570,7 +550,8 @@ class TelemetryScheduler:
                 out["ina_raw_bus_v"] = round(float(bus_v), 3)
             if batt_v is not None:
                 out["ina_bus_v"] = round(float(batt_v), 2)
-                pct = self._estimate_batt_pct(batt_v)
+                from src.drivers.ina219 import pct_from_volts
+                pct = pct_from_volts(batt_v)
                 if pct is not None:
                     out["ina_batt_pct"] = pct
             if cur_ma is not None:
@@ -741,6 +722,10 @@ class TelemetryScheduler:
         self._manual_flag = False
 
         payload = {
+            # Telemetry JSON v2 (docs/wrangler/03_v2_plan.md): field names per
+            # the turtle data dictionary, plus the journey event flags below.
+            # Additive: a v1 server ignores the extra keys.
+            "schema": 2,
             "recorded_at": recorded_at,
             "values": values,
             "flags": {"auto_log": not _manual, "manual_registry": _manual},
@@ -751,11 +736,25 @@ class TelemetryScheduler:
         # hopeturtles.org my-turtle map can highlight this leg's GPS points.
         # The server stores `flags` verbatim in raw_data, so no ingest change
         # is needed for this to land.
+        #
+        # Journey events: the oldest start/end the server hasn't been told
+        # about rides on this reading as flags.journey_event ("start"/"end")
+        # + flags.journey (the record: departure, destination, ended_at,
+        # arrival), so the server learns when a journey ended and where.
+        # flags.journey_id stays "the journey open now" (it tags the point);
+        # the event's own journey is flags.journey.id.
+        _event_taken = None
         try:
-            from src.app.journey import active_id as _journey_active_id
-            _jid = _journey_active_id()
+            from src.app import journey as _journey
+            _jid = _journey.active_id()
             if _jid:
                 payload["flags"]["journey_id"] = _jid
+            _ev = _journey.pending_event()
+            if _ev:
+                _rec = _ev.get("journey") or {}
+                payload["flags"]["journey_event"] = _ev.get("event")
+                payload["flags"]["journey"] = _rec
+                _event_taken = _journey.event_taken
         except Exception:
             pass
 
@@ -773,6 +772,14 @@ class TelemetryScheduler:
 
         if confidence:
             payload["confidence"] = confidence
+
+        # Built: from here the reading is either handed to the sender or
+        # queued to flash, so the event it carries is reported.
+        if _event_taken is not None:
+            try:
+                _event_taken()
+            except Exception:
+                pass
 
         return payload
 
@@ -793,19 +800,43 @@ class TelemetryScheduler:
             self._send_now = False
             self._manual_flag = False
             return
-        if mode != "auto" and not self._send_now:
-            return
 
         now = time.ticks_ms()
+        # A journey start/end the server hasn't heard about gets a reading
+        # right away, in manual mode too (it's an operator action). If the
+        # reading can't be built yet, retry no faster than every 10 s.
+        event_due = False
+        if time.ticks_diff(now, self._next_event_try_ms) >= 0:
+            try:
+                from src.app import journey as _journey
+                event_due = _journey.pending_event() is not None
+            except Exception:
+                event_due = False
+            if event_due:
+                self._next_event_try_ms = time.ticks_add(now, 10_000)
+
+        if mode != "auto" and not self._send_now and not event_due:
+            return
+
         if self._send_now:
             self._send_now = False
-        elif time.ticks_diff(now, self._next_send_ms) < 0:
+        elif not event_due and time.ticks_diff(now, self._next_send_ms) < 0:
             return
 
         try:
             interval_s = int(cfg.get("telemetry_post_every_s", 120) or 120)
         except Exception:
             interval_s = 120
+        # While a journey is open, journey_log_every_s (if set) logs the
+        # track faster, so a short field test isn't one point per 2 minutes.
+        try:
+            from src.app import journey as _journey
+            if _journey.active():
+                j_s = int(cfg.get("journey_log_every_s", 0) or 0)
+                if 0 < j_s < interval_s:
+                    interval_s = j_s
+        except Exception:
+            pass
         if interval_s < 10:
             interval_s = 10
 

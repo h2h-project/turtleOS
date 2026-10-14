@@ -26,6 +26,9 @@ contract:
   GPS, Diagnostics) with Settings behind a gear icon in the top-right
   corner, plus a planned "turtles at sea" view behind a
   Buwana login.
+- **[03_v2_plan.md](03_v2_plan.md)** — planned: turtle data model v2, one
+  set of field names for this contract, the telemetry JSON and a new app
+  API, so Wrangler can show a journey from Bluetooth or from hopeturtles.org.
 
 A third, smaller stream is **planned but not scheduled**: a user-facing
 read-only API on hopeturtles.org (and a Wrangler app registration on
@@ -37,6 +40,155 @@ Both streams build against the GATT contract below. **Treat it as the
 interface boundary** — either side can iterate on its own implementation
 freely as long as the wire format doesn't drift out from under the other.
 If a characteristic's shape needs to change, update it here first.
+
+---
+
+## Turtle data dictionary
+
+*(Phase A of [03_v2_plan.md](03_v2_plan.md), 2026-10-14.)* The turtle
+describes itself in three places: this GATT contract, the telemetry JSON
+it posts to hopeturtles.org (`telemetry_scheduler._build_full_payload`),
+and the planned app API. This section is the one list of what each shared
+value **means**. The contract below says how a value is laid out on the
+wire; it doesn't redefine it.
+
+### Rules
+
+- **One name per value.** The telemetry JSON name is the canonical name
+  (it's already stored in thousands of `telemetry_tb.raw_data` rows). The
+  wire uses the same name, with a unit suffix for scaled integers
+  (`_x10`, `_e7`, `_mV`). A value only on the wire gets a JSON-style name
+  here, ready for when it reaches the JSON.
+- **Units:** SI-ish and stated per field. Degrees for angles and
+  coordinates, metres, °C, %, hPa, mA, V. JSON sends floats; the wire
+  sends scaled integers (see [Wire conventions](#wire-conventions)).
+- **Time:** unix seconds, UTC, from the **turtle's** clock. Nothing
+  downstream restamps a turtle value; the app and server only compare
+  their own clocks with it. Local time is only ever display
+  (`tz_offset_min`).
+- **No data:** JSON **omits** the key (or the whole object); the wire
+  sends the sentinel. Never `0` for "unknown" unless the field says so
+  (`journey_id`, `last_shore_sync`).
+- **Signs are the turtle's,** passed through untouched. A consumer that
+  wants the other sign converts at the point of use and names it
+  differently (see `ina_current_ma`).
+- **Server columns are copies.** hopeturtles.org lifts a few values into
+  columns (`telemetry_tb.latitude/longitude`, `battery_voltage`,
+  `temp_c`, `machine_state`, `battery_soc_pct`) and keeps the rest in
+  `raw_data` verbatim. The meaning is the one here.
+
+### Fields
+
+"JSON" is a key under `values` unless shown with a path. "GATT v1" is the
+characteristic and field. "—" means that surface doesn't carry it.
+
+**Time and identity**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `schema` | telemetry JSON version; absent = 1 | top-level `schema` (2 since Phase B) | `0101` `contract_version` is the wire's own | scheduler |
+| `recorded_at` | when a reading was taken, unix s | top-level `recorded_at` | — | `TelemetryScheduler._now_unix_seconds()` |
+| `device_now` | the turtle's clock now, unix s; 0 = not synced | — | `0117` `device_now` | RTC |
+| `device_clock` | the clock whatever it says, unix s | — | `0117` `device_clock` | system clock |
+| `clock_source` | what set the clock: 0 not set · 1 RTC · 2 NTP · 3 GPS · 4 phone | — | `0117` | `clock_source` |
+| `tz_offset_min` | local zone, minutes from UTC; display only | — (server: `GET /v1/device` → `tz_offset_min`) | `0117` | config `timezone_offset_min` |
+| `device_id` | the turtle's identity | header `X-Device-Id` | Device Information `Serial Number` | config |
+
+**Position** (always the turtle's own GPS, never a phone's)
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `lat`, `lon` | position, degrees WGS84; absent = no fix | top-level `lat`, `lon` | `0110` `lat_e7`, `lon_e7` | the `gpsfix` cache, for both (telemetry drains the UART itself only when the cache is stale) |
+| `alt_m` | altitude, m | top-level `alt_m` (optional) | — | — (not sent today) |
+| `sats` | satellites in the fix | — | `0110` | GGA |
+| `fix_quality` | GGA quality: 0 none · 1 GPS · 2 DGPS … | — | `0110` | GGA |
+| `fix_age_s` | seconds since the fix | — | `0110` | `gpsfix.get()` |
+
+**Navigation**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `machine_state` | BOOT · ACQUIRE · SAIL_NAV · ARRIVAL · SAFE | top-level, string | `0111` `nav_state` u8, 0–4 in that order | `state_machine.get_state()` |
+| `imu_heading` | heading, degrees true, `compass_offset_deg` applied | `imu_heading` | `0111` `heading_x10` | NavController heading |
+| `compass_offset_deg` | offset already in `imu_heading`, −180…180 | — | `0111` | config |
+| `bearing_to_target` | degrees | — | `0111` `bearing_to_target_x10` | NavController |
+| `dist_to_target_m` | metres | — | `0111` | NavController |
+| `xte_m` | cross-track error, m, + = right of track (not computed yet) | — | `0111` | — |
+| `nav_fault` | why SAFE: 0 none · 1 GPS never · 2 GPS lost · 3 no waypoints | — | `0111` `fault` | NavController |
+| `trim` | 0 CRUISE · 1 FEATHER | — | `0111` | NavController |
+
+**Targets and journeys**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `set_destination` | operator target, [lat, lon] | `PATCH /v1/device` | `0112` `set_lat_e7`, `set_lon_e7` | config |
+| `mission_destination` | mission target, [lat, lon] | — (server owns missions) | `0112` `mission_*` | config |
+| `active_source` | which target steers: 0 none · 1 set_waypoints · 2 set_destination · 3 mission_waypoints · 4 mission_destination | — | `0112` | `WaypointSequencer` |
+| `set_waypoints` | operator route, list of [lat, lon] | `PATCH /v1/device` | — | config |
+| `journey_id` | the open journey; its start time, unix s; 0/absent = none | `flags.journey_id` | `0117` `journey_id`; Status bit 3 | `journey.active_id()` |
+| `set_departure` | where the last journey started, [lat, lon] | `PATCH /v1/device` | — | config, `journey_state.json` |
+| `set_arrival` | where the last journey ended, [lat, lon] | `PATCH /v1/device` | — | config |
+| journey record | `id`, `started_at`, `departure`, `destination` + `destination_source` (an `active_source` code), `ended_at` (unix s), `arrival` ([lat, lon] or null) | `flags.journey` on an event reading | open: `0119` + Targets `0112`; ended: `JOURNEY_LIST` | `journey_state.json`: the open one + `history` (last 20) |
+| track point | `recorded_at`, `lat`, `lon`, `machine_state` of a journey reading | a reading with `lat`/`lon` + `flags.journey_id` | `JOURNEY_TRACK` (unsent readings only) | `journey.track_points()` |
+| `journey_event` | `"start"` / `"end"`: this reading reports that event of `flags.journey` | `flags.journey_event` | — | `journey.pending_event()` |
+
+**Sail**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `sail_angle` | measured sail angle (AS5600), degrees | — | `0113` `sail_angle_x10` | `snapshot()["sail"]` |
+| `wind_angle` | from the last sweep, degrees | — | `0113` `wind_angle_x10` | NavController / WindFinder |
+| `servo_pos` | last commanded servo position, 0–180 of full travel | — | `0113` `servo_pos_x10` | `NavController.servo_position()` |
+
+**Power**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `ina_bus_v` | pack rest voltage (I×R removed), V | `ina_bus_v` | `0114` `voltage_mV` | `INA219.battery_v()` |
+| `ina_raw_bus_v` | raw VIN- register, V; diagnostics | `ina_raw_bus_v` | — | `INA219.bus_voltage_v()` |
+| `ina_current_ma` | **raw INA219 current, mA: negative = charging**, positive = discharging | `ina_current_ma` | `0114` `current_mA` | `INA219.current_ma()` |
+| `ina_power_mw` | mW | `ina_power_mw` | — | `INA219.power_mw()` |
+| `ina_batt_pct` | battery %, linear 3.30–4.20 V on `ina_bus_v` | `ina_batt_pct` | `0114` `soc_pct` | `ina219.pct_from_volts(battery_v)`, the one estimator |
+
+`ina_current_ma`'s sign is the one most easily got wrong. Converted
+values get their own name: the server's **charge current** (positive =
+charging) is `chargeMaFromIna()` in hopeTurtles.org
+`utils/batteryCurrent.js`; the turtle's is `INA219.charge_ma()`. The
+server's coulomb-counted `battery_soc_pct` is a server value, not
+`ina_batt_pct`.
+
+**Attitude and environment**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `imu_pitch`, `imu_roll` | degrees | `imu_pitch`, `imu_roll` | `0115` `pitch_x10`, `roll_x10` | GY87 |
+| `bmp_pressure` | hPa (BMP180) | `bmp_pressure` | `0115` and `0118` `pressure_hPa_x10` | GY87 |
+| `bmp_temp` | °C (BMP180) | `bmp_temp` | `0118` `bmp_temp_x10` | GY87 |
+| `bmp_alt_m` | ISA altitude from pressure, m; a sanity number | `bmp_alt_m` | — | GY87 |
+| `aht_temp`, `aht_humidity` | bottle air, °C and %RH (AHT21, else AHT10) | `aht_temp`, `aht_humidity` | `0118` `aht_temp_x10`, `aht_rh_x10` | `AirSensor` |
+| `rtc_temp` | board (DS3231 die) temperature, °C | `rtc_temp` | `0118` `rtc_temp_x10` | RTC |
+| `bme_*`, `ens_*`, `scd_*` | airOS air-quality sensors | `values` | — (BLE is turtleOS-only) | `AirSensor` |
+
+**Status and shore**
+
+| Name | Meaning, unit | JSON | GATT v1 | On the turtle |
+|---|---|---|---|---|
+| `auto_log` / `manual_registry` | reading was automatic / a hand stamp | `flags.auto_log`, `flags.manual_registry` | — (stamp outcome is the `GPS_STAMP` result) | scheduler |
+| `queue_count` | readings waiting to be sent | — | `0116` | `telemetry_queue.json` lines |
+| `last_shore_sync` | last successful POST, unix s; 0 = never | — | `0117` | `TelemetryState.get_last_sent()` |
+| `telemetry_mode`, `telemetry_post_every_s`, `connection_mode` | config | — | `0116` | config |
+| `sensor_confidence` | airOS sensor confidence, % | `confidence.sensor_confidence` | — | `AirSensor` |
+
+### Gaps the v2 plan closes
+
+- **Journey records:** the turtle keeps them, reports start/end in the
+  telemetry stream (Phase B) and serves them over Bluetooth (Phase C).
+  Still to come: stored as rows on the server (Phase D).
+- **Track points:** over Bluetooth since Phase C (`JOURNEY_TRACK`, from
+  the unsent queue). The app API (Phase D) serves the same shape for the
+  points already sent.
+- **Navigation isn't in the JSON** (bearing, distance, fault, sail). A
+  v2 payload could carry them under these names if the server wants them.
 
 ---
 
@@ -123,6 +275,7 @@ reads everything once on connect, then relies on notifications.
 | `0116` | Status | R N | `<IBBHHH>` | 12 | on change |
 | `0117` | Shore sync / journey | R N | `<IIIIBh>` | 19 (12 before 2026-10-08) | on change, + 1/min for the clock |
 | `0118` | Environment *(added 2026-10-04)* | R N | `<hHhhH>` | 10 | 0.2 Hz, on change |
+| `0119` | Journey *(added 2026-10-14, turtleOS 2.6.0)* | R N | `<IiiI>` | 16 | on change |
 
 **`0101` Contract info** — `contract_version u8`, `turtle_mode u8`
 - `contract_version` = **1**. The app reads this before anything else.
@@ -200,8 +353,8 @@ only the first 13 bytes)* `compass_offset_deg i16`
   `INA219.battery_v()`, the pack's estimated rest voltage with the
   I x `battery_r_ohm` swing removed (since 2026-10-12; it was the raw
   bus register, which read ~0.1 V high whenever USB was charging).
-  `soc_pct` is the estimate from `NavController._battery_pct()`, derived
-  from the same voltage, and must not be computed a second time.
+  `soc_pct` is `ina219.pct_from_volts()` of that same voltage sample, the
+  one battery-percent estimator (telemetry's `ina_batt_pct` uses it too).
   `current_mA` is the INA219's raw reading: **negative = charging**
   (current flowing into the pack), positive = discharging. That's the
   same sign the OLED's battery overlay interprets (`turtle_waiting.py`).
@@ -279,6 +432,21 @@ only the first 13 bytes)* `compass_offset_deg i16`
   An app must treat it as optional: a turtle on older firmware doesn't
   have it.
 
+**`0119` Journey** *(added within v1, 2026-10-14; v2 plan Phase C)* —
+`journey_id u32`, `departure_lat_e7 i32`, `departure_lon_e7 i32`,
+`last_journey_id u32`
+- Source: `src/app/journey.py` (field names: [Turtle data dictionary](#turtle-data-dictionary)).
+- `journey_id`: the open journey, as in Shore `0117` (kept there too, so
+  v1 apps are unaffected). 0 = none open.
+- `departure_*`: where the turtle stamped the open journey's departure
+  from its own GPS. Sentinel when none is open. The open journey's
+  destination is the active target in Targets `0112`.
+- `last_journey_id`: the newest **ended** journey in the turtle's history
+  (`journey.last()`), 0 = none. When it changes, a journey has ended: read
+  it with `JOURNEY_LIST` index 0.
+- Optional, like `0118`: older firmware doesn't have it, and then
+  `JOURNEY_LIST` / `JOURNEY_TRACK` answer `ERR_UNKNOWN_OPCODE`.
+
 ### Command protocol
 
 The earlier draft had one write characteristic per command. v1 replaces
@@ -318,7 +486,9 @@ the same way, and adding a command doesn't add a characteristic.
    can recover after a reconnect.
 8. Firmware sizes the Command attribute buffer at 128 bytes
    (`gatts_set_buffer`). Firmware accepts an MTU exchange up to 185, and
-   the app requests 185 on connect.
+   the app requests 185 on connect. The Result buffer is 180 bytes
+   (64 before turtleOS 2.6.0). A result never exceeds the link's
+   MTU − 3, so `JOURNEY_TRACK` fits its page to the negotiated MTU.
 
 #### Result codes
 
@@ -360,6 +530,8 @@ empty.
 | `0x04` | DEST_SET_MISSION | — | Destination menu, 2× "target = mission" | OK · NO_TARGET |
 | `0x05` | DEST_SET_COORDS | `<ii>` lat_e7, lon_e7 | **App-only** (map picker) | OK · BAD_VALUE |
 | `0x06` | DEST_CLEAR | — | **App-only** | OK |
+| `0x07` | JOURNEY_LIST *(2.6.0)* | `<B>` index, 0 = newest | **App-only** | OK `<BB>` count, index + journey record `<IIiiiiiiB>` · BAD_VALUE (index ≥ count; count 0 = no history) |
+| `0x08` | JOURNEY_TRACK *(2.6.0)* | `<IH>` journey_id (0 = the open one), start | **App-only** | OK `<HHB>` total, start, n + n × track point `<IiiB>` · BAD_VALUE (start > total) · WRONG_STATE `<B>` 0 = no journey open (id 0) · 1 = link MTU too small |
 
 - **"Here" always means the turtle's own GPS fix, never the phone's
   location.** DEST_SET_HERE and JOURNEY_START/END take no coordinates
@@ -372,6 +544,24 @@ empty.
   config keys directly.
 - The OLED hand-off from DEST_SET_HERE to the Journey screen has no BLE
   equivalent. The app shows a "Start journey?" prompt instead.
+- **Journey record** (`JOURNEY_LIST`, 35-byte payload, so it needs an MTU
+  of at least 41; the app's 185 is plenty): `id u32`, `ended_at u32`
+  (0 = not known: the clock was lost), `departure_lat_e7 i32`,
+  `departure_lon_e7 i32`, `destination_lat_e7 i32`,
+  `destination_lon_e7 i32`, `arrival_lat_e7 i32`, `arrival_lon_e7 i32`
+  (sentinel = no fix at the end), `destination_source u8` (Targets
+  `active_source` codes; `0xFF` unknown). The turtle keeps the last 20
+  ended journeys, newest first. Field meanings: [Turtle data dictionary](#turtle-data-dictionary).
+- **Track point** (`JOURNEY_TRACK`): `recorded_at u32`, `lat_e7 i32`,
+  `lon_e7 i32`, `machine_state u8` (`nav_state` codes, `0xFF` unknown),
+  13 bytes. The points are the journey's telemetry readings **still in
+  the turtle's unsent queue** (`telemetry_queue.json`), oldest first.
+  Readings already sent to hopeturtles.org have left the queue, so a
+  journey that had WiFi part of the way has the rest on the server. Ask
+  pages in order: `start` = 0 rebuilds the turtle's copy of the track (a
+  pass over the queue, which can take a second or two), later pages read
+  from that copy. Each page holds as many points as fit the link's MTU
+  (13 at MTU 185). `total` = 0 means no points.
 
 **Sail**
 
@@ -494,7 +684,7 @@ and useful to any nearby phone.
 - **Pairing is only accepted while the Bluetooth screen is showing.**
   The passkey is drawn there, so no other screen needs a pairing
   overlay. A pairing attempt at any other time is rejected. The app then
-  tells the user: "Open the Bluetooth screen on the turtle (triple-click)
+  tells the user: "Open the Bluetooth screen on the turtle (long press, 3 s)
   to pair".
 - **Bond storage:** `/ble_bonds.json`, device-owned like
   `journey_state.json`. The sync/install scripts must exclude it, or a
@@ -610,6 +800,11 @@ read it without knowing turtleOS:
   **not** breaking. Old apps ignore trailing bytes, and old firmware
   answers new opcodes with `ERR_UNKNOWN_OPCODE`.
 - Any change goes into this README first, with the version it lands in.
+- **turtleOS 2.6.0 (v2 plan Phase C) stays contract v1.** Journeys over
+  Bluetooth (`0119`, `JOURNEY_LIST`, `JOURNEY_TRACK`) are all additions,
+  and Shore `0117` keeps `journey_id`, so Wrangler builds that know only
+  v1 keep full use of a 2.6.0 turtle. `contract_version` goes to 2 only
+  with a breaking change.
 
 ### Turtles at sea: shore data via Buwana login — planned
 

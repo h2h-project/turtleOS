@@ -33,6 +33,7 @@ ERR_BAD_LENGTH = 0x11
 ERR_BAD_VALUE = 0x12
 ERR_BUSY = 0x13
 ERR_NOT_BONDED = 0x14
+ERR_WRONG_STATE = 0x15
 ERR_NO_HARDWARE = 0x22
 ERR_WIFI_FAILED = 0x30
 ERR_INTERNAL = 0x7F
@@ -99,6 +100,73 @@ def _op_journey_end(ctx, payload):
     if code == actions.OK:
         return code, struct.pack("<B", 1 if info.get("arrival_stamped") else 0), None
     return code, b"", None
+
+
+_NA_I32 = 0x7FFFFFFF
+_RESULT_MAX = 180     # ble_service.RESULT_BUFFER
+_RESULT_HDR = 3       # opcode, seq, code
+
+
+def _pt_e7(pair):
+    """[lat, lon] → (lat_e7, lon_e7), sentinels when missing."""
+    try:
+        return _e7(pair[0]), _e7(pair[1])
+    except Exception:
+        return _NA_I32, _NA_I32
+
+
+def _op_journey_list(ctx, payload):
+    """0x07 JOURNEY_LIST <B> index (0 = newest ended journey).
+    OK <BB> count, index + record <IIiiiiiiB>; BAD_VALUE past the end."""
+    from src.app import journey
+    (i,) = struct.unpack("<B", payload)
+    hist = journey.history()
+    if i >= len(hist):
+        return ERR_BAD_VALUE, b"", None
+    r = hist[i]
+    dep = _pt_e7(r.get("departure"))
+    dest = _pt_e7(r.get("destination"))
+    arr = _pt_e7(r.get("arrival"))
+    src = r.get("destination_source")
+    src = int(src) if isinstance(src, int) and 0 <= src < 0xFF else 0xFF
+    rec = struct.pack("<IIiiiiiiB", int(r.get("id") or 0) & 0xFFFFFFFF,
+                      int(r.get("ended_at") or 0) & 0xFFFFFFFF,
+                      dep[0], dep[1], dest[0], dest[1], arr[0], arr[1], src)
+    return OK, struct.pack("<BB", min(len(hist), 255), i) + rec, None
+
+
+# The track being paged out: [journey_id, packed points]. Page 0 rebuilds it.
+_track = [None, b""]
+
+
+def _op_journey_track(ctx, payload):
+    """0x08 JOURNEY_TRACK <IH> journey_id (0 = the open one), start.
+    OK <HHB> total, start, n + n x <IiiB> points from the unsent queue,
+    as many as fit the link MTU. WRONG_STATE <B> 0 no journey open,
+    1 MTU too small; BAD_VALUE start > total."""
+    from src.app import journey
+    jid, start = struct.unpack("<IH", payload)
+    if jid == 0:
+        jid = int(journey.active_id() or 0)
+        if jid == 0:
+            return ERR_WRONG_STATE, b"\x00", None
+    try:
+        mtu = int(ctx["svc"].mtu())
+    except Exception:
+        mtu = 23
+    room = min(mtu - 3, _RESULT_MAX) - _RESULT_HDR - 5
+    fit = room // journey.TRACK_POINT_SIZE
+    if fit < 1:
+        return ERR_WRONG_STATE, b"\x01", None
+    if start == 0 or _track[0] != jid:
+        _track[0], _track[1] = jid, journey.track_points(jid)
+    pts = _track[1]
+    size = journey.TRACK_POINT_SIZE
+    total = min(len(pts) // size, 0xFFFF)
+    if start > total:
+        return ERR_BAD_VALUE, b"", None
+    n = min(fit, total - start)
+    return OK, struct.pack("<HHB", total, start, n) + pts[start * size:(start + n) * size], None
 
 
 def _op_dest_set_here(ctx, payload):
@@ -491,6 +559,8 @@ OPCODES = {
     0x04: (0, _op_dest_set_mission),
     0x05: (8, _op_dest_set_coords),
     0x06: (0, _op_dest_clear),
+    0x07: (1, _op_journey_list),
+    0x08: (6, _op_journey_track),
     0x20: (0, _op_gps_stamp),
     0x21: (1, _op_gps_set_enabled),
     0x22: (1, _op_telemetry_set_mode),

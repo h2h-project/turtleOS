@@ -30,6 +30,18 @@ LAYOUTS = {
                                                  "device_clock", "clock_source", "tz_offset_min"]),
     "0118": ("Environment", "<hHhhH", ["aht_temp_x10", "aht_rh_x10", "bmp_temp_x10",
                                        "rtc_temp_x10", "pressure_hPa_x10"]),
+    "0119": ("Journey", "<IiiI", ["journey_id", "departure_lat_e7", "departure_lon_e7",
+                                  "last_journey_id"]),
+}
+
+# OK result payloads worth decoding (opcode -> header fmt, names, item fmt, item names)
+RESULT_LAYOUTS = {
+    0x07: ("<BB", ["count", "index"], "<IIiiiiiiB",
+           ["journey_id", "ended_at", "departure_lat_e7", "departure_lon_e7",
+            "destination_lat_e7", "destination_lon_e7", "arrival_lat_e7", "arrival_lon_e7",
+            "destination_source"]),
+    0x08: ("<HHB", ["total", "start", "n"], "<IiiB",
+           ["recorded_at", "lat_e7", "lon_e7", "nav_state"]),
 }
 
 ENUMS = {
@@ -38,6 +50,8 @@ ENUMS = {
     "trim": ["CRUISE", "FEATHER"],
     "active_source": ["none", "set_waypoints", "set_destination",
                       "mission_waypoints", "mission_destination"],
+    "destination_source": ["none", "set_waypoints", "set_destination",
+                           "mission_waypoints", "mission_destination"],
     "sweep_state": ["idle", "nav sweep", "bench sweep"],
     "telemetry_mode": ["off", "auto", "manual"],
     "connection_mode": ["wifi_auto", "wifi_manual", "lora"],
@@ -60,7 +74,7 @@ OPCODES = {0x01: "JOURNEY_START", 0x02: "JOURNEY_END", 0x03: "DEST_SET_HERE",
            0x32: "CONNECTION_MODE_SET", 0x33: "BLE_SET_ENABLED", 0x40: "SLEEP",
            0x41: "SET_TURTLE_MODE", 0x42: "REBOOT", 0x43: "COMPASS_SET_OFFSET",
            0x44: "TIME_SET", 0x45: "SECURE_MODE_SET", 0x46: "TIMEZONE_SET",
-           0x34: "WIFI_GET_SSID"}
+           0x34: "WIFI_GET_SSID", 0x07: "JOURNEY_LIST", 0x08: "JOURNEY_TRACK"}
 
 FLAGS = ["wifi_connected", "api_ok", "gps_fixed", "journey_active", "wifi_enabled",
          "gps_enabled", "gps_hw_present", "imu_present", "mag_present",
@@ -79,7 +93,8 @@ def _fmt(name, code, v):
         return "%.1f" % (v / 10)
     if name in ENUMS and 0 <= v < len(ENUMS[name]):
         return "%d (%s)" % (v, ENUMS[name][v])
-    if name in ("last_shore_sync", "device_now", "journey_id", "device_clock") and v:
+    if name in ("last_shore_sync", "device_now", "journey_id", "device_clock",
+                "last_journey_id", "ended_at", "recorded_at") and v:
         import datetime
         t = datetime.datetime.fromtimestamp(v, datetime.timezone.utc)
         return "%d (%s UTC)" % (v, t.strftime("%Y-%m-%d %H:%M:%S"))
@@ -105,6 +120,18 @@ def main():
             op, OPCODES.get(op, "?"), seq, code, RESULTS.get(code, "(unknown code)")))
         if len(data) > 3:
             print("  payload:", data[3:].hex("-").upper())
+        lay = RESULT_LAYOUTS.get(op)
+        if lay and code == 0 and len(data) >= 3 + struct.calcsize(lay[0]):
+            hfmt, hnames, ifmt, inames = lay
+            body = data[3:]
+            hsz, isz = struct.calcsize(hfmt), struct.calcsize(ifmt)
+            for name, v in zip(hnames, struct.unpack(hfmt, body[:hsz])):
+                print("  %-18s %s" % (name, v))
+            items = body[hsz:]
+            for k in range(len(items) // isz):
+                vals = struct.unpack(ifmt, items[k * isz:(k + 1) * isz])
+                print("  [%d] " % k + "  ".join("%s=%s" % (n, _fmt(n, c, v))
+                                               for n, c, v in zip(inames, ifmt[1:], vals)))
         return
     title, fmt, names = LAYOUTS[cid]
     need = struct.calcsize(fmt)

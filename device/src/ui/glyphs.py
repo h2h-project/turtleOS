@@ -674,8 +674,8 @@ def draw_battery_level(fb, x, y, bands_filled=5, color=1):
 
 def battery_display_bands(volts, now_ms=None):
     """
-    Map bus voltage to (bands_filled, status) for the compact 12x7 level
-    glyph. At "critical" charge, bands_filled blinks between 0 and 1 on a
+    Map battery_v() to (bands_filled, status) for the compact 12x7 level
+    glyph (see battery_status: one band per 20 %). At "critical" charge, bands_filled blinks between 0 and 1 on a
     1 Hz cadence (500 ms empty / 500 ms showing the single critical bar)
     so a near-dead battery draws attention instead of sitting static.
     """
@@ -1273,20 +1273,33 @@ def draw_gear(fb, cx, cy, body_r=6, tooth_len=2, teeth=6, center_r=3,
 # Vertical battery glyph with horizontal fill bands
 # ------------------------------------------------------------
 
+_BATTERY_STATUS = ("critical", "low", "medium", "high", "full")
+
+
+def battery_bands(pct):
+    """Bands (1-5) for a battery percent: one per 20 %, so 1-20 % is one
+    band, 81-100 % five. Never 0 (that's the critical blink's off phase).
+    Wrangler's Dashboard battery icon uses the same rule."""
+    if pct is None:
+        return 1
+    return max(1, min(5, (int(pct) + 19) // 20))
+
+
 def battery_status(volts):
-    """Map bus voltage (V) to a charge-level string."""
+    """Map a battery_v() reading to a charge-level string, through the one
+    battery-percent estimator (ina219.pct_from_volts), so the OLED icon,
+    the Battery screen, telemetry and Wrangler all agree. 20 % or less is
+    "critical" (the icon blinks)."""
     if volts is None:
         return "critical"
-    if volts >= 4.05:
-        return "full"
-    elif volts >= 3.90:
-        return "high"
-    elif volts >= 3.75:
-        return "medium"
-    elif volts >= 3.55:
-        return "low"
-    else:
+    try:
+        from src.drivers.ina219 import pct_from_volts
+        pct = pct_from_volts(volts)
+    except Exception:
+        pct = None
+    if pct is None:
         return "critical"
+    return _BATTERY_STATUS[battery_bands(pct) - 1]
 
 
 _BATTERY_LEVEL_BANDS = {

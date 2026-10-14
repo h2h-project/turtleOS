@@ -164,8 +164,9 @@ class NavController:
         return self._wps.source()
 
     def battery_pct(self):
-        """State-of-charge estimate from the INA219 battery_v(), or None.
-        The one SoC estimator — telemetry and Bluetooth read it here."""
+        """Battery percent from the INA219 battery_v(), or None. The
+        estimator itself is ina219.pct_from_volts (shared with telemetry and
+        Bluetooth)."""
         return self._battery_pct()
 
     def sail_encoder_present(self):
@@ -357,10 +358,8 @@ class NavController:
         if self._ina is None or not getattr(self._ina, "is_present", False):
             return None
         try:
-            v = self._ina.battery_v()
-            if v is None:
-                return None
-            return max(0, min(100, int((float(v) - 3.30) / (4.20 - 3.30) * 100)))
+            from src.drivers.ina219 import pct_from_volts
+            return pct_from_volts(self._ina.battery_v())
         except Exception:
             return None
 
