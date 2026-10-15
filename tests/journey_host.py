@@ -109,16 +109,31 @@ print("shared GPS fix: OK")
 import struct
 from src.net import ble_commands as C
 from src.net.ble_telemetry import TurtleData
-q = os.path.join(d, "telemetry_queue.json")
-journey._QUEUE_PATH = q
+journey._TRACK_DIR = d + os.sep
 jid = journey.active_id()                      # opened in the interval test above
-with open(q, "w") as f:
-    for i in range(30):
-        f.write(json.dumps({"recorded_at": jid + i * 15, "lat": 50.8 + i * 1e-4, "lon": -1.4,
-                            "machine_state": "SAIL_NAV", "flags": {"journey_id": jid}}) + "\n")
-    f.write(json.dumps({"recorded_at": jid + 999, "flags": {"journey_id": jid}}) + "\n")   # no fix
-    f.write(json.dumps({"recorded_at": jid + 5, "lat": 1, "lon": 1, "flags": {}}) + "\n")  # untagged
-assert len(journey.track_points(jid)) == 30 * journey.TRACK_POINT_SIZE
+for i in range(30):
+    journey.record_point(jid, jid + i * 15, 50.8 + i * 1e-4, -1.4, "SAIL_NAV")
+assert journey.track_count(jid) == 30 and journey.track_count(1) == 0
+assert journey.track_page(jid, 28, 5) == journey.track_page(jid, 0, 30)[28 * 13:]
+# The scheduler records a point for each reading with a fix while a journey is open.
+s2 = TelemetryScheduler(Air())
+s2._build_payload_parts = lambda r, rtc_temp_c=None: ({"ina_bus_v": 3.9}, None)
+s2._now_unix_seconds = lambda: jid + 1000
+s2._read_gps_fix = lambda *a, **k: (50.9, -1.3)
+_p = s2._build_full_payload(cfg, None)
+assert _p and _p["flags"]["journey_id"] == jid and _p["lat"] == 50.9, _p
+assert journey.track_count(jid) == 31
+assert struct.unpack("<IiiB", journey.track_page(jid, 30, 1))[:3] == (jid + 1000, 509000000, -13000000)
+journey._drop_track(jid)
+for i in range(30):
+    journey.record_point(jid, jid + i * 15, 50.8 + i * 1e-4, -1.4, "SAIL_NAV")
+# Full: thinned to every second point, keeping the newest.
+tj = 42
+for i in range(journey.TRACK_MAX):
+    journey.record_point(tj, i, 1.0, 1.0)
+assert journey.track_count(tj) == journey.TRACK_MAX // 2
+assert struct.unpack("<IiiB", journey.track_page(tj, journey.TRACK_MAX // 2 - 1, 1))[0] == journey.TRACK_MAX - 1
+journey._drop_track(tj)
 
 class FakeSvc:
     def __init__(self, mtu): self._m = mtu
@@ -146,4 +161,10 @@ assert C._op_journey_list(ctx, bytes([journey.HISTORY_MAX]))[0] == C.ERR_BAD_VAL
 
 v = TurtleData({}).journey()
 assert struct.unpack("<IiiI", v) == (jid, 10000000, 10000000, newest["id"]) and len(v) <= 20
+# A journey that falls off the history takes its track file with it.
+oldest = journey.history()[-1]["id"]
+journey.record_point(oldest, oldest, 1.0, 1.0)
+assert journey.track_count(oldest) == 1
+journey._events.clear(); journey.end(None)          # closes jid: oldest falls off
+assert journey.track_count(oldest) == 0 and journey.track_count(jid) == 30
 print("journeys over Bluetooth: OK")

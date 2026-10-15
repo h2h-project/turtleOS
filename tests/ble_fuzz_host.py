@@ -68,7 +68,8 @@ journey.history = lambda: [{"id": 1790920000, "ended_at": 1790923600, "departure
                             "destination": [50.86, -1.40], "destination_source": 2, "arrival": None}]
 journey.last = lambda: journey.history()[0]
 journey.TRACK_POINT_SIZE = 13
-journey.track_points = lambda jid: bytes(13 * 30)
+journey.track_count = lambda jid: 30
+journey.track_page = lambda jid, start, n: bytes(13 * max(0, min(n, 30 - start)))
 sys.modules["src.app.journey"] = journey
 src.app.journey = journey
 

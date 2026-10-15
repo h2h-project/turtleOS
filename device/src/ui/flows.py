@@ -369,6 +369,18 @@ def _show_frowny(oled, btn, line1, line2, tick_fn=None):
             pass
 
 
+def _log_crash(name, e):
+    """A screen's show_live() raised: say so on serial with the traceback.
+    The flow carries on (the OLED keeps the screen's last frame), so without
+    this a crash looks like a silent freeze."""
+    print("[SCREEN] {} crashed: {!r}".format(name, e))
+    try:
+        import sys
+        sys.print_exception(e)
+    except Exception:
+        pass
+
+
 def _log_screen(name, info=None, err=None):
     """Print a one-line screen-entry log.  Called once at landing, never during live updates."""
     if err:
@@ -1100,7 +1112,8 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
         if ble_scr and hasattr(ble_scr, "show_live"):
             try:
                 a = ble_scr.show_live(btn, tick_fn=tick_fn)
-            except Exception:
+            except Exception as e:
+                _log_crash("bluetooth", e)
                 a = wait_for_single(btn, tick_fn=tick_fn)
         else:
             draw_text(oled, "Bluetooth", y=24)
@@ -1129,7 +1142,8 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
         try:
             a = bat_scr.show_live(btn, tick_fn=tick_fn)
-        except Exception:
+        except Exception as e:
+            _log_crash("battery", e)
             a = None
         if a != "single":
             reset_and_flush(btn, flush_ms, poll_ms)
@@ -1150,7 +1164,8 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     if gps_scr and hasattr(gps_scr, "show_live"):
         try:
             a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry, tick_fn=tick_fn)
-        except Exception:
+        except Exception as e:
+            _log_crash("gps", e)
             a = None
     else:
         draw_text(oled, "GPS", y=24)

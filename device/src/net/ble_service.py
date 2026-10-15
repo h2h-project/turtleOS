@@ -515,6 +515,11 @@ class BleService:
                     print("[BLE] window closed - advertising stopped")
         except Exception as e:
             print("[BLE] tick err:", repr(e))
+            try:
+                import sys
+                sys.print_exception(e)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------ telemetry
 

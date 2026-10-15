@@ -194,7 +194,10 @@ def end(arrival=None):
     dest, src = _active_target()
     if dest is not None:
         rec["destination"], rec["destination_source"] = dest, src
-    _history = ([rec] + _history)[:HISTORY_MAX]
+    full = [rec] + _history
+    _history = full[:HISTORY_MAX]
+    for gone in full[HISTORY_MAX:]:
+        _drop_track(gone.get("id") or 0)
     _cache = {}
     _events.append({"event": "end", "journey": dict(rec)})
     _save()
@@ -217,46 +220,94 @@ def event_taken():
 
 
 # ---------------------------------------------------------------- track
+#
+# Each journey's track lives in its own file, /journey_<id>.trk: packed
+# TRACK_POINT records, oldest first, one appended by the telemetry scheduler
+# for every reading it builds with a fix while the journey is open (sent or
+# queued alike). GATT JOURNEY_TRACK pages straight out of it with a seek, so
+# a page costs one small read. (2.6.0 scanned telemetry_queue.json instead:
+# up to 5000 JSON lines per request, run inside the button loop, which froze
+# the screens for seconds while Wrangler synced.)
+#
+# A file holds at most TRACK_MAX points; past that every second point is
+# dropped, so a long journey keeps its whole shape at a coarser spacing.
+# Files of journeys that fall off the history are removed (end()).
 
-_QUEUE_PATH = "telemetry_queue.json"     # src/net/telemetry_client.QUEUE_FILE
 _NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
 TRACK_POINT = "<IiiB"                    # recorded_at, lat_e7, lon_e7, machine_state
 TRACK_POINT_SIZE = 13
+TRACK_MAX = 1000                         # points per journey file (13 kB)
+_TRACK_DIR = "/"
 
 
 def _e7(deg):
     return int(round(float(deg) * 1e7))
 
 
-def track_points(jid, path=None):
-    """The journey's track from the unsent telemetry queue, packed as
-    TRACK_POINT records (GATT JOURNEY_TRACK), oldest first: every queued
-    reading tagged flags.journey_id == jid that has a position. Readings
-    already sent to the server have left the queue and aren't here.
+def _track_path(jid):
+    return "{}journey_{}.trk".format(_TRACK_DIR, int(jid))
 
-    Reads the JSONL queue one line at a time (it can hold 5000 readings;
-    never load it whole), and only parses lines that mention the id."""
-    import struct
-    jid = int(jid)
-    key = str(jid)
-    out = bytearray()
+
+def _size(path):
     try:
-        with open(path or _QUEUE_PATH) as f:
-            for line in f:
-                if key not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                    if (o.get("flags") or {}).get("journey_id") != jid:
-                        continue
-                    lat, lon = o.get("lat"), o.get("lon")
-                    if lat is None or lon is None:
-                        continue
-                    out += struct.pack(TRACK_POINT, int(o.get("recorded_at") or 0) & 0xFFFFFFFF,
-                                       _e7(lat), _e7(lon),
-                                       _NAV_STATES.get(o.get("machine_state"), 0xFF))
-                except Exception:
-                    continue
+        import os
+        return os.stat(path)[6]
     except OSError:
+        return 0
+
+
+def record_point(jid, recorded_at, lat, lon, machine_state=None):
+    """Append one reading to journey [jid]'s track file. Never raises."""
+    try:
+        import struct
+        rec = struct.pack(TRACK_POINT, int(recorded_at) & 0xFFFFFFFF, _e7(lat), _e7(lon),
+                          _NAV_STATES.get(machine_state, 0xFF))
+        path = _track_path(jid)
+        with open(path, "ab") as f:
+            f.write(rec)
+        if _size(path) >= TRACK_MAX * TRACK_POINT_SIZE:
+            _thin(path)
+    except Exception:
         pass
-    return bytes(out)
+
+
+def _thin(path):
+    """Keep every second point (the newest always), a few at a time: RAM is short."""
+    import os
+    size = TRACK_POINT_SIZE
+    n = _size(path) // size
+    tmp = path + ".tmp"
+    with open(path, "rb") as src, open(tmp, "wb") as dst:
+        for i in range(n):
+            rec = src.read(size)
+            if len(rec) < size:
+                break
+            if i % 2 == (n - 1) % 2:
+                dst.write(rec)
+    os.rename(tmp, path)
+
+
+def track_count(jid):
+    """How many points journey [jid]'s track holds (0 = no file)."""
+    return _size(_track_path(jid)) // TRACK_POINT_SIZE
+
+
+def track_page(jid, start, n):
+    """Up to [n] packed points of journey [jid]'s track from index [start]."""
+    if n <= 0:
+        return b""
+    try:
+        with open(_track_path(jid), "rb") as f:
+            f.seek(start * TRACK_POINT_SIZE)
+            data = f.read(n * TRACK_POINT_SIZE)
+        return data[:len(data) - len(data) % TRACK_POINT_SIZE]
+    except OSError:
+        return b""
+
+
+def _drop_track(jid):
+    try:
+        import os
+        os.remove(_track_path(jid))
+    except Exception:
+        pass

@@ -493,9 +493,11 @@ the **turtle's** position, never the phone's.
   Phase 10.
 - **Contract:** nothing new; everything above is in v1 characteristics.
 
-### Phase 7b status — BUILT, not yet phone-tested (2026-10-12)
+### Phase 7b status — DONE, phone-tested (2026-10-14)
 
-Wrangler 0.2.6.
+Wrangler 0.2.6, built 2026-10-12. **Phone-tested 2026-10-14:** the
+journey panel, both map cards and the full-screen map all work as
+described below.
 - **Journey panel** at the top of Navigate: the journey map with a status
   pill (Live / No journey / Waiting). No journey: the map is grey and shows
   only the turtle. Live: colour, with departure, destination, the planned
@@ -518,6 +520,47 @@ Wrangler 0.2.6.
 - **Full-screen map** from either card: pan/zoom, Recentre, legend, tap a
   stamp for its time and coordinates, "Pick a destination here" → picker.
 - Map failure shows "Map needs data or WiFi on this phone".
+
+### Wrangler 0.2.7 (2026-10-14) — journey log and dark mode
+
+Pairs with turtleOS 2.6.0; still contract v1 (journeys over Bluetooth
+are additions, see README.md).
+- **Journey log.** `JourneyStore` keeps a per-turtle log of journeys,
+  merged by `journey_id` from two sources: what the phone saw while
+  connected, and the turtle's own records (`0119` Journey for the open
+  one, `JOURNEY_LIST` for ended ones, `JOURNEY_TRACK` for each route).
+  The turtle's stamped facts (departure, end time, arrival, destination)
+  beat the phone's guesses; a route is the time-ordered union of both
+  sets of points. The sync after connecting is quiet (no notice, no busy
+  state) and stops at the first journey already fully synced. Turtles
+  before 2.6.0 (no `0119`) keep the phone-only log.
+- **Departure now comes from the turtle** (`0119`), so journeys started
+  on the OLED show their departure too. This closes the 0.2.6 gap noted
+  above.
+- **Navigate:** a Journey log card under the journey panel lists past
+  journeys (start, end, duration); tapping one opens a review map with
+  its departure, destination, arrival and route, and a legend.
+  End journey moved into the ViewModel.
+- **Dark mode.** A sun/moon switch under Appearance in Settings sets the
+  app's night mode via `UiModeManager`, without a restart. `Wrangler.X`
+  colours follow the theme (hopeturtles.org's dark neutrals, `#006900`
+  for the top-level green); the map and fixed-white surfaces keep
+  `Brand.X`.
+- **Dashboard:** the Battery tile shows a battery level icon.
+- **Tests:** `JourneyCodecTest`, `JourneyRecordTest`.
+- **Not yet phone-tested:** the journey sync and log against a 2.6.0
+  turtle, and dark mode across every screen.
+- **Seen 2026-10-14, fixed in turtleOS 2.6.1:** with the phone connected,
+  the turtle's buttons and screens lagged 5–10 s. The turtle runs
+  Bluetooth commands inside its button loop, and 2.6.0's `JOURNEY_TRACK`
+  read the whole telemetry queue (up to 5000 lines) per request, once per
+  ended journey during the sync. 2.6.1 keeps each journey's track in its
+  own file (`/journey_<id>.trk`) and reads one page per request, so a
+  track now includes readings already sent. The app (not yet a new
+  version) fetches a track only for journeys without one and stops the
+  sync for the connection after a timeout instead of retrying every
+  60 s. Journeys recorded on 2.6.0 have no track file, so they come back
+  with no turtle route.
 
 ---
 

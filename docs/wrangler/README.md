@@ -129,7 +129,7 @@ characteristic and field. "—" means that surface doesn't carry it.
 | `set_departure` | where the last journey started, [lat, lon] | `PATCH /v1/device` | — | config, `journey_state.json` |
 | `set_arrival` | where the last journey ended, [lat, lon] | `PATCH /v1/device` | — | config |
 | journey record | `id`, `started_at`, `departure`, `destination` + `destination_source` (an `active_source` code), `ended_at` (unix s), `arrival` ([lat, lon] or null) | `flags.journey` on an event reading | open: `0119` + Targets `0112`; ended: `JOURNEY_LIST` | `journey_state.json`: the open one + `history` (last 20) |
-| track point | `recorded_at`, `lat`, `lon`, `machine_state` of a journey reading | a reading with `lat`/`lon` + `flags.journey_id` | `JOURNEY_TRACK` (unsent readings only) | `journey.track_points()` |
+| track point | `recorded_at`, `lat`, `lon`, `machine_state` of a journey reading | a reading with `lat`/`lon` + `flags.journey_id` | `JOURNEY_TRACK` | `/journey_<id>.trk` (`journey.record_point()`) |
 | `journey_event` | `"start"` / `"end"`: this reading reports that event of `flags.journey` | `flags.journey_event` | — | `journey.pending_event()` |
 
 **Sail**
@@ -184,9 +184,9 @@ server's coulomb-counted `battery_soc_pct` is a server value, not
 - **Journey records:** the turtle keeps them, reports start/end in the
   telemetry stream (Phase B) and serves them over Bluetooth (Phase C).
   Still to come: stored as rows on the server (Phase D).
-- **Track points:** over Bluetooth since Phase C (`JOURNEY_TRACK`, from
-  the unsent queue). The app API (Phase D) serves the same shape for the
-  points already sent.
+- **Track points:** over Bluetooth since Phase C (`JOURNEY_TRACK`; from
+  2.6.1 every reading with a fix, sent or not, from the journey's own
+  track file). The app API (Phase D) will serve the same shape.
 - **Navigation isn't in the JSON** (bearing, distance, fault, sail). A
   v2 payload could carry them under these names if the server wants them.
 
@@ -554,14 +554,17 @@ empty.
   ended journeys, newest first. Field meanings: [Turtle data dictionary](#turtle-data-dictionary).
 - **Track point** (`JOURNEY_TRACK`): `recorded_at u32`, `lat_e7 i32`,
   `lon_e7 i32`, `machine_state u8` (`nav_state` codes, `0xFF` unknown),
-  13 bytes. The points are the journey's telemetry readings **still in
-  the turtle's unsent queue** (`telemetry_queue.json`), oldest first.
-  Readings already sent to hopeturtles.org have left the queue, so a
-  journey that had WiFi part of the way has the rest on the server. Ask
-  pages in order: `start` = 0 rebuilds the turtle's copy of the track (a
-  pass over the queue, which can take a second or two), later pages read
-  from that copy. Each page holds as many points as fit the link's MTU
-  (13 at MTU 185). `total` = 0 means no points.
+  13 bytes. The points are the journey's telemetry readings that had a
+  fix, oldest first, **whether or not they were sent** (turtleOS 2.6.1:
+  the turtle appends each one to `/journey_<id>.trk` as it builds the
+  reading). A track holds at most 1000 points; past that the turtle
+  drops every second one, so a long journey keeps its shape at a coarser
+  spacing. Pages can be asked in any order and each is one small read.
+  Each page holds as many points as fit the link's MTU (13 at MTU 185).
+  `total` = 0 means no points. *2.6.0* read the points from the unsent
+  queue (`telemetry_queue.json`), which could take seconds per request
+  and stalled the turtle's buttons; journeys recorded on 2.6.0 have no
+  track file, so they answer `total` = 0 on 2.6.1.
 
 **Sail**
 
@@ -805,6 +808,10 @@ read it without knowing turtleOS:
   and Shore `0117` keeps `journey_id`, so Wrangler builds that know only
   v1 keep full use of a 2.6.0 turtle. `contract_version` goes to 2 only
   with a breaking change.
+- **turtleOS 2.6.1 stays contract v1.** `JOURNEY_TRACK` keeps its bytes;
+  only where the points come from changed (a per-journey track file
+  instead of the unsent queue), so a track now includes readings already
+  sent.
 
 ### Turtles at sea: shore data via Buwana login — planned
 

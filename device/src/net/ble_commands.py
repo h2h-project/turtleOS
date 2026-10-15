@@ -135,15 +135,12 @@ def _op_journey_list(ctx, payload):
     return OK, struct.pack("<BB", min(len(hist), 255), i) + rec, None
 
 
-# The track being paged out: [journey_id, packed points]. Page 0 rebuilds it.
-_track = [None, b""]
-
-
 def _op_journey_track(ctx, payload):
     """0x08 JOURNEY_TRACK <IH> journey_id (0 = the open one), start.
-    OK <HHB> total, start, n + n x <IiiB> points from the unsent queue,
-    as many as fit the link MTU. WRONG_STATE <B> 0 no journey open,
-    1 MTU too small; BAD_VALUE start > total."""
+    OK <HHB> total, start, n + n x <IiiB> points from the journey's track
+    file, as many as fit the link MTU. WRONG_STATE <B> 0 no journey open,
+    1 MTU too small; BAD_VALUE start > total. One seek and one small read:
+    this runs inside the button loop, so it must stay cheap."""
     from src.app import journey
     jid, start = struct.unpack("<IH", payload)
     if jid == 0:
@@ -158,15 +155,12 @@ def _op_journey_track(ctx, payload):
     fit = room // journey.TRACK_POINT_SIZE
     if fit < 1:
         return ERR_WRONG_STATE, b"\x01", None
-    if start == 0 or _track[0] != jid:
-        _track[0], _track[1] = jid, journey.track_points(jid)
-    pts = _track[1]
-    size = journey.TRACK_POINT_SIZE
-    total = min(len(pts) // size, 0xFFFF)
+    total = min(journey.track_count(jid), 0xFFFF)
     if start > total:
         return ERR_BAD_VALUE, b"", None
-    n = min(fit, total - start)
-    return OK, struct.pack("<HHB", total, start, n) + pts[start * size:(start + n) * size], None
+    pts = journey.track_page(jid, start, min(fit, total - start))
+    n = len(pts) // journey.TRACK_POINT_SIZE
+    return OK, struct.pack("<HHB", total, start, n) + pts, None
 
 
 def _op_dest_set_here(ctx, payload):

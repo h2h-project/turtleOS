@@ -744,6 +744,7 @@ class TelemetryScheduler:
         # flags.journey_id stays "the journey open now" (it tags the point);
         # the event's own journey is flags.journey.id.
         _event_taken = None
+        _jid = None
         try:
             from src.app import journey as _journey
             _jid = _journey.active_id()
@@ -769,6 +770,13 @@ class TelemetryScheduler:
         if gps_lat is not None and gps_lon is not None:
             payload["lat"] = gps_lat
             payload["lon"] = gps_lon
+            # The open journey's track file (GATT JOURNEY_TRACK reads it).
+            if _jid:
+                try:
+                    _journey.record_point(_jid, recorded_at, gps_lat, gps_lon,
+                                          payload.get("machine_state"))
+                except Exception:
+                    pass
 
         if confidence:
             payload["confidence"] = confidence

@@ -185,17 +185,20 @@ As planned:
 - **Journey list and track, by command** (paged, so no transfer holds
   the command channel for long):
   - `JOURNEY_LIST page` → journey records from the history, newest first;
-  - `JOURNEY_TRACK journey_id, page` → that journey's track points read
-    line by line from `telemetry_queue.json` (never loaded whole; RAM is
-    short), filtered on `flags.journey_id`.
+  - `JOURNEY_TRACK journey_id, page` → that journey's track points.
+    *Built in 2.6.0 as a line-by-line pass over `telemetry_queue.json`;
+    that took seconds inside the button loop, so 2.6.1 appends each
+    point to a per-journey file `/journey_<id>.trk` instead and pages
+    out of it with a seek.*
   Each answer says whether more pages follow. A dropped link resumes from
   the last page received.
 - **Encoding of a track point:** fixed binary `<Iii B>` (`recorded_at`,
   `lat_e7`, `lon_e7`, `machine_state`), 13 bytes, against a few hundred
   for a JSON line. A full 5000-point queue is then ~65 kB.
-- **What Bluetooth can't give:** readings already sent to the server
-  have left the queue. Each `JOURNEY_TRACK` answer says how many of the
-  journey's points were sent, so the app knows to look on the server.
+- **What Bluetooth can't give** (2.6.0 only): readings already sent to
+  the server had left the queue. From 2.6.1 the track file keeps every
+  point with a fix, sent or not, up to 1000 per journey (thinned past
+  that).
 - Readable bonded-only, like the commands (tracks are location history).
 
 **Done when:** README.md has the v2 contract, `ble_fuzz_host.py` covers
@@ -227,6 +230,22 @@ Folds in app Phase 8 (Buwana login), rebuilt on the dictionary.
   track; the journey record is just less complete (no end, no arrival).
 
 ## Phase E — Wrangler: one journey view, two sources
+
+**Status: Bluetooth half BUILT in Wrangler 0.2.7, unit-tested, not yet
+tried against a 2.6.0 turtle (2026-10-14).** The app reads `0119`, and
+on connect (and whenever `last_journey_id` changes) pulls new ended
+journeys with `JOURNEY_LIST` and their tracks with `JOURNEY_TRACK`, plus
+the open journey's track so far. `JourneyRecord.withTurtle` /
+`withTurtlePoints` merge by `journey_id`: the turtle's departure, end,
+arrival and destination win; the route is the time-ordered union of the
+turtle's points and the phone's (route points now carry times). The
+review screen says where each part came from. The sync is quiet and
+retries a minute after a failure (e.g. not paired yet). Instead of a
+`JourneySource` interface, the turtle source is the merge functions plus
+the sync; the server source (after Phase D) adds a third input to the
+same merge. Waiting on Phase D: the server source and the login.
+
+As planned:
 
 - A `JourneySource` interface with three implementations: the phone's
   own log (today's `JourneyStore`), Bluetooth (Phase C) and
