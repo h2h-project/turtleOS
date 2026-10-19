@@ -876,6 +876,14 @@ def run(
             print("[NAV] state init failed:", repr(e))
         _get_nav()
 
+    # A long press on any screen goes to the hold flow (Bluetooth first in
+    # turtle mode). Flows hand a hold back as "sleep"; it is parked here
+    # and dispatched next pass instead of waiting for a fresh gesture.
+    _pending_action = None
+
+    def _hold_only(a):
+        return "sleep" if a == "sleep" else None
+
     # ============================================================
     # MAIN LOOP
     # ============================================================
@@ -924,40 +932,43 @@ def run(
         _gc()
 
         # --- Waiting screen ---
-        print("[SCREEN] waiting")
-        # The send path no longer scans for WiFi on its own (that cost a
-        # full-power scan per telemetry send with no AP in range). Returning to
-        # idle is one of the few places allowed to ask for an association
-        # attempt; the background process enforces its own retry floor, so this
-        # is safe to call on every pass.
-        if _background_process is not None:
-            try:
-                _background_process.request_wifi_check(cfg=cfg)
-            except Exception:
-                pass
-        if turtle_waiting_scr is not None:
-            # tick_fn keeps the nav autopilot + telemetry cycling (~500 ms)
-            # while idle — the 4 s on_idle cadence is far too slow for
-            # SAIL-NAV's 200-500 ms control loop.
-            action = turtle_waiting_scr.show_live(
-                btn=btn,
-                tick_fn=_bg_tick,
-                on_idle=_idle,
-                idle_every_ms=500,
-                status=status,
-            )
-        else:
-            action = waiting.show_live(
-                oled,
-                btn,
-                line="Know thy air...",
-                animate=False,
-                wifi_ok=status["wifi_ok"],
-                gps_on=status["gps_on"],
-                api_ok=status["api_ok"],
-                on_idle=_idle,
-                idle_every_ms=500,
-            )
+        action = _pending_action
+        _pending_action = None
+        if action is None:
+            print("[SCREEN] waiting")
+            # The send path no longer scans for WiFi on its own (that cost a
+            # full-power scan per telemetry send with no AP in range). Returning to
+            # idle is one of the few places allowed to ask for an association
+            # attempt; the background process enforces its own retry floor, so this
+            # is safe to call on every pass.
+            if _background_process is not None:
+                try:
+                    _background_process.request_wifi_check(cfg=cfg)
+                except Exception:
+                    pass
+            if turtle_waiting_scr is not None:
+                # tick_fn keeps the nav autopilot + telemetry cycling (~500 ms)
+                # while idle — the 4 s on_idle cadence is far too slow for
+                # SAIL-NAV's 200-500 ms control loop.
+                action = turtle_waiting_scr.show_live(
+                    btn=btn,
+                    tick_fn=_bg_tick,
+                    on_idle=_idle,
+                    idle_every_ms=500,
+                    status=status,
+                )
+            else:
+                action = waiting.show_live(
+                    oled,
+                    btn,
+                    line="Know thy air...",
+                    animate=False,
+                    wifi_ok=status["wifi_ok"],
+                    gps_on=status["gps_on"],
+                    api_ok=status["api_ok"],
+                    on_idle=_idle,
+                    idle_every_ms=500,
+                )
 
         if action:
             try:
@@ -979,26 +990,28 @@ def run(
         # --- Click routing ---
         if action == "triple":
             screens.clear(); _gc()
-            connectivity_carousel(
+            _pending_action = _hold_only(connectivity_carousel(
                 btn, oled, status, cfg, wifi,
                 None, None, gps,
                 get_screen,
                 tick_fn=_bg_tick,
                 telemetry=telemetry,
                 device_info=api_boot,
-            )
+            ))
             continue
 
         if action == "single":
             screens.clear(); _gc()
             # If temp/co2/tvoc missing, the improved get_screen() will now PRINT WHY.
-            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
-                            telemetry=telemetry)
+            _pending_action = _hold_only(sensor_carousel(
+                btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
+                telemetry=telemetry))
             continue
 
         if action == "double":
             screens.clear(); _gc()
             _time_action = time_flow(btn, oled, cfg, wifi, None, get_screen, status=status, tick_fn=_bg_tick)
+            _pending_action = _hold_only(_time_action)
             if cfg.get("turtle_mode", False) and _time_action == "single":
                 _gc()
                 scr = get_screen("state")
@@ -1018,7 +1031,7 @@ def run(
                                 print("[SCREEN] state")
                     except Exception:
                         print("[SCREEN] state")
-                    scr.show_live(btn=btn, tick_fn=_bg_tick)
+                    _pending_action = _hold_only(scr.show_live(btn=btn, tick_fn=_bg_tick))
             continue
 
         if action == "quad":
@@ -1028,7 +1041,8 @@ def run(
             else:
                 scr = get_screen("turtle_waiting")
                 if scr is not None:
-                    scr.show_live(btn=btn, tick_fn=_bg_tick, status=status)
+                    _pending_action = _hold_only(
+                        scr.show_live(btn=btn, tick_fn=_bg_tick, status=status))
             continue
 
         if action == "sleep":

@@ -208,6 +208,72 @@ the new commands, and `tests/ble_decode.py` decodes the new values.
 
 Folds in app Phase 8 (Buwana login), rebuilt on the dictionary.
 
+**Status: first slice BUILT (2026-10-15), not yet deployed:** the
+Buwana session and the read-only app API below, over the readings the
+server already has. Still to come: the journeys table, ingest of
+`flags.journey_event`, the backfill, and `GET /turtles/:id/journeys`.
+
+### App API v2 — first slice
+
+Base `https://hopeturtles.org/api/app/v2`, JSON. Every answer is
+`{ "ok": true, … }` or `{ "ok": false, "error": "<code>" }`, the device
+API's shape. Field names are the [data dictionary](README.md#turtle-data-dictionary)'s;
+times are unix seconds UTC; a value with no data is **omitted**.
+
+**Login.** Wrangler is its own Buwana app: a public client (PKCE, no
+secret), redirect `org.hopeturtles.wrangler://oauth2redirect`, scopes
+`openid email profile` (Buwana rejects `buwana:basic` by name). Buwana's `authorize.php` takes a custom-scheme
+redirect as long as it's registered (its whitelist only normalises the
+URI), and `token.php` runs the PKCE path when no secret is sent. The app
+does the login in a Custom Tab (AppAuth), then trades the ID token for an
+app token, because Buwana's tokens last 90 minutes and come with no
+refresh token:
+
+| Call | Body | Answer |
+|---|---|---|
+| `POST /session` | `{ "id_token": "…" }` | `{ token, expires_at, user }` |
+| `DELETE /session` | — | `{}` (the token is revoked) |
+| `GET /me` | — | `{ user }` |
+
+The server checks the ID token against Buwana's JWKS (RS256, issuer
+`https://buwana.ecobricks.org`, audience = Wrangler's `client_id`, not
+expired), upserts the user as the web login does, and stores only the
+SHA-256 of a random 32-byte token (`app_sessions_tb`). The app token goes
+in `Authorization: Bearer <token>` and lasts 90 days from its last use.
+`user` is `{ buwana_id, first_name, earthling_emoji, admin }`; `admin`
+comes from `users_tb.role`, not the token.
+
+**Turtles** (read-only; the turtle listens for nothing inbound). A user
+sees the turtles they manage (`turtles_tb.turtle_manager`, as the
+my-turtle page does), an admin sees all; any other turtle answers
+`404 turtle_not_found`.
+
+| Call | Answer |
+|---|---|
+| `GET /turtles` | `{ turtles: [ { turtle_id, name, mission_name, last_report_at, lat, lon, machine_state, ina_batt_pct } ] }`, most recently heard first; `lat`/`lon` are the last known fix |
+| `GET /turtles/:id/latest` | `{ turtle, reading, last_fix }` (below) |
+| `GET /turtles/:id/track?hours=24` | `{ points: [ track point + journey_id ] }`: readings with a fix in the `hours` (0.25–721) before the **last fix**, oldest first, at most 5000 |
+| `GET /turtles/:id/journeys/:journey_id/track` | `{ journey_id, points: [ track point ] }`: readings tagged with that `flags.journey_id`, oldest first, at most 5000 |
+
+- `turtle`: `turtle_id`, `name`, `mission` (`{ name, lat, lon }`),
+  `set_destination`, `set_departure`, `set_arrival` (`[lat, lon]`).
+- `reading`: the newest reading: `recorded_at` (the turtle's clock),
+  `received_at` (the server's clock when it arrived: the app's "last
+  report"), `lat`, `lon`, `machine_state`, and `values` / `flags` as the
+  turtle sent them (`ina_current_ma` keeps the turtle's sign).
+- `last_fix`: `{ recorded_at, lat, lon }` of the newest reading with a
+  fix, for when `reading` has none.
+- track point: `{ recorded_at, lat, lon, machine_state }`, plus
+  `journey_id` on `/track` when the reading had one. `(0, 0)` boot fixes
+  are left out.
+
+Errors: `401 missing_token` / `invalid_token` (log in again),
+`400 bad_request` / `bad_id_token`, `404 turtle_not_found`,
+`429` (more than 20 logins in 15 min from one address; `Retry-After`), `503 not_configured` (the server
+has no Wrangler `client_id`), `500 server_error`.
+
+### Still planned
+
 - **Ingest:** accept `"schema": 2`; record `flags.journey_event` into a
   journeys table (`journey_id`, turtle, departure, destination,
   `ended_at`, arrival), so a journey is a row, not something inferred
@@ -215,17 +281,11 @@ Folds in app Phase 8 (Buwana login), rebuilt on the dictionary.
 - **Backfill** journeys for v1 turtles from tagged readings already in
   `telemetry_tb` (start = first tagged point, end unknown), the same way
   `getRouteForTurtle` groups them today.
-- **App API, `/api/app/v2`,** Buwana token (OIDC + PKCE, Wrangler as its
-  own Buwana app), read-only:
-  - `GET /turtles` — the user's turtles (`turtles_tb.buwana_id`; all for admins)
-  - `GET /turtles/:id/latest`
-  - `GET /turtles/:id/journeys` — journey records, newest first
-  - `GET /turtles/:id/journeys/:journey_id/track` — track points
-  Same field names and shapes as Phase C, in JSON. The track query reuses
-  `getRouteForTurtle`'s filters (no `(0, 0)` boot fixes), keyed on
-  `journey_id` instead of a time window.
+- **`GET /turtles/:id/journeys`:** journey records from that table,
+  newest first, in the journey record shape of Phase C.
 - The website's session-auth routes stay as they are; the app API is a
-  separate router with its own token check, like `/api/v1` has `deviceAuth`.
+  separate router with its own token check (`appAuth`), like `/api/v1`
+  has `deviceAuth`.
 - Older readings tagged with `flags.journey_id` (v1 turtles) still give a
   track; the journey record is just less complete (no end, no arrival).
 

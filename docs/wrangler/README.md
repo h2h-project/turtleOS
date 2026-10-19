@@ -813,7 +813,11 @@ read it without knowing turtleOS:
   instead of the unsent queue), so a track now includes readings already
   sent.
 
-### Turtles at sea: shore data via Buwana login — planned
+### Turtles at sea: shore data via Buwana login — being built
+
+*The app API is specified in [03_v2_plan.md, Phase D](03_v2_plan.md#app-api-v2--first-slice)
+(`/api/app/v2`, not the `/api/app/v1` below; turtles are matched on
+`turtles_tb.turtle_manager`).*
 
 This is not part of the BLE contract. It is recorded here so both
 streams leave room for it.

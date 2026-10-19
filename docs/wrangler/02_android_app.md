@@ -571,12 +571,34 @@ user manages that are out of Bluetooth range but reporting to
 hopeturtles.org over WiFi. It is **read-only**, because the turtle
 listens for nothing inbound.
 
+### Phase 8 status — first slice BUILT (2026-10-15), not yet deployed
+
+The server API is specified in [03_v2_plan.md, Phase D](03_v2_plan.md#app-api-v2--first-slice):
+`/api/app/v2`, an app token traded for the Buwana ID token. The plan
+below is otherwise as built, with these changes:
+- **Buwana:** custom-scheme redirects work (registered URIs are only
+  normalised), so no App Link is needed. The redirect is
+  `org.hopeturtles.wrangler://oauth2redirect`; the `:/` form would come
+  back from Buwana's normaliser as `:///`.
+- **Tokens:** AES-GCM with an Android Keystore key, not
+  `EncryptedSharedPreferences` (deprecated). Only the app token is kept;
+  Buwana's own tokens are dropped after the trade.
+- **Entry point:** the scan screen's **Connect to Server** button, which
+  asks to log in the first time and opens **My turtles** after. Log out
+  is on My turtles.
+- **Not done:** the server's journey records (rest of Phase D) and their
+  merge into the journey log (Phase E).
+- **To switch it on:** register Wrangler in the Buwana App Manager,
+  then put its `client_id` in `BUWANA_WRANGLER_CLIENT_ID` (server `.env`)
+  and `Server.BUWANA_CLIENT_ID` (app), and run
+  `sql/migrations/20261015_app_sessions.sql`.
+
 It needs work in **three places**:
 
 **Buwana** (`buwana.ecobricks.org`)
 - Register Wrangler as its own Buwana app (`apps_tb`): a public client
   (no secret), PKCE, redirect `org.hopeturtles.wrangler:/oauth2redirect`,
-  scopes `openid buwana:basic`.
+  scopes `openid email profile`.
 - Open question: does Buwana's `/authorize.php` accept a custom-scheme
   redirect URI? If not, use an https App Link on hopeturtles.org that
   hands off to the app.

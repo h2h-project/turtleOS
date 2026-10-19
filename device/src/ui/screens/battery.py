@@ -187,6 +187,8 @@ class BatteryScreen:
 
             if action == "single":
                 return "single"
+            if action == "sleep":
+                return "sleep"
 
             if time.ticks_diff(now, _next) >= 0:
                 data  = self._read()

@@ -657,7 +657,7 @@ def connectivity_carousel(
     if sp in ("quad", "debug"):
         return sp
 
-    return _exit(None)
+    return _exit("sleep" if a == "sleep" else None)
 
 # ============================================================
 # SENSOR CAROUSEL (SINGLE CLICK)
@@ -1080,7 +1080,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     """
     Hold flow (carousel order):
 
-    Waiting
+    Any screen
        ↓ (hold 3 s)
     Bluetooth Screen (turtle mode only — pairing happens here)
        ↓ single click
@@ -1093,7 +1093,19 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     Version Screen
        ↓
     Waiting
+
+    A hold on any screen here starts the flow again from the top, the
+    same as a hold anywhere else (run() routes every carousel's "sleep"
+    here), so a long press always lands on the Bluetooth screen.
     """
+    while _sleep_flow_pass(btn, oled, get_screen, flush_ms, poll_ms, tick_fn,
+                           gps, cfg, telemetry, status) == "sleep":
+        print("[CLICK] sleep -> sleep flow")
+
+
+def _sleep_flow_pass(btn, oled, get_screen, flush_ms, poll_ms, tick_fn,
+                     gps, cfg, telemetry, status):
+    """One run through the hold flow; returns "sleep" on a hold."""
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
 
     # ---- BLUETOOTH SCREEN (first, turtle mode only — Turtle Wrangler) ----
@@ -1120,7 +1132,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
             a = wait_for_single(btn, tick_fn=tick_fn)
         if a != "single":
             reset_and_flush(btn, flush_ms, poll_ms)
-            return
+            return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ---- BATTERY SCREEN (first) — skipped entirely if no INA219 is attached. ----
@@ -1147,7 +1159,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
             a = None
         if a != "single":
             reset_and_flush(btn, flush_ms, poll_ms)
-            return
+            return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ---- GPS SCREEN (reads UART only, no TCP) ----
@@ -1173,7 +1185,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
 
     if a != "single":
         reset_and_flush(btn, flush_ms, poll_ms)
-        return
+        return a
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     _log_screen("sleep")
@@ -1190,7 +1202,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
 
     if a != "single":
         reset_and_flush(btn, flush_ms, poll_ms)
-        return
+        return a
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
@@ -1220,6 +1232,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
             print("[VERSION] mode switch failed:", repr(e))
 
     reset_and_flush(btn, flush_ms, poll_ms)
+    return _ver_action
 
 
 # ============================================================

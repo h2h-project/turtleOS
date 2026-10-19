@@ -240,7 +240,9 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
-| **Hold 3 s** | Bluetooth → Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
+| **Hold 3 s** (from **any** screen) | Bluetooth → Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
+
+A hold works on every screen, not just the waiting screen: each screen returns `"sleep"`, the carousel passes it up, and `run()` parks it in `_pending_action` and starts `sleep_flow` on the next pass without going back to the waiting screen. Inside the hold flow, a hold restarts it at the top (Bluetooth). A screen that consumes `poll_action()` must return `"sleep"` on a hold, and a flow must pass it through, or the long press is lost on that screen.
 
 **How clicks work internally:**
 - Button is sampled in every loop iteration (non-blocking).

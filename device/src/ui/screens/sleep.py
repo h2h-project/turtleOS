@@ -195,6 +195,8 @@ class SleepScreen:
 
             if action == "single":
                 return "single"
+            if action == "sleep":
+                return "sleep"
 
             if action == "double":
                 self.go_to_sleep(btn, tick_fn)

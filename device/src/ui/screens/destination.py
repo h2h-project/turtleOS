@@ -167,13 +167,15 @@ class DestinationScreen:
     def _launch_journey(self, btn, gps, tick_fn):
         """Hand off to the Journey screen right after a here-stamp so the
         operator can open the journey (which stamps set_departure) without
-        hunting for the screen in the carousel."""
+        hunting for the screen in the carousel. Returns the Journey
+        screen's exit action so a hold there still reaches the hold flow."""
         try:
             from src.ui.screens.journey import JourneyScreen
-            JourneyScreen(self.oled).show_live(btn, gps=gps, cfg=self._cfg,
-                                               tick_fn=tick_fn)
+            return JourneyScreen(self.oled).show_live(btn, gps=gps, cfg=self._cfg,
+                                                      tick_fn=tick_fn)
         except Exception as e:
             print("[DEST] journey launch err:", repr(e))
+        return None
 
     # ------------------------------------------------------------------ states
 
@@ -251,8 +253,8 @@ class DestinationScreen:
             elif self._state == "menu":
                 if action == "single":
                     ok = self._stamp_here(gps, tick_fn)
-                    if ok:
-                        self._launch_journey(btn, gps, tick_fn)
+                    if ok and self._launch_journey(btn, gps, tick_fn) == "sleep":
+                        return "sleep"
                     self._enter("normal", btn)
                 elif action == "double":
                     self._use_mission(tick_fn)
