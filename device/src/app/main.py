@@ -806,7 +806,15 @@ def run(
         except Exception as e:
             print("[BLE] attach sources failed:", repr(e))
 
+    # A screen polls the button only between _bg_tick() calls, so a slow
+    # tick makes every click feel late. Any tick over this many ms is logged
+    # as [SLOW] with a per-stage breakdown (gc / telemetry / nav / ble).
+    _SLOW_TICK_MS = 40
+
     def _bg_tick():
+        t0 = time.ticks_ms()
+        t_gc = 0
+        t_tel = t_nav = t_ble = t0
         try:
             # Skip wlan.isconnected() when background_process is active — it blocks
             # on the WiFi driver mutex while WPA2 auth is running on the bg thread.
@@ -814,24 +822,38 @@ def run(
             if _background_process is None:
                 status["wifi_ok"] = bool(wifi.is_connected())
             start_telemetry_if_ready(_cfg_cell[0])
+            g = time.ticks_ms()
             _gc()
+            t_gc = time.ticks_diff(time.ticks_ms(), g)
+            t_tel = time.ticks_ms()
             tick_telemetry(_cfg_cell[0])
+            t_tel = time.ticks_diff(time.ticks_ms(), t_tel)
+            g = time.ticks_ms()
             _gc()
+            t_gc += time.ticks_diff(time.ticks_ms(), g)
         except Exception:
-            pass
+            t_tel = 0
+        t_nav = time.ticks_ms()
         if _nav_cell[0] is not None:
             try:
                 _nav_cell[0].tick(_cfg_cell[0])
             except Exception:
                 pass
+        t_nav = time.ticks_diff(time.ticks_ms(), t_nav)
         # Bluetooth housekeeping (advertising / wrangle window / header).
         # Lives here, not only in the top-level loop, because every screen
         # owns the loop while it is showing and calls tick_fn=_bg_tick.
+        t_ble = time.ticks_ms()
         if ble is not None:
             try:
                 ble.tick()
             except Exception:
                 pass
+        t_ble = time.ticks_diff(time.ticks_ms(), t_ble)
+        total = time.ticks_diff(time.ticks_ms(), t0)
+        if total >= _SLOW_TICK_MS:
+            print("[SLOW] bg_tick {}ms  gc={} telemetry={} nav={} ble={}".format(
+                total, t_gc, t_tel, t_nav, t_ble))
 
     # ========================================================
     # Idle callback — defined ONCE here, uses _cfg_cell so
