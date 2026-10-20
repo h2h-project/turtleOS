@@ -385,12 +385,48 @@ elif (( ${#_blank[@]} > 0 )); then
 fi
 
 # ============================================================
+# Keep what the device saved for itself
+# ============================================================
+# Some config keys are written by the device, not by hand: device_name comes
+# from the server on an online boot. airbuddy_config.json doesn't carry it,
+# so uploading it as-is wiped the name until the next online boot. For each
+# key below, a non-empty value in airbuddy_config.json wins; otherwise the
+# board's current value is kept. Read before anything is uploaded or wiped.
+
+KEEP_FROM_BOARD=(device_name)
+UPLOAD_CONFIG="$TMP_DIR/upload/config.json"   # git-ignored by name, like every config.json
+mkdir -p "$TMP_DIR/upload"
+"${MPREMOTE_CMD[@]}" fs cat :config.json 2>/dev/null \
+  | python3 -c '
+import json, sys
+local_path, out_path, keys = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(local_path) as f:
+    cfg = json.load(f)
+try:
+    board = json.loads(sys.stdin.read())
+except Exception:
+    board = {}
+if not isinstance(board, dict):
+    board = {}
+for k in keys:
+    if str(cfg.get(k) or "").strip():
+        continue
+    v = board.get(k)
+    if str(v or "").strip():
+        cfg[k] = v
+        print("Keeping %s %r from the board" % (k, v))
+with open(out_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+' "$CONFIG_FILE" "$UPLOAD_CONFIG" "${KEEP_FROM_BOARD[@]}" \
+  || die "Could not prepare config.json from scripts/airbuddy_config.json (is it valid JSON?)."
+
+# ============================================================
 # Option 2 — Sync only the config file
 # ============================================================
 
 if [[ "$ACTION" == "config" ]]; then
   msg "Uploading config.json only"
-  "${MPREMOTE_CMD[@]}" fs cp "$CONFIG_FILE" :config.json \
+  "${MPREMOTE_CMD[@]}" fs cp "$UPLOAD_CONFIG" :config.json \
     || die "Config upload failed. Try reconnecting the board and running again."
   echo "Config: scripts/airbuddy_config.json → config.json"
   echo
@@ -431,7 +467,7 @@ rsync -a \
   \
   "$DEVICE_DIR/" "$STAGE_DIR/"
 
-cp "$CONFIG_FILE" "$STAGE_DIR/config.json"
+cp "$UPLOAD_CONFIG" "$STAGE_DIR/config.json"
 echo "Config: scripts/airbuddy_config.json → config.json"
 
 # ============================================================

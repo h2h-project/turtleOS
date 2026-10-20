@@ -428,15 +428,32 @@ WIFI_ENABLED="$(prompt_yes_no "Enable WiFi? (required for telemetry uploads)" "y
 
 WIFI_SSID=""
 WIFI_PASSWORD=""
+TELEMETRY_MODE="off"
 TELEMETRY_ENABLED="false"
 TELEMETRY_POST_EVERY_S=120
+MISSION_CONNECTION_MODE="wifi_auto"
 API_BASE="http://air2.earthen.io"
 
 if [[ "$WIFI_ENABLED" == "true" ]]; then
     WIFI_SSID="$(prompt_required "WiFi network name (SSID)")"
     WIFI_PASSWORD="$(prompt_required "WiFi password")"
-    TELEMETRY_ENABLED="$(prompt_yes_no "Enable telemetry uploads to your air2.earthen.io dashboard?" "y")"
-    if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+
+    echo
+    echo "How should readings be logged to your air2.earthen.io dashboard?"
+    echo "  1) auto   — post a reading on a fixed interval (default)"
+    echo "  2) manual — only when you stamp a position by hand on the GPS screen"
+    echo "  3) off    — never log"
+    while true; do
+        read -r -p "Telemetry mode [default: 1]: " TEL_REPLY
+        case "${TEL_REPLY:-1}" in
+            1) TELEMETRY_MODE="auto";   break ;;
+            2) TELEMETRY_MODE="manual"; break ;;
+            3) TELEMETRY_MODE="off";    break ;;
+            *) echo "  (Please enter 1, 2, or 3.)" ;;
+        esac
+    done
+    [[ "$TELEMETRY_MODE" != "off" ]] && TELEMETRY_ENABLED="true"
+    if [[ "$TELEMETRY_MODE" == "auto" ]]; then
         echo "  tip: hit return to use the default value"
         TELEMETRY_POST_EVERY_S="$(prompt_default "How often to upload readings (seconds)" "120")"
     fi
@@ -467,7 +484,7 @@ fi
 
 echo
 echo "--- Sensors and hardware ---"
-GPS_ENABLED="$(prompt_yes_no "Is a GPS module wired to the UART pins (D6/D7)?" "n")"
+GPS_ENABLED="$(prompt_yes_no "Is a GPS module attached (the stacked L76K GNSS board, or one on D6/D7)?" "n")"
 
 echo
 echo "--- Display ---"
@@ -480,6 +497,7 @@ OLED_COL_OFFSET="$(prompt_default "OLED column offset" "0")"
 TURTLE_MODE="false"
 JOKE_MODE="true"
 SERVO_PRESENT="true"
+MORSE_BLESS="false"
 
 # ------------------------------------------------------------
 # Generate config.json
@@ -497,14 +515,18 @@ cat > "$TMP_CONFIG" <<EOF
   "board_type": "xiao_esp32s3",
   "turtle_mode": $TURTLE_MODE,
   "joke_mode": $JOKE_MODE,
+  "morse_bless": $MORSE_BLESS,
   "gps_enabled": $GPS_ENABLED,
+  "gps_module": "l76k",
   "servo_present": $SERVO_PRESENT,
   "oled_col_offset": $OLED_COL_OFFSET,
   "wifi_enabled": $WIFI_ENABLED,
   "wifi_ssid": "$(escape_json_string "$WIFI_SSID")",
   "wifi_password": "$(escape_json_string "$WIFI_PASSWORD")",
+  "telemetry_mode": "$TELEMETRY_MODE",
   "telemetry_enabled": $TELEMETRY_ENABLED,
   "telemetry_post_every_s": $TELEMETRY_POST_EVERY_S,
+  "mission_connection_mode": "$MISSION_CONNECTION_MODE",
   "api_base": "$(escape_json_string "$API_BASE")",
   "device_id": "$(escape_json_string "$DEVICE_ID")",
   "device_key": "$(escape_json_string "$DEVICE_KEY")",
