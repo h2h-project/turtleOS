@@ -289,6 +289,39 @@ ENS160/AHT21 sit on the same I2C bus as the OLED:
   dictionary's names only (no legacy aliases), so the app never sees
   `eco2_ppm`.
 
+#### Server schema
+
+**Bluetooth itself changes nothing on the server.** The radio runs
+between the phone and the AirBuddy. Readings still reach airbuddy-online
+over WiFi through the same ingest, and bonds live on the device
+(`/ble_bonds.json`). What changes the schema is the app: its login, and
+setting up devices from the phone. Migrations go in
+`airbuddy-online/db/migrations/` and are run by hand before the code that
+uses them, as with `005_telemetry_schema.sql` (already done:
+`telemetry_readings_tb.schema_version`).
+
+| Change | For | Needed? |
+|---|---|---|
+| **`app_sessions_tb`** (new): `token_hash` CHAR(64) unique, the user, `client`, `created_at`, `last_used_at`, sliding `expires_at`, `revoked_at`. Copy hopeTurtles.org's `sql/migrations/20261015_app_sessions.sql`, with the foreign key pointing at airbuddy's `users_tb` | D10: the app's bearer tokens (only their SHA-256 is stored) | **Yes**, for anything behind the login |
+| `device_keys_tb.created_via` ENUM('web','app'), and maybe `devices_tb.claimed_at` | D6: knowing which keys the app made, and when a device was claimed | Probably. The existing columns work without them, so the audit trail is the only gain |
+| A pending-claim table (`claim_code_hash`, device, user, `expires_at`) | D6, only if the claim goes through a short-lived code instead of a direct registration | Only for that option |
+| Where a reading came from: a `via` column, or `flags.via` | D9, only if the app uploads readings it pulled over Bluetooth | No if it goes in `flags`, which is already stored verbatim |
+
+**Columns that exist but nothing writes:**
+- `devices_tb.firmware_version` is never written.
+- `devices_tb.device_type` still defaults to `'pico_w'`.
+
+The app can fill both from Device Information (`0x180A`), or the device
+can send them at boot (a `PATCH /api/v1/device` like hopeturtles.org's).
+Either way it needs a writer, not a new column.
+
+**No change needed:**
+- **Time zone (D5):** `homes_tb.time_zone` already exists. Sending the
+  home's zone instead of the owner's from `GET /api/v1/device` is a
+  query change in `src/routes/v1/device.js`.
+- **Advertised name:** the device advertises `devices_tb.device_name`,
+  which `GET /api/v1/device` already returns.
+
 ### Phase 5: the app
 
 - The shared module out of Wrangler (D8), then the AirBuddy app: scan →

@@ -132,6 +132,7 @@ scripts/              ← host-side deploy helpers
   ├── install_airOS.sh    ← first-time setup: flash + configure + upload airOS (curl one-liner)
   ├── sync_turtleOS.sh    ← Synker: re-upload turtleOS firmware to an already-installed device
   ├── sync_airOS.sh       ← Synker: re-upload airOS firmware to an already-installed device
+  ├── config_collection.sh ← sourced by both Synkers: WiFi/device picker from config_collection.json
   ├── xiao_config.example.json    ← committed template (credentials blank)
   ├── xiao_config.json            ← LOCAL, git-ignored: base config installed by sync_turtleOS.sh
   ├── airbuddy_config.example.json ← committed template (credentials blank)
@@ -739,11 +740,12 @@ Option 1 (and the end of options 2/3/4) calls `open_repl()`, which runs `scripts
 
 Option 2 uploads only `config.json` (from `xiao_config.json` / `airbuddy_config.json`) — no firmware staging, no flash-usage report. Option 3 (quick sync) re-uploads the full firmware for any OS code change, also without a flash-usage report. Only option 4 (full sync, or `--fresh`) reports flash usage before/after and offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
 
-**Credentials never go in git.** The repo is public, so `scripts/xiao_config.json`, `scripts/airbuddy_config.json` and `device/config.json` are git-ignored: they hold the WiFi password and `device_key`. Only the `*.example.json` templates are committed. On a fresh clone the Synker copies the example to the local file and stops so you can fill in `wifi_ssid`, `wifi_password`, `device_id` and `device_key`. It also refuses to upload a config whose four credentials are all still blank, which would wipe the board's own. **Config collection (advanced, many turtles):** if `scripts/config_collection.json` exists (git-ignored, local only), options 2–4 of `sync_turtleOS.sh` ask *Choose your WiFi network* and then *Choose your turtle* from numbered lists. The pick overrides those keys of `xiao_config.json`: `wifi_ssid` / `wifi_password` / `timezone_offset_min` for a network, and `device_id` / `device_key` / `api_base` for a turtle (the key only works against its own server). The entry that matches the board's current config is the default, so hitting return keeps the turtle as it is. `device_name` is only kept from the board when the `device_id` stays the same. `--fresh` never asks. Without the file, nothing changes. This replaces per-location copies such as `xiao_config_england.json`.
+**Credentials never go in git.** The repo is public, so `scripts/xiao_config.json`, `scripts/airbuddy_config.json` and `device/config.json` are git-ignored: they hold the WiFi password and `device_key`. Only the `*.example.json` templates are committed. On a fresh clone the Synker copies the example to the local file and stops so you can fill in `wifi_ssid`, `wifi_password`, `device_id` and `device_key`. It also refuses to upload a config whose four credentials are all still blank, which would wipe the board's own. **Config collection (advanced, many devices):** if `scripts/config_collection.json` exists (git-ignored, local only), options 2–4 of both Synkers ask *Choose your WiFi network* and then *Choose your turtle* (`sync_turtleOS.sh`, the `turtles` list) or *Choose your AirBuddy* (`sync_airOS.sh`, the `airbuddies` list) from numbered lists. The `wifi` list is shared. The pick overrides those keys of `xiao_config.json` / `airbuddy_config.json`: `wifi_ssid` / `wifi_password` / `timezone_offset_min` for a network, and `device_id` / `device_key` / `api_base` for a device (the key only works against its own server). The picker and config builder live in `scripts/config_collection.sh`, sourced by both scripts. The entry that matches the board's current config is the default, so hitting return keeps the turtle as it is. `device_name` is only kept from the board when the `device_id` stays the same. `--fresh` never asks. Without the file, nothing changes. This replaces per-location copies such as `xiao_config_england.json`.
 
 ```json
 {"wifi":    [{"wifi_ssid": "", "wifi_password": "", "timezone_offset_min": 60}],
- "turtles": [{"device_id": "", "device_key": "", "api_base": "http://hopeturtles.org"}]}
+ "turtles": [{"device_id": "", "device_key": "", "api_base": "http://hopeturtles.org"}],
+ "airbuddies": [{"device_id": "", "device_key": "", "api_base": "http://air2.earthen.io"}]}
 ```
 
 **Manual mpremote operations:**

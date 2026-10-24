@@ -49,6 +49,9 @@ Options:
   --port PORT     Serial port (default: auto)
   --help          Show this help
 
+If scripts/config_collection.json exists, options 2-4 also ask which WiFi
+network and which AirBuddy (device_id / key) to put on the board.
+
 EOF
 }
 
@@ -365,60 +368,61 @@ fi
 # repo. A fresh clone only has scripts/airbuddy_config.example.json: copy it once and
 # fill in the blanks. Never upload the blank example — it would wipe the
 # board's WiFi and device credentials.
+#
+# scripts/config_collection.json (also git-ignored, advanced users only) holds
+# several WiFi networks and devices. When it exists, options 2-4 ask which
+# network and which AirBuddy (its "airbuddies" list) to put on the board, and
+# those picks override the matching keys of airbuddy_config.json. --fresh
+# never asks.
 
 CONFIG_FILE="$SCRIPTS_DIR/airbuddy_config.json"
 CONFIG_EXAMPLE="$SCRIPTS_DIR/airbuddy_config.example.json"
+COLLECTION_FILE="$SCRIPTS_DIR/config_collection.json"
+USE_COLLECTION=0
+if [[ -f "$COLLECTION_FILE" && "$FRESH" -eq 0 ]]; then
+  USE_COLLECTION=1
+fi
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
   cp "$CONFIG_EXAMPLE" "$CONFIG_FILE" || die "Could not create $CONFIG_FILE from the example."
-  die "Created scripts/airbuddy_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
-fi
-_blank=()
-for _key in wifi_ssid wifi_password device_id device_key; do
-  if grep -Eq "\"$_key\"[[:space:]]*:[[:space:]]*\"\"" "$CONFIG_FILE"; then
-    _blank+=("$_key")
+  if [[ "$USE_COLLECTION" -eq 0 ]]; then
+    die "Created scripts/airbuddy_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
   fi
-done
-if (( ${#_blank[@]} == 4 )); then
-  die "scripts/airbuddy_config.json is still the blank example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
-elif (( ${#_blank[@]} > 0 )); then
-  warn "scripts/airbuddy_config.json has empty: ${_blank[*]} — the board will get blank values."
+  echo "Created scripts/airbuddy_config.json from the example; credentials come from config_collection.json."
+fi
+
+mkdir -p "$TMP_DIR/upload"
+UPLOAD_CONFIG="$TMP_DIR/upload/config.json"   # git-ignored by name, like every config.json
+BOARD_CONFIG="$TMP_DIR/upload/board_config.json"
+"${MPREMOTE_CMD[@]}" fs cat :config.json > "$BOARD_CONFIG" 2>/dev/null || : > "$BOARD_CONFIG"
+
+# ── Choose a WiFi network and an AirBuddy (config_collection.json only) ──────
+# shellcheck source=config_collection.sh
+source "$SCRIPTS_DIR/config_collection.sh"
+
+WIFI_PICK=""
+DEVICE_PICK=""
+if [[ "$USE_COLLECTION" -eq 1 ]]; then
+  pick_from_collection wifi "Choose your WiFi network:" airbuddy_config.json
+  WIFI_PICK="$PICK"
+  pick_from_collection airbuddies "Choose your AirBuddy:" airbuddy_config.json
+  DEVICE_PICK="$PICK"
 fi
 
 # ============================================================
-# Keep what the device saved for itself
+# Build the config.json to upload
 # ============================================================
-# Some config keys are written by the device, not by hand: device_name comes
-# from the server on an online boot. airbuddy_config.json doesn't carry it,
-# so uploading it as-is wiped the name until the next online boot. For each
-# key below, a non-empty value in airbuddy_config.json wins; otherwise the
-# board's current value is kept. Read before anything is uploaded or wiped.
+# airbuddy_config.json, overlaid with the collection picks; device_name is
+# kept from the board for the same device (see build_upload_config).
 
 KEEP_FROM_BOARD=(device_name)
-UPLOAD_CONFIG="$TMP_DIR/upload/config.json"   # git-ignored by name, like every config.json
-mkdir -p "$TMP_DIR/upload"
-"${MPREMOTE_CMD[@]}" fs cat :config.json 2>/dev/null \
-  | python3 -c '
-import json, sys
-local_path, out_path, keys = sys.argv[1], sys.argv[2], sys.argv[3:]
-with open(local_path) as f:
-    cfg = json.load(f)
-try:
-    board = json.loads(sys.stdin.read())
-except Exception:
-    board = {}
-if not isinstance(board, dict):
-    board = {}
-for k in keys:
-    if str(cfg.get(k) or "").strip():
-        continue
-    v = board.get(k)
-    if str(v or "").strip():
-        cfg[k] = v
-        print("Keeping %s %r from the board" % (k, v))
-with open(out_path, "w") as f:
-    json.dump(cfg, f, indent=2)
-' "$CONFIG_FILE" "$UPLOAD_CONFIG" "${KEEP_FROM_BOARD[@]}" \
-  || die "Could not prepare config.json from scripts/airbuddy_config.json (is it valid JSON?)."
+CONFIG_LABEL="$(build_upload_config "$CONFIG_FILE" airbuddies airbuddy "$WIFI_PICK" "$DEVICE_PICK" \
+    "$UPLOAD_CONFIG" "${KEEP_FROM_BOARD[@]}")" || {
+  rc=$?
+  (( rc == 3 )) && die "scripts/airbuddy_config.json is still the blank example. Fill in wifi_ssid, wifi_password, device_id and device_key (or add config_collection.json), then run this again."
+  die "Could not prepare config.json from scripts/airbuddy_config.json (is it valid JSON?)."
+}
+rm -f "$BOARD_CONFIG"
 
 # ============================================================
 # Option 2 — Sync only the config file
@@ -428,7 +432,7 @@ if [[ "$ACTION" == "config" ]]; then
   msg "Uploading config.json only"
   "${MPREMOTE_CMD[@]}" fs cp "$UPLOAD_CONFIG" :config.json \
     || die "Config upload failed. Try reconnecting the board and running again."
-  echo "Config: scripts/airbuddy_config.json → config.json"
+  echo "Config: $CONFIG_LABEL → config.json"
   echo
   echo "  Done!  config.json updated."
 
@@ -468,7 +472,7 @@ rsync -a \
   "$DEVICE_DIR/" "$STAGE_DIR/"
 
 cp "$UPLOAD_CONFIG" "$STAGE_DIR/config.json"
-echo "Config: scripts/airbuddy_config.json → config.json"
+echo "Config: $CONFIG_LABEL → config.json"
 
 # ============================================================
 # Option 3 — Quick sync (any changes to the OS)
