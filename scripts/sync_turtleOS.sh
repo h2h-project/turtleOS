@@ -49,6 +49,9 @@ Options:
   --port PORT     Serial port (default: auto)
   --help          Show this help
 
+If scripts/config_collection.json exists, options 2-4 also ask which WiFi
+network and which turtle (device_id / key) to put on the board.
+
 EOF
 }
 
@@ -370,61 +373,173 @@ fi
 # repo. A fresh clone only has scripts/xiao_config.example.json: copy it once and
 # fill in the blanks. Never upload the blank example — it would wipe the
 # board's WiFi and device credentials.
+#
+# scripts/config_collection.json (also git-ignored, advanced users only) holds
+# several WiFi networks and turtles. When it exists, options 2-4 ask which
+# network and which turtle to put on the board, and those picks override the
+# matching keys of xiao_config.json. --fresh never asks.
 
 CONFIG_FILE="$SCRIPTS_DIR/xiao_config.json"
 CONFIG_EXAMPLE="$SCRIPTS_DIR/xiao_config.example.json"
+COLLECTION_FILE="$SCRIPTS_DIR/config_collection.json"
+USE_COLLECTION=0
+if [[ -f "$COLLECTION_FILE" && "$FRESH" -eq 0 ]]; then
+  USE_COLLECTION=1
+fi
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
   cp "$CONFIG_EXAMPLE" "$CONFIG_FILE" || die "Could not create $CONFIG_FILE from the example."
-  die "Created scripts/xiao_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
-fi
-_blank=()
-for _key in wifi_ssid wifi_password device_id device_key; do
-  if grep -Eq "\"$_key\"[[:space:]]*:[[:space:]]*\"\"" "$CONFIG_FILE"; then
-    _blank+=("$_key")
+  if [[ "$USE_COLLECTION" -eq 0 ]]; then
+    die "Created scripts/xiao_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
   fi
-done
-if (( ${#_blank[@]} == 4 )); then
-  die "scripts/xiao_config.json is still the blank example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
-elif (( ${#_blank[@]} > 0 )); then
-  warn "scripts/xiao_config.json has empty: ${_blank[*]} — the board will get blank values."
+  echo "Created scripts/xiao_config.json from the example; credentials come from config_collection.json."
 fi
 
-# ============================================================
-# Keep what the turtle saved for itself
-# ============================================================
-# Some config keys are written by the turtle, not by hand: device_name comes
-# from hopeturtles.org on an online boot. xiao_config.json doesn't carry it,
-# so uploading it as-is wiped the name and the turtle advertised
-# "Turtle-<id>" until its next online boot. For each key below, a non-empty
-# value in xiao_config.json wins; otherwise the board's current value is
-# kept. Read before anything is uploaded or wiped.
-
-KEEP_FROM_BOARD=(device_name)
-UPLOAD_CONFIG="$TMP_DIR/upload/config.json"   # git-ignored by name, like every config.json
 mkdir -p "$TMP_DIR/upload"
-"${MPREMOTE_CMD[@]}" fs cat :config.json 2>/dev/null \
-  | python3 -c '
+UPLOAD_CONFIG="$TMP_DIR/upload/config.json"   # git-ignored by name, like every config.json
+BOARD_CONFIG="$TMP_DIR/upload/board_config.json"
+"${MPREMOTE_CMD[@]}" fs cat :config.json > "$BOARD_CONFIG" 2>/dev/null || : > "$BOARD_CONFIG"
+
+# ── Choose a WiFi network and a turtle (config_collection.json only) ─────────
+# Lists one section of the collection as a numbered menu and sets PICK to the
+# chosen 0-based index. The entry matching the board's current config is the
+# default, so hitting return keeps the turtle as it is.
+
+pick_from_collection() {
+  local section="$1" heading="$2" lines def n reply i
+  mapfile -t lines < <(python3 - "$COLLECTION_FILE" "$section" "$BOARD_CONFIG" <<'PY'
 import json, sys
-local_path, out_path, keys = sys.argv[1], sys.argv[2], sys.argv[3:]
-with open(local_path) as f:
-    cfg = json.load(f)
+coll_path, section, board_path = sys.argv[1:4]
+with open(coll_path) as f:
+    entries = json.load(f).get(section) or []
 try:
-    board = json.loads(sys.stdin.read())
+    with open(board_path) as f:
+        board = json.load(f)
 except Exception:
     board = {}
 if not isinstance(board, dict):
     board = {}
+key = "wifi_ssid" if section == "wifi" else "device_id"
+default = 1
+labels = []
+for i, e in enumerate(entries, 1):
+    label = str(e.get(key, "?"))
+    if section == "wifi" and e.get("timezone_offset_min") is not None:
+        label += "  (UTC%+g)" % (int(e["timezone_offset_min"]) / 60.0)
+    if section == "turtles" and e.get("api_base"):
+        label += "  (%s)" % e["api_base"]
+    if str(e.get(key, "")) and str(e.get(key)) == str(board.get(key, "")):
+        label += "  <- on the board now"
+        default = i
+    labels.append(label)
+print(default if labels else 0)
+for label in labels:
+    print(label)
+PY
+  )
+  [[ -n "${lines[0]:-}" ]] || die "Could not read scripts/config_collection.json (is it valid JSON?)."
+
+  def="${lines[0]}"
+  n=$(( ${#lines[@]} - 1 ))
+  if (( n < 1 )); then
+    PICK=""
+    echo "config_collection.json has no \"$section\" entries — using scripts/xiao_config.json."
+    return
+  fi
+  echo
+  echo "$heading  (Hit return for option $def)"
+  for (( i = 1; i <= n; i++ )); do
+    echo "  $i. ${lines[$i]}"
+  done
+  echo
+  while true; do
+    read -r -p "Enter 1-$n: " reply
+    reply="${reply:-$def}"
+    if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= n )); then
+      PICK=$(( reply - 1 ))
+      return
+    fi
+    echo "  (Please enter a number from 1 to $n.)"
+  done
+}
+
+WIFI_PICK=""
+TURTLE_PICK=""
+if [[ "$USE_COLLECTION" -eq 1 ]]; then
+  pick_from_collection wifi "Choose your WiFi network:"
+  WIFI_PICK="$PICK"
+  pick_from_collection turtles "Choose your turtle:"
+  TURTLE_PICK="$PICK"
+fi
+
+# ============================================================
+# Build the config.json to upload
+# ============================================================
+# xiao_config.json, overlaid with the collection picks. Then some keys are
+# kept from the board because the turtle wrote them itself: device_name
+# comes from hopeturtles.org on an online boot, and xiao_config.json doesn't
+# carry it, so uploading as-is wiped the name and the turtle advertised
+# "Turtle-<id>" until its next online boot. A non-empty local value wins, and
+# nothing is kept when the upload gives the board a different device_id —
+# the old turtle's name doesn't belong to the new one.
+
+KEEP_FROM_BOARD=(device_name)
+CONFIG_LABEL="$(WIFI_PICK="$WIFI_PICK" TURTLE_PICK="$TURTLE_PICK" python3 - \
+    "$CONFIG_FILE" "$BOARD_CONFIG" "$COLLECTION_FILE" "$UPLOAD_CONFIG" "${KEEP_FROM_BOARD[@]}" <<'PY'
+import json, os, sys
+local_path, board_path, coll_path, out_path = sys.argv[1:5]
+keys = sys.argv[5:]
+with open(local_path) as f:
+    cfg = json.load(f)
+try:
+    with open(board_path) as f:
+        board = json.load(f)
+except Exception:
+    board = {}
+if not isinstance(board, dict):
+    board = {}
+
+label = "scripts/xiao_config.json"
+picks = []
+for section, env in (("wifi", "WIFI_PICK"), ("turtles", "TURTLE_PICK")):
+    idx = os.environ.get(env, "")
+    if idx == "":
+        continue
+    with open(coll_path) as f:
+        entry = json.load(f)[section][int(idx)]
+    cfg.update({k: v for k, v in entry.items() if not k.startswith("_")})
+    picks.append(entry.get("wifi_ssid") if section == "wifi" else "turtle " + str(entry.get("device_id")))
+if picks:
+    label += " + " + " / ".join(picks)
+
+same_turtle = str(cfg.get("device_id", "")) == str(board.get("device_id", ""))
 for k in keys:
-    if str(cfg.get(k) or "").strip():
+    if str(cfg.get(k) or "").strip() or not same_turtle:
         continue
     v = board.get(k)
     if str(v or "").strip():
         cfg[k] = v
-        print("Keeping %s %r from the board" % (k, v))
+        print("Keeping %s %r from the board" % (k, v), file=sys.stderr)
+
+blank = [k for k in ("wifi_ssid", "wifi_password", "device_id", "device_key")
+         if not str(cfg.get(k) or "").strip()]
+if len(blank) == 4:
+    print("BLANK", file=sys.stderr)
+    sys.exit(3)
+if blank:
+    print("WARNING: config.json has empty: %s — the board will get blank values." % " ".join(blank),
+          file=sys.stderr)
+
 with open(out_path, "w") as f:
     json.dump(cfg, f, indent=2)
-' "$CONFIG_FILE" "$UPLOAD_CONFIG" "${KEEP_FROM_BOARD[@]}" \
-  || die "Could not prepare config.json from scripts/xiao_config.json (is it valid JSON?)."
+print(label)
+PY
+)" || {
+  rc=$?
+  (( rc == 3 )) && die "scripts/xiao_config.json is still the blank example. Fill in wifi_ssid, wifi_password, device_id and device_key (or add config_collection.json), then run this again."
+  die "Could not prepare config.json from scripts/xiao_config.json (is it valid JSON?)."
+}
+rm -f "$BOARD_CONFIG"
 
 # ============================================================
 # Option 2 — Sync only the config file
@@ -434,7 +549,7 @@ if [[ "$ACTION" == "config" ]]; then
   msg "Uploading config.json only"
   "${MPREMOTE_CMD[@]}" fs cp "$UPLOAD_CONFIG" :config.json \
     || die "Config upload failed. Try reconnecting the board and running again."
-  echo "Config: scripts/xiao_config.json → config.json"
+  echo "Config: $CONFIG_LABEL → config.json"
   echo
   echo "  Done!  config.json updated."
 
@@ -474,7 +589,7 @@ rsync -a \
   "$DEVICE_DIR/" "$STAGE_DIR/"
 
 cp "$UPLOAD_CONFIG" "$STAGE_DIR/config.json"
-echo "Config: scripts/xiao_config.json → config.json"
+echo "Config: $CONFIG_LABEL → config.json"
 
 # ============================================================
 # Option 3 — Quick sync (any changes to the OS)

@@ -52,6 +52,14 @@ and the planned app API. This section is the one list of what each shared
 value **means**. The contract below says how a value is laid out on the
 wire; it doesn't redefine it.
 
+**It is also the AirBuddy's dictionary.** airOS is the same firmware with
+`turtle_mode: false` and posts the same telemetry JSON to air2.earthen.io
+(airbuddy-online). Every field below means the same thing whichever device
+sends it and whichever server stores it; the air-quality fields are under
+[Air quality](#air-quality-airos). A future AirBuddy Bluetooth service and
+app ([airbuddy_app_roadmap.md](../airbuddy_app_roadmap.md)) take their
+names from here too.
+
 ### Rules
 
 - **One name per value.** The telemetry JSON name is the canonical name
@@ -86,12 +94,12 @@ characteristic and field. "—" means that surface doesn't carry it.
 
 | Name | Meaning, unit | JSON | GATT v1 | On the turtle |
 |---|---|---|---|---|
-| `schema` | telemetry JSON version; absent = 1 | top-level `schema` (2 since Phase B) | `0101` `contract_version` is the wire's own | scheduler |
+| `schema` | telemetry JSON version; absent = 1 | top-level `schema` (2 since Phase B; airbuddy-online stores it as `schema_version`) | `0101` `contract_version` is the wire's own | scheduler |
 | `recorded_at` | when a reading was taken, unix s | top-level `recorded_at` | — | `TelemetryScheduler._now_unix_seconds()` |
 | `device_now` | the turtle's clock now, unix s; 0 = not synced | — | `0117` `device_now` | RTC |
 | `device_clock` | the clock whatever it says, unix s | — | `0117` `device_clock` | system clock |
 | `clock_source` | what set the clock: 0 not set · 1 RTC · 2 NTP · 3 GPS · 4 phone | — | `0117` | `clock_source` |
-| `tz_offset_min` | local zone, minutes from UTC; display only | — (server: `GET /v1/device` → `tz_offset_min`) | `0117` | config `timezone_offset_min` |
+| `tz_offset_min` | local zone, minutes from UTC; display only | — (server: `GET /v1/device` → `tz_offset_min`; **airOS** adopts it, from the owner's account; a turtle ignores it and takes `TIMEZONE_SET`) | `0117` | config `timezone_offset_min` |
 | `device_id` | the turtle's identity | header `X-Device-Id` | Device Information `Serial Number` | config |
 
 **Position** (always the turtle's own GPS, never a phone's)
@@ -108,7 +116,7 @@ characteristic and field. "—" means that surface doesn't carry it.
 
 | Name | Meaning, unit | JSON | GATT v1 | On the turtle |
 |---|---|---|---|---|
-| `machine_state` | BOOT · ACQUIRE · SAIL_NAV · ARRIVAL · SAFE | top-level, string | `0111` `nav_state` u8, 0–4 in that order | `state_machine.get_state()` |
+| `machine_state` | BOOT · ACQUIRE · SAIL_NAV · ARRIVAL · SAFE | top-level, string; turtle mode only (airOS omits it) | `0111` `nav_state` u8, 0–4 in that order | `state_machine.get_state()` |
 | `imu_heading` | heading, degrees true, `compass_offset_deg` applied | `imu_heading` | `0111` `heading_x10` | NavController heading |
 | `compass_offset_deg` | offset already in `imu_heading`, −180…180 | — | `0111` | config |
 | `bearing_to_target` | degrees | — | `0111` `bearing_to_target_x10` | NavController |
@@ -167,7 +175,37 @@ server's coulomb-counted `battery_soc_pct` is a server value, not
 | `bmp_alt_m` | ISA altitude from pressure, m; a sanity number | `bmp_alt_m` | — | GY87 |
 | `aht_temp`, `aht_humidity` | bottle air, °C and %RH (AHT21, else AHT10) | `aht_temp`, `aht_humidity` | `0118` `aht_temp_x10`, `aht_rh_x10` | `AirSensor` |
 | `rtc_temp` | board (DS3231 die) temperature, °C | `rtc_temp` | `0118` `rtc_temp_x10` | RTC |
-| `bme_*`, `ens_*`, `scd_*` | airOS air-quality sensors | `values` | — (BLE is turtleOS-only) | `AirSensor` |
+
+**Air quality (airOS)**
+
+The AirBuddy's sensors, read by `AirSensor` (`src/sensors/air.py`) and
+put into `values` by `TelemetryScheduler._build_payload_parts()`. A turtle
+carrying the same sensor sends the same key. No Bluetooth column: BLE is
+turtle-mode only today (see the roadmap). Each sensor's keys appear only
+when that sensor is fitted and gave a reading.
+
+| Name | Meaning, unit | JSON | GATT v1 | On the device |
+|---|---|---|---|---|
+| `ens_eco2` | equivalent CO2, ppm (ENS160, 0x53): estimated from VOCs, **not** a CO2 measurement; ≥ 400 | `ens_eco2` (int) | — | `ENS160.read_air_raw()`; only sent when > 0 |
+| `ens_tvoc` | total VOCs, ppb (ENS160) | `ens_tvoc` (int) | — | as above; **omitted at 0**, so a missing `ens_tvoc` beside an `ens_eco2` means clean air, not "no sensor" |
+| `ens_aqi` | ENS160 air quality index (UBA), 1 excellent … 5 unhealthy; the OLED rates 1 "Very good", 2 "Good", 3 "Ok", 4–5 "Poor" | `ens_aqi` (int) | — | only sent alongside `ens_eco2` |
+| `aht_temp`, `aht_humidity` | air temperature °C, relative humidity %RH (AHT21 at 0x38, else AHT10); also feed the ENS160's compensation | `aht_temp`, `aht_humidity` | `0118` (turtle) | omitted at exactly 0 |
+| `bme_temp`, `bme_humidity`, `bme_pressure` | °C, %RH, hPa (BME280 at 0x76/0x77; 0x77 only when chip-ID says BME/BMP280, see CLAUDE.md gotcha 17) | `bme_temp`, `bme_humidity`, `bme_pressure` | — | omitted at 0 |
+| `scd_co2` | CO2, ppm (SCD41 at 0x62): a real NDIR measurement, unlike `ens_eco2` | `scd_co2` (int) | — | only sent when > 0 |
+| `scd_temp`, `scd_humidity` | °C, %RH (SCD41's own sensor; runs warm, prefer `aht_*` for the room) | `scd_temp`, `scd_humidity` | — | |
+| `sensor_confidence` | trust in this ENS160 reading, 1–100: ENS ready, warmup done, temp/RH plausible, steady eCO2 and AQI | `confidence.sensor_confidence` | — | `calculate_co2_confidence()` |
+
+**Legacy names, read-only.** Early AirBuddy firmware sent `eco2_ppm`,
+`tvoc_ppb`, `aqi`, `temp_c`, `rh_pct` and `rtc_temp_c`. airbuddy-online's
+`/api/v1/trends` still falls back to them for old rows, and the firmware
+maps all but `rtc_temp_c` to the names above when it re-reads a queued
+reading. Nothing
+writes them any more and nothing new should read them first.
+
+**Server gate.** airbuddy-online drops a reading (HTTP 202, `ignored`)
+when `aht_temp`, `aht_humidity` or `ens_eco2` is exactly 0, or every
+numeric value is 0: boot garbage. The firmware omits those zeros, so
+this only catches older firmware.
 
 **Status and shore**
 
@@ -177,7 +215,7 @@ server's coulomb-counted `battery_soc_pct` is a server value, not
 | `queue_count` | readings waiting to be sent | — | `0116` | `telemetry_queue.json` lines |
 | `last_shore_sync` | last successful POST, unix s; 0 = never | — | `0117` | `TelemetryState.get_last_sent()` |
 | `telemetry_mode`, `telemetry_post_every_s`, `connection_mode` | config | — | `0116` | config |
-| `sensor_confidence` | airOS sensor confidence, % | `confidence.sensor_confidence` | — | `AirSensor` |
+| `sensor_confidence` | airOS sensor confidence, 1–100 (see [Air quality](#air-quality-airos)) | `confidence.sensor_confidence` | — | `AirSensor` |
 
 ### Gaps the v2 plan closes
 

@@ -4,7 +4,7 @@ turtleOS is a MicroPython firmware for the **Seeed Studio XIAO ESP32-S3** — th
 
 The XIAO's MicroPython build places the Python heap in its **8 MB Octal PSRAM** (~7,998 KB total; ~7,996 KB free after a full boot). Memory is **not** a practical constraint on this hardware — see [Memory headroom](#memory-headroom-xiao-esp32-s3). The Raspberry Pi Pico W and basic ESP32 are no longer deployment targets; their HAL files remain in the tree as legacy/portability artifacts only.
 
-**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air.earthen.io`. The Hardware Abstraction Layer keeps board-specific code isolated in `src/hal/` so the firmware could be ported to future hardware without rewriting application code — but only the XIAO HAL is actively maintained and tested.
+**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air2.earthen.io` (the **airbuddy-online** server, checked out at `/home/russs/WebstormProjects/airbuddy-online`; dashboard SPA in `airbuddy-spa`). It sends the same telemetry JSON v2 as turtleOS, with field names from the shared data dictionary in `docs/wrangler/README.md`. Bluetooth in airOS and an AirBuddy app are planned in `docs/airbuddy_app_roadmap.md`. The Hardware Abstraction Layer keeps board-specific code isolated in `src/hal/` so the firmware could be ported to future hardware without rewriting application code — but only the XIAO HAL is actively maintained and tested.
 
 ---
 
@@ -411,7 +411,7 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 ## The backend API server (`hopeturtles.org`)
 
 In turtle_mode the firmware talks to the Hope Turtle tracking platform
-(`api_base: "http://hopeturtles.org"`; airOS talks to `http://air.earthen.io`
+(`api_base: "http://hopeturtles.org"`; airOS talks to `http://air2.earthen.io`
 instead — a different codebase). **The server that hosts this API is checked out
 on this same machine** at:
 
@@ -593,7 +593,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `telemetry_enabled` | bool | `true` | derived mirror of `telemetry_mode != "off"`, rebuilt on every load; writers must set `telemetry_mode` |
 | `telemetry_post_every_s` | int | `120` | min 10 |
 | `journey_log_every_s` | int | `0` | while a journey is open, log at least this often; 0 = off, min 10 |
-| `api_base` | str | `"http://air.earthen.io"` | always HTTP — `https://` is stripped |
+| `api_base` | str | `""` | always HTTP — `https://` is stripped; `http://hopeturtles.org` (turtleOS) or `http://air2.earthen.io` (airOS) |
 | `device_id` | str | `""` | |
 | `device_key` | str | `""` | |
 | `device_name` | str | `""` | human-readable turtle name (`turtles_tb.name`, sent as `device_name` by `GET /v1/device`); Bluetooth advertises it |
@@ -602,7 +602,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `ble_require_bond` | bool | `true` | Bluetooth commands need a bonded link; `false` for bench development only |
 | `mission_connection_mode` | str | `"wifi_auto"` | how records are **shipped**: `"wifi_auto"` = association attempts on exponential backoff (15 min → 12 h cap); `"wifi_manual"` = only a triple-click ever connects; `"lora"` reserved. Orthogonal to `telemetry_mode`, which governs when records are **created**. |
 | `gps_enabled` | bool | `false` | |
-| `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840 |
+| `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840. turtleOS: set from the phone (`TIMEZONE_SET`), never from the server. airOS: synced from air2's `GET /api/v1/device` (the owner's account zone) at boot and on the Time screen |
 | `compass_offset_deg` | int | `0` | magnetic declination correction |
 | `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
 | `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
@@ -739,7 +739,12 @@ Option 1 (and the end of options 2/3/4) calls `open_repl()`, which runs `scripts
 
 Option 2 uploads only `config.json` (from `xiao_config.json` / `airbuddy_config.json`) — no firmware staging, no flash-usage report. Option 3 (quick sync) re-uploads the full firmware for any OS code change, also without a flash-usage report. Only option 4 (full sync, or `--fresh`) reports flash usage before/after and offers to set the DS3231 RTC from host system time (UTC) after a hard reset.
 
-**Credentials never go in git.** The repo is public, so `scripts/xiao_config.json`, `scripts/airbuddy_config.json` and `device/config.json` are git-ignored: they hold the WiFi password and `device_key`. Only the `*.example.json` templates are committed. On a fresh clone the Synker copies the example to the local file and stops so you can fill in `wifi_ssid`, `wifi_password`, `device_id` and `device_key`. It also refuses to upload a config whose four credentials are all still blank, which would wipe the board's own. Keep per-location variants (e.g. `xiao_config_england.json`) untracked too.
+**Credentials never go in git.** The repo is public, so `scripts/xiao_config.json`, `scripts/airbuddy_config.json` and `device/config.json` are git-ignored: they hold the WiFi password and `device_key`. Only the `*.example.json` templates are committed. On a fresh clone the Synker copies the example to the local file and stops so you can fill in `wifi_ssid`, `wifi_password`, `device_id` and `device_key`. It also refuses to upload a config whose four credentials are all still blank, which would wipe the board's own. **Config collection (advanced, many turtles):** if `scripts/config_collection.json` exists (git-ignored, local only), options 2–4 of `sync_turtleOS.sh` ask *Choose your WiFi network* and then *Choose your turtle* from numbered lists. The pick overrides those keys of `xiao_config.json`: `wifi_ssid` / `wifi_password` / `timezone_offset_min` for a network, and `device_id` / `device_key` / `api_base` for a turtle (the key only works against its own server). The entry that matches the board's current config is the default, so hitting return keeps the turtle as it is. `device_name` is only kept from the board when the `device_id` stays the same. `--fresh` never asks. Without the file, nothing changes. This replaces per-location copies such as `xiao_config_england.json`.
+
+```json
+{"wifi":    [{"wifi_ssid": "", "wifi_password": "", "timezone_offset_min": 60}],
+ "turtles": [{"device_id": "", "device_key": "", "api_base": "http://hopeturtles.org"}]}
+```
 
 **Manual mpremote operations:**
 ```bash

@@ -1269,6 +1269,14 @@ def step_api():
             _dn = str(info.get("device_name") or "").strip()
             if _dn:
                 _updates["device_name"] = _dn
+            # airOS takes its time zone from the server: air2.earthen.io
+            # derives it from the owner's account and an AirBuddy has no
+            # phone to set it. A turtle never does (its zone comes from
+            # Wrangler's TIMEZONE_SET; hopeturtles.org has no per-turtle zone).
+            if cfg is not None and not cfg.get("turtle_mode", True):
+                _tz = info.get("tz_offset_min")
+                if _tz is not None:
+                    _updates["timezone_offset_min"] = int(_tz)
             if _updates and cfg is not None:
                 _changed = any(cfg.get(k) != v for k, v in _updates.items())
                 if _changed:

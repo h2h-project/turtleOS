@@ -28,6 +28,8 @@ backups/
 # versions instead; the sync scripts copy those on a fresh clone.
 scripts/xiao_config.json
 scripts/xiao_config_england.json
+# Advanced: several WiFi networks + turtles to pick from in sync_turtleOS.sh
+scripts/config_collection.json
 scripts/airbuddy_config.json
 # Device-owned runtime data pulled off the board (never sync back)
 device/telemetry_queue.json

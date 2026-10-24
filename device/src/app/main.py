@@ -808,12 +808,15 @@ def run(
 
     # A screen polls the button only between _bg_tick() calls, so a slow
     # tick makes every click feel late. Any tick over this many ms is logged
-    # as [SLOW] with a per-stage breakdown (gc / telemetry / nav / ble).
+    # as [SLOW] with a per-stage breakdown (telemetry / nav / ble).
     _SLOW_TICK_MS = 40
 
+    # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
+    # walks the whole heap (~50 ms each), and the two that used to bracket
+    # tick_telemetry() cost ~100 ms of every tick, long enough to swallow a
+    # click. MicroPython's automatic collection is plenty at this headroom.
     def _bg_tick():
         t0 = time.ticks_ms()
-        t_gc = 0
         t_tel = t_nav = t_ble = t0
         try:
             # Skip wlan.isconnected() when background_process is active — it blocks
@@ -822,15 +825,9 @@ def run(
             if _background_process is None:
                 status["wifi_ok"] = bool(wifi.is_connected())
             start_telemetry_if_ready(_cfg_cell[0])
-            g = time.ticks_ms()
-            _gc()
-            t_gc = time.ticks_diff(time.ticks_ms(), g)
             t_tel = time.ticks_ms()
             tick_telemetry(_cfg_cell[0])
             t_tel = time.ticks_diff(time.ticks_ms(), t_tel)
-            g = time.ticks_ms()
-            _gc()
-            t_gc += time.ticks_diff(time.ticks_ms(), g)
         except Exception:
             t_tel = 0
         t_nav = time.ticks_ms()
@@ -852,8 +849,8 @@ def run(
         t_ble = time.ticks_diff(time.ticks_ms(), t_ble)
         total = time.ticks_diff(time.ticks_ms(), t0)
         if total >= _SLOW_TICK_MS:
-            print("[SLOW] bg_tick {}ms  gc={} telemetry={} nav={} ble={}".format(
-                total, t_gc, t_tel, t_nav, t_ble))
+            print("[SLOW] bg_tick {}ms  telemetry={} nav={} ble={}".format(
+                total, t_tel, t_nav, t_ble))
 
     # ========================================================
     # Idle callback — defined ONCE here, uses _cfg_cell so

@@ -760,12 +760,15 @@ class TelemetryScheduler:
             pass
 
         # Machine state (BOOT/ACQUIRE/SAIL_NAV/ARRIVAL/SAFE) — top-level so
-        # the server maps it to a real column.
-        try:
-            from src.nav.state_machine import get_state as _nav_get_state
-            payload["machine_state"] = _nav_get_state()
-        except Exception:
-            pass
+        # the server maps it to a real column. Turtle mode only: airOS never
+        # runs the nav state machine, so it would always say BOOT, and the
+        # data dictionary leaves out a value there is no data for.
+        if cfg and cfg.get("turtle_mode", False):
+            try:
+                from src.nav.state_machine import get_state as _nav_get_state
+                payload["machine_state"] = _nav_get_state()
+            except Exception:
+                pass
 
         if gps_lat is not None and gps_lon is not None:
             payload["lat"] = gps_lat

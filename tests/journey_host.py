@@ -53,6 +53,7 @@ s.tick(cfg)
 assert len(built) == 1, built
 p = built[0]
 assert p["schema"] == 2 and p["flags"]["journey_event"] == "start" and p["flags"]["journey"]["id"] == 1790930000, p
+assert p["machine_state"] == "BOOT", p             # turtle mode: nav state rides along
 assert "journey_id" not in p["flags"], p          # nothing open now
 s.tick(cfg)                                        # within 10 s: no retry yet
 assert len(built) == 1
@@ -168,3 +169,17 @@ assert journey.track_count(oldest) == 1
 journey._events.clear(); journey.end(None)          # closes jid: oldest falls off
 assert journey.track_count(oldest) == 0 and journey.track_count(jid) == 30
 print("journeys over Bluetooth: OK")
+
+# airOS: same payload shape, but no machine_state (the nav state machine
+# never runs there, so it would always say BOOT).
+journey._events.clear(); journey.end(None)
+class AirR:
+    def read_quick(self, source=None): return object()
+s3 = TelemetryScheduler(AirR())
+s3._build_payload_parts = lambda r, rtc_temp_c=None: ({"ens_eco2": 612, "aht_temp": 21.5}, {"sensor_confidence": 80})
+s3._now_unix_seconds = lambda: now[0]
+s3._read_gps_fix = lambda: (None, None)
+p = s3._build_full_payload({"turtle_mode": False}, None)
+assert p["schema"] == 2 and p["values"]["ens_eco2"] == 612 and "machine_state" not in p, p
+assert "journey_id" not in p["flags"] and p["confidence"] == {"sensor_confidence": 80}, p
+print("airOS payload: OK")

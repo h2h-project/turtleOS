@@ -133,7 +133,13 @@ class TimeScreen:
         if not (api_base and device_id and device_key):
             return
 
-        url = api_base.rstrip("/") + "/v1/device?compact=1"
+        # Same rule as the boot step: api_base may or may not end in /api
+        # (air2.earthen.io mounts the device API only under /api/v1).
+        api_base = api_base.rstrip("/")
+        if api_base.endswith("/api"):
+            url = api_base + "/v1/device?compact=1"
+        else:
+            url = api_base + "/api/v1/device?compact=1"
         headers = {
             "X-Device-Id": str(device_id),
             "X-Device-Key": str(device_key),
@@ -154,6 +160,15 @@ class TimeScreen:
             # The turtle's time zone is NOT taken from the server: it has no
             # per-turtle setting (it came from the account) and overwrote what
             # the phone set. timezone_offset_min comes from config / TIMEZONE_SET.
+            # airOS is the other way round: air2.earthen.io derives the zone
+            # from the owner's account, and an AirBuddy has no phone.
+            if not self.cfg.get("turtle_mode", True):
+                tz_off = data.get("tz_offset_min", data.get("timezone_offset_min"))
+                if tz_off is not None and int(tz_off) != self._tz_min():
+                    from src.app import actions
+                    saved = actions.write_config({"timezone_offset_min": int(tz_off)})
+                    if saved:
+                        self.cfg["timezone_offset_min"] = saved.get("timezone_offset_min")
 
             # RTC sync from server epoch
             ts_ms = data.get("ts", None)
