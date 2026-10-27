@@ -1,4 +1,6 @@
-# src/ui/screens/servo.py  (MicroPython / Pico-safe)
+# src/ui/screens/servo.py
+# Servo + luff-wind-finder screen for TurtleOS.
+# MicroPython / XIAO ESP32-S3 safe
 
 import time
 import gc
@@ -10,86 +12,171 @@ except Exception:
 
 
 # --------------------------------------------------------------------
-# Simple raw servo test settings
+# Servo hardware configuration
 # --------------------------------------------------------------------
-# Normal hobby servo signal:
-#   50 Hz PWM
-#   ~1000 us = one end   (0 deg)
-#   ~1500 us = centre    (90 deg)
-#   ~2000 us = other end (180 deg)
 #
-# The test runs TWO legs:
-#   A -> B over SERVO_LEG_MS, then B -> A over SERVO_LEG_MS
-# where A/B straddle SERVO_HOME_DEG by SERVO_SWEEP_DEG/2.
+# Calibrated safe positional range:
 #
-# Step size matters more than step rate. An MG996R is analogue and has a
-# deadband of roughly 5-10 us (~1-2 deg): command increments near that size
-# make the motor hunt back and forth without the horn making real progress.
-# The high-speed pinion is very visibly moving while the ~250:1-reduced
-# output creeps. SERVO_STEP_DEG keeps every increment decisively above the
-# deadband so each step is a real slew.
+#     500 us  -> one endpoint
+#     2500 us -> opposite endpoint
+#
+# The range actually swept comes from config servo_min_us / servo_max_us
+# (per servo model). The luff-test algorithm lives in wind_finder.py;
+# ServoScreen remains the UI + hardware-access layer.
+# --------------------------------------------------------------------
+
 SERVO_PWM_HZ = 50
 
-SERVO_MIN_US = 1000
-SERVO_MAX_US = 2000
-SERVO_RANGE_DEG = 180
+# Wide emergency software clamp. The actual luff sweep range (500-2500 us)
+# is owned and tuned in wind_finder.py.
+SERVO_HARD_MIN_US = 400
+SERVO_HARD_MAX_US = 2600
 
-SERVO_HOME_DEG = 90       # centre of the sweep
-SERVO_SWEEP_DEG = 90      # total travel per leg
-SERVO_LEG_MS = 4000       # time to cover one leg (ramp mode)
-SERVO_STEP_DEG = 3.0      # command increment (~17 us, well past deadband)
+# Wait this long after the double click before starting the sweep.
+WIND_TEST_DELAY_MS = 500
 
-SERVO_START_SETTLE_MS = 800
-SERVO_END_HOLD_MS = 800
+# After a sweep: drive back to the middle of the range, give it time to get there, then stop
+# sending pulses. The sweep ends on SWEEP_MAX_US (2500 us), and leaving that
+# pulse running holds a servo against its end stop (a narrower-range servo
+# stalls and buzzes indefinitely; a continuous-rotation one never stops
+# spinning) until the screen is left.
+SERVO_PARK_SETTLE_MS = 700
 
-# Test mode:
-#   "endpoints" - bang-bang. Commands the full mechanical range as a single
-#                 instantaneous jump and holds, so the servo slews at its own
-#                 maximum rate (MG996R: ~0.17 s/60 deg, i.e. 180 deg in ~0.5 s).
-#                 This is the most aggressive command a servo can be given, and
-#                 therefore the decisive test: if the horn does not reach its
-#                 stops under this, no command shape will move it and the fault
-#                 is mechanical or electrical, not in this file.
-#   "ramp"      - timed SERVO_SWEEP_DEG sweep over SERVO_LEG_MS each way.
-#                 Use once the servo is known good and you want to watch
-#                 controlled sail-speed motion.
-SERVO_TEST_MODE = "endpoints"
+# Cosmetic gear animation: four rotations over one complete sweep.
+GEAR_ROTATION_TURNS = 4.0
 
-SERVO_BANG_LO_DEG = 0
-SERVO_BANG_HI_DEG = 180
-SERVO_BANG_HOLD_MS = 1500   # dwell at each end; must exceed full-range slew time
-SERVO_BANG_CYCLES = 3
 
-SERVO_DEINIT_AFTER_TEST = True
+def _fmt_ma(value):
+    if value is None:
+        return "---mA"
+    return "{:.0f}mA".format(float(value))
+
+
+def _fmt_deg(value):
+    if value is None:
+        return "--- deg"
+    return "{:.1f} deg".format(float(value))
 
 
 class ServoScreen:
-    def __init__(self, oled, servo_pin=None):
+
+    def __init__(self, oled, servo_pin=None, i2c=None, ina=None):
         self.oled = oled
         self._pin = servo_pin
 
-        self._connected = None         # None=unchecked, True=PWM OK, False=failed
-        self._servo_configured = None  # config servo_present flag
+        self._i2c = i2c
+        self._ina = ina
+        self._as5600 = None
 
-    # ----------------------------
-    # Probe
-    # ----------------------------
+        self._connected = None
+        self._servo_configured = None
+        self._min_us = 500
+        self._max_us = 2500
+
+        self._last_current_ma = None
+        self._last_angle_deg = None
+
+        # Persistent PWM while this screen is active.
+        self._pwm = None
+
+        # Completed wind result remains visible until another action.
+        self._wind_result = None
+        self._view = "normal"
+
+
+    # ----------------------------------------------------------------
+    # INA219 access
+    # ----------------------------------------------------------------
+
+    def _get_ina(self):
+        if self._ina is not None:
+            return self._ina
+
+        if self._i2c is None:
+            return None
+
+        try:
+            from src.drivers.ina219 import INA219
+            ina = INA219(self._i2c, auto_init=True)
+
+            if ina.is_present:
+                self._ina = ina
+
+        except Exception:
+            pass
+
+        return self._ina
+
+
+    def _read_current_ma(self):
+        ina = self._get_ina()
+
+        if ina is None or not getattr(ina, "is_present", False):
+            return None
+
+        try:
+            value = ina.current_ma()
+            self._last_current_ma = value
+            return value
+
+        except Exception:
+            return None
+
+
+    # ----------------------------------------------------------------
+    # AS5600 access
+    # ----------------------------------------------------------------
+
+    def _get_as5600(self):
+        if self._as5600 is not None:
+            return self._as5600
+
+        if self._i2c is None:
+            return None
+
+        try:
+            from src.drivers.as5600 import AS5600
+            sensor = AS5600(self._i2c)
+
+            if sensor.is_present:
+                self._as5600 = sensor
+
+        except Exception:
+            pass
+
+        return self._as5600
+
+
+    def _read_angle_deg(self):
+        """
+        Read the filtered AS5600 angle.
+
+        A valid angle() result is accepted directly. STATUS.MD is diagnostic
+        only; it does not gate the angle reading.
+        """
+
+        sensor = self._get_as5600()
+
+        if sensor is None or not getattr(sensor, "is_present", False):
+            return None
+
+        try:
+            value = sensor.angle()
+
+            if value is not None:
+                self._last_angle_deg = value
+
+            return value
+
+        except Exception:
+            return None
+
+
+    # ----------------------------------------------------------------
+    # Servo probe
+    # ----------------------------------------------------------------
 
     def _probe(self):
-        """
-        Check config + PWM initialisation.
-
-        Important:
-        This does NOT physically detect a servo.
-
-        A normal hobby servo has:
-          - power
-          - ground
-          - signal input
-
-        It has no data return line. So software cannot directly know whether
-        the servo is actually attached. cfg["servo_present"] is authoritative.
-        """
         if self._pin is None:
             self._connected = False
             self._servo_configured = False
@@ -99,38 +186,51 @@ class ServoScreen:
             from config import load_config
             cfg = load_config() or {}
             self._servo_configured = bool(cfg.get("servo_present", False))
+            self._min_us = int(cfg.get("servo_min_us", 500))
+            self._max_us = int(cfg.get("servo_max_us", 2500))
+
         except Exception:
             self._servo_configured = False
 
-        if not self._servo_configured:
-            self._connected = False
-            return
+        # No trial PWM here: PWM init always succeeds on ESP32-S3, so it proves
+        # nothing, and a create+deinit on GPIO7 tears down the LEDC channel the
+        # NavController's Servo already holds on the same pin.
+        self._connected = self._servo_configured
 
-        try:
-            from machine import Pin, PWM
-            pwm = PWM(Pin(self._pin))
-            pwm.freq(SERVO_PWM_HZ)
-            pwm.deinit()
-            self._connected = True
-        except Exception:
-            self._connected = False
 
-    # ----------------------------
+    # ----------------------------------------------------------------
     # Drawing
-    # ----------------------------
+    # ----------------------------------------------------------------
 
-    def _draw(self, status_override=None, gear_rotation_rad=0.0):
+    def _draw(
+        self,
+        status_override=None,
+        current_ma=None,
+        angle_deg=None,
+        gear_rotation_rad=0.0,
+    ):
+        """
+        Normal Servo screen.
+
+        Left:
+            status
+            servo current
+            AS5600 angle
+
+        Right:
+            servo gear
+        """
+
         o = self.oled
         fb = o.oled
         fb.fill(0)
 
         if _ch:
             try:
-                _ch.draw(fb, o.width, icon_y=1)
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
             except Exception:
                 pass
 
-        # Title
         o.f_arvo20.write("Servo", 0, 0)
 
         try:
@@ -146,7 +246,6 @@ class ServoScreen:
         body_y = title_h + 4
         line_h = med_h + 3
 
-        # Status line
         if status_override is not None:
             status = status_override
         elif self._connected is None:
@@ -162,10 +261,27 @@ class ServoScreen:
 
         o.f_med.write(status, 0, body_y)
 
-        if self._pin is not None:
-            o.f_med.write("D8 / GPIO{}".format(self._pin), 0, body_y + line_h)
+        if current_ma is None:
+            current_ma = self._last_current_ma
 
-        # Gear icon on the right
+        if angle_deg is None:
+            angle_deg = self._last_angle_deg
+
+        current_text = (
+            _fmt_ma(current_ma)
+            if self._get_ina() is not None
+            else "No INA219"
+        )
+
+        angle_text = (
+            _fmt_deg(angle_deg)
+            if self._get_as5600() is not None
+            else "No AS5600"
+        )
+
+        o.f_med.write(current_text, 0, body_y + line_h)
+        o.f_med.write(angle_text, 0, body_y + 2 * line_h)
+
         try:
             from src.ui.glyphs import draw_gear
             draw_gear(
@@ -186,32 +302,117 @@ class ServoScreen:
 
         fb.show()
 
-    # ----------------------------
-    # Raw PWM helpers
-    # ----------------------------
+
+    def _draw_wind_result(self, result):
+        """
+        Leave the completed luff result on the Servo screen.
+
+        Luff alignment by itself can be 180 degrees ambiguous, so both the
+        primary AS5600 angle and its opposite are shown.
+        """
+
+        if not result or not result.get("ok", False):
+            self._draw(
+                "Wind failed",
+                current_ma=self._last_current_ma,
+                angle_deg=self._last_angle_deg,
+            )
+            return
+
+        o = self.oled
+        fb = o.oled
+        fb.fill(0)
+
+        if _ch:
+            try:
+                _ch.draw(fb, o.width, gps_state=_ch.get_gps_state(), icon_y=1)
+            except Exception:
+                pass
+
+        o.f_arvo20.write("Servo", 0, 0)
+
+        try:
+            _, title_h = o._text_size(o.f_arvo20, "Ag")
+        except Exception:
+            title_h = 20
+
+        try:
+            _, med_h = o._text_size(o.f_med, "Ag")
+        except Exception:
+            med_h = 11
+
+        body_y = title_h + 4
+        line_h = med_h + 3
+
+        wind_deg = result.get("wind_angle_deg")
+        opposite_deg = result.get("opposite_angle_deg")
+        jitter_deg = result.get("jitter_deg")
+        confidence = result.get("confidence")
+
+        o.f_med.write(
+            "Wind? {:.1f}".format(float(wind_deg)),
+            0,
+            body_y,
+        )
+
+        o.f_med.write(
+            "Alt {:.1f}".format(float(opposite_deg)),
+            0,
+            body_y + line_h,
+        )
+
+        o.f_med.write(
+            "Jit {:.2f} x{:.1f}".format(
+                float(jitter_deg),
+                float(confidence),
+            ),
+            0,
+            body_y + 2 * line_h,
+        )
+
+        try:
+            from src.ui.glyphs import draw_gear
+            draw_gear(
+                fb,
+                cx=107,
+                cy=44,
+                body_r=12,
+                tooth_len=4,
+                teeth=6,
+                center_r=6,
+                filled=True,
+                filled_center=False,
+                rotation_offset=0.0,
+                color=1,
+            )
+        except Exception:
+            pass
+
+        fb.show()
+
+
+    # ----------------------------------------------------------------
+    # Raw PWM
+    # ----------------------------------------------------------------
 
     def _clamp_pulse_us(self, pulse_us):
-        # Very wide safety clamp. Normal servo range is about 1000-2000 us.
-        if pulse_us < 500:
-            return 500
-        if pulse_us > 2500:
-            return 2500
+        if pulse_us < SERVO_HARD_MIN_US:
+            return SERVO_HARD_MIN_US
+        if pulse_us > SERVO_HARD_MAX_US:
+            return SERVO_HARD_MAX_US
         return int(pulse_us)
 
-    def _write_pulse_us(self, pwm, pulse_us):
-        pulse_us = self._clamp_pulse_us(pulse_us)
 
-        # At 50Hz the PWM period is 20,000 us.
+    def _write_pulse_to_pwm(self, pwm, pulse_us):
+        pulse_us = self._clamp_pulse_us(pulse_us)
         period_us = int(1000000 // SERVO_PWM_HZ)
 
-        # Prefer duty_ns where available.
         try:
             pwm.duty_ns(int(pulse_us * 1000))
             return
         except Exception:
             pass
 
-        # Pico / many modern MicroPython ports.
         try:
             duty_u16 = int((pulse_us * 65535) // period_us)
             pwm.duty_u16(duty_u16)
@@ -219,7 +420,6 @@ class ServoScreen:
         except Exception:
             pass
 
-        # Older ESP32 fallback: 10-bit duty.
         try:
             duty_10 = int((pulse_us * 1023) // period_us)
             pwm.duty(duty_10)
@@ -229,22 +429,17 @@ class ServoScreen:
 
         raise RuntimeError("No supported PWM duty method")
 
-    def _make_pwm(self):
-        """
-        Build the servo PWM with the frequency set from the start.
 
-        A bare PWM(Pin(n)) on ESP32 comes up at the LEDC default (~5 kHz, 50%
-        duty) for the moment before .freq() lands. That is garbage to a servo
-        and can make it twitch or stall against a stop before the real signal
-        arrives, so pass freq in the constructor where the port supports it.
-        """
+    def _make_pwm(self):
         from machine import Pin, PWM
 
         p = Pin(self._pin)
+
         try:
             return PWM(p, freq=SERVO_PWM_HZ, duty_u16=0)
         except Exception:
             pass
+
         try:
             return PWM(p, freq=SERVO_PWM_HZ)
         except Exception:
@@ -254,179 +449,186 @@ class ServoScreen:
         pwm.freq(SERVO_PWM_HZ)
         return pwm
 
-    def _report_signal(self, pwm):
+
+    def _ensure_pwm(self):
+        if self._pwm is None:
+            self._pwm = self._make_pwm()
+        return self._pwm
+
+
+    def _write_pulse_us(self, pulse_us):
+        """Hardware callback passed into WindFinder."""
+        pwm = self._ensure_pwm()
+        self._write_pulse_to_pwm(pwm, pulse_us)
+
+
+    # ----------------------------------------------------------------
+    # Wind finder integration
+    # ----------------------------------------------------------------
+
+    def _wind_progress(
+        self,
+        progress,
+        pulse_us,
+        angle_deg,
+        current_ma,
+        jitter_deg,
+    ):
         """
-        Read the timer back and print what the peripheral actually ended up
-        with. We only ever verify our own arithmetic otherwise - this catches
-        the case where the LEDC timer did not take 50 Hz (at which point a
-        1000-2000 us pulse is longer than the period, duty clamps to 100%,
-        and the servo sees a DC level with no frame edges at all).
+        OLED update callback from wind_finder.py.
+
+        It runs once per tested servo position, not once per sensor sample, so
+        OLED I2C traffic does not contaminate the vibration measurement timing.
         """
-        try:
-            f = pwm.freq()
-        except Exception:
-            f = None
-        try:
-            d = pwm.duty_ns()
-        except Exception:
-            d = None
 
-        print("[SERVO] signal check: freq={} Hz (want {}), duty_ns={}".format(
-            f, SERVO_PWM_HZ, d))
+        if progress < 0.0:
+            progress = 0.0
+        if progress > 1.0:
+            progress = 1.0
 
-        if f is not None and abs(int(f) - SERVO_PWM_HZ) > 2:
-            print("[SERVO] WARNING: timer is not at {} Hz - pulse widths are "
-                  "meaningless at this frequency".format(SERVO_PWM_HZ))
-        return f
+        percent = int(progress * 100.0)
 
-    def _us_for_angle(self, deg):
-        if deg < 0:
-            deg = 0
-        elif deg > SERVO_RANGE_DEG:
-            deg = SERVO_RANGE_DEG
-        span_us = SERVO_MAX_US - SERVO_MIN_US
-        return self._clamp_pulse_us(SERVO_MIN_US + (deg / SERVO_RANGE_DEG) * span_us)
+        gear_rotation = (
+            progress
+            * GEAR_ROTATION_TURNS
+            * 2.0
+            * 3.14159265
+        )
 
-    def _write_angle(self, pwm, deg):
-        us = self._us_for_angle(deg)
-        self._write_pulse_us(pwm, us)
-        return us
+        self._last_current_ma = current_ma
+        self._last_angle_deg = angle_deg
 
-    # ----------------------------
-    # Simple servo test
-    # ----------------------------
+        self._draw(
+            "Sweep {}%".format(percent),
+            current_ma=current_ma,
+            angle_deg=angle_deg,
+            gear_rotation_rad=gear_rotation,
+        )
 
-    def _sweep_leg(self, pwm, from_deg, to_deg, duration_ms):
-        """
-        Drive from_deg -> to_deg over duration_ms.
 
-        Nothing else happens in here: no OLED writes, no I2C, no button poll.
-        The loop is PWM plus a sleep, so the leg takes duration_ms and the
-        step period is what it says it is. Steps are sized by SERVO_STEP_DEG
-        (not by a fixed period) so each command is a real slew rather than a
-        deadband-sized nudge the servo can hunt on.
-        """
-        span = to_deg - from_deg
-        steps = int(abs(span) / SERVO_STEP_DEG)
-        if steps < 1:
-            steps = 1
-
-        t0 = time.ticks_ms()
-
-        for i in range(1, steps + 1):
-            self._write_angle(pwm, from_deg + span * i / steps)
-
-            # Hold this step until its share of the leg has elapsed.
-            deadline = time.ticks_add(t0, int(duration_ms * i / steps))
-            while True:
-                remain = time.ticks_diff(deadline, time.ticks_ms())
-                if remain <= 0:
-                    break
-                time.sleep_ms(remain if remain < 10 else 10)
-
-    def _bang_bang(self, pwm):
-        """
-        Full-range bang-bang: jump to one end, hold, jump to the other, hold.
-
-        No ramp at all - each move is a single pulse-width change, so the servo
-        slews at its own maximum rate against its own stops. Nothing a command
-        can do moves a servo harder than this.
-        """
-        lo = SERVO_BANG_LO_DEG
-        hi = SERVO_BANG_HI_DEG
-        hold = max(200, int(SERVO_BANG_HOLD_MS))
-
-        for c in range(max(1, int(SERVO_BANG_CYCLES))):
-            for deg in (lo, hi):
-                us = self._write_angle(pwm, deg)
-                print("[SERVO] cycle {} -> {} deg ({} us)".format(c + 1, deg, us))
-                self._draw("{:.0f}d {}us".format(deg, us))
-                time.sleep_ms(hold)
-
-    def _run_test(self):
-        """
-        Raw PWM servo test. See SERVO_TEST_MODE for the two shapes.
-
-        This bypasses src.drivers.servo.Servo.angle() so we can test whether
-        the servo responds to plain 50Hz servo pulses. The screen is drawn
-        between moves only, never during one - the servo is the only thing
-        that matters while the test is running. Each commanded position is
-        also printed to serial so the test can be followed over the REPL.
-        """
-        if self._pin is None:
-            self._draw("No pin")
-            time.sleep_ms(700)
+    def _run_wind_finder(self):
+        if not self._connected:
+            self._draw("Servo unavailable")
             return
 
-        pwm = None
+        if self._get_as5600() is None:
+            self._draw("No AS5600")
+            return
+
+        self._wind_result = None
+
+        self._draw(
+            "Wind test 0.5s",
+            current_ma=self._read_current_ma(),
+            angle_deg=self._read_angle_deg(),
+        )
+
+        time.sleep_ms(WIND_TEST_DELAY_MS)
 
         try:
-            pwm = self._make_pwm()
-            print("[SERVO] test start: pin={} mode={}".format(self._pin, SERVO_TEST_MODE))
-            self._write_angle(pwm, SERVO_HOME_DEG)
-            self._report_signal(pwm)
+            from src.ui.screens.wind_finder import WindFinder
 
-            if SERVO_TEST_MODE == "endpoints":
-                self._bang_bang(pwm)
-            else:
-                half = SERVO_SWEEP_DEG / 2.0
-                a_deg = SERVO_HOME_DEG - half
-                b_deg = SERVO_HOME_DEG + half
-                leg_ms = max(200, int(SERVO_LEG_MS))
+            finder = WindFinder(
+                write_pulse_us=self._write_pulse_us,
+                read_angle_deg=self._read_angle_deg,
+                read_current_ma=self._read_current_ma,
+                progress_cb=self._wind_progress,
+                min_us=self._min_us,
+                max_us=self._max_us,
+            )
 
-                # Park at A at full servo speed, then let it settle.
-                self._write_angle(pwm, a_deg)
-                self._draw("Start {:.0f}d".format(a_deg))
-                time.sleep_ms(SERVO_START_SETTLE_MS)
-
-                # Leg 1: A -> B.
-                self._draw("{:.0f}d > {:.0f}d".format(a_deg, b_deg))
-                self._sweep_leg(pwm, a_deg, b_deg, leg_ms)
-                time.sleep_ms(SERVO_END_HOLD_MS)
-
-                # Leg 2: B -> A.
-                self._draw("{:.0f}d > {:.0f}d".format(b_deg, a_deg))
-                self._sweep_leg(pwm, b_deg, a_deg, leg_ms)
-
-            self._draw("Test done")
-            print("[SERVO] test done")
-            time.sleep_ms(SERVO_END_HOLD_MS)
-
-        except Exception as e:
-            print("[SERVO] test failed:", e)
             try:
-                self._draw("Test failed")
-                time.sleep_ms(900)
+                result = finder.run()
+            finally:
+                self._park_and_release()
+            self._wind_result = result
+            self._draw_wind_result(result)
+            self._view = "wind"
+            try:
+                from src.app import actions
+                actions.note_bench_result(result)
             except Exception:
                 pass
 
+        except Exception as e:
+            print("[WIND] failed:", repr(e))
+            self._view = "failed"   # keep the failure on screen; no blink redraw
+
+            self._draw(
+                "Wind failed",
+                current_ma=self._last_current_ma,
+                angle_deg=self._last_angle_deg,
+            )
+
+
+    def run_bench_sweep(self):
+        """One complete bench sweep outside the carousel (Bluetooth
+        SERVO_BENCH_SWEEP). Blocks for the whole sweep and draws its
+        progress/result on the OLED like the double-click does. Returns the
+        WindFinder result dict, or {"ok": False, "error": ...}."""
+        self._probe()
+        if not self._connected:
+            return {"ok": False, "error": "no servo"}
+        if self._get_as5600() is None:
+            return {"ok": False, "error": "no AS5600"}
+        self._view = "normal"
+        try:
+            self._run_wind_finder()
         finally:
-            if pwm and SERVO_DEINIT_AFTER_TEST:
-                try:
-                    pwm.deinit()
-                except Exception:
-                    pass
+            self._release_pwm()
+        if self._view == "wind" and self._wind_result:
+            return self._wind_result
+        return {"ok": False, "error": "sweep failed"}
 
-        self._draw()
+    # ----------------------------------------------------------------
+    # Cleanup
+    # ----------------------------------------------------------------
 
-    # ----------------------------
+    def _park_and_release(self):
+        """Center the servo, then stop the PWM so nothing holds it."""
+        if self._pwm is not None:
+            try:
+                self._write_pulse_to_pwm(
+                    self._pwm, (self._min_us + self._max_us) // 2)
+                time.sleep_ms(SERVO_PARK_SETTLE_MS)
+            except Exception:
+                pass
+        self._release_pwm()
+
+
+    def _release_pwm(self):
+        if self._pwm is not None:
+            try:
+                self._pwm.deinit()
+            except Exception:
+                pass
+
+            self._pwm = None
+
+
+    # ----------------------------------------------------------------
     # Public entry
-    # ----------------------------
+    # ----------------------------------------------------------------
 
-    def show_live(self, btn):
+    def show_live(self, btn, tick_fn=None):
         """
-        Single click : advance carousel.
-        Double click : run the raw PWM servo test (see SERVO_TEST_MODE).
+        Servo screen controls:
 
-        The idle loop does nothing but poll the button. There is no periodic
-        redraw: with the INA219 readout gone this screen is entirely static
-        once probed, so a refresh tick would only add a 50-100 ms font-render
-        plus I2C flush during which the button is not sampled. A click is only
-        ~100 ms of debounced level change and the button is sampled *only*
-        when polled, so a redraw landing on top of the gap between two clicks
-        was enough to break a double into two singles. Poll fast, draw only on
-        change.
+        SINGLE CLICK
+            Advance to the next carousel screen.
+
+        DOUBLE CLICK
+            Wait 0.5 seconds, then run one complete luff wind-finder sweep.
+
+        TRIPLE CLICK
+            No Servo-screen action.
+
+        QUAD / SLEEP
+            Return the action to the main UI.
+
+        The completed wind result remains on screen until another action.
         """
+
         try:
             btn.reset()
         except Exception:
@@ -436,9 +638,21 @@ class ServoScreen:
         self._servo_configured = None
         gc.collect()
 
+        self._view = "normal"
         self._draw()
         self._probe()
-        self._draw()
+
+        self._read_current_ma()
+        self._read_angle_deg()
+
+        self._draw(
+            current_ma=self._last_current_ma,
+            angle_deg=self._last_angle_deg,
+        )
+
+        _tick_next = time.ticks_ms()
+        _tick_every = 500
+        _ble = _ch.BleWatch() if _ch else None
 
         while True:
             try:
@@ -446,16 +660,57 @@ class ServoScreen:
             except Exception:
                 action = None
 
-            if action == "double" and self._connected:
-                self._run_test()
-                # The test drew its own frames; restore the idle view.
-                self._draw()
+            # Static screen: redraw only for the header's Bluetooth "+",
+            # keeping whichever view is up (a wind-finder result stays on
+            # screen until the next click).
+            if (action is None and _ble is not None and _ble.changed()
+                    and self._view != "failed"):
+                if self._view == "wind" and self._wind_result is not None:
+                    self._draw_wind_result(self._wind_result)
+                else:
+                    self._draw(current_ma=self._last_current_ma,
+                               angle_deg=self._last_angle_deg)
+
+            # Single click: next carousel screen.
+            if action == "single":
+                self._release_pwm()
+
+                # Existing carousel uses "single" as next-screen.
+                return "single"
+
+            # Double click: run luff sweep.
+            elif action == "double" and self._connected:
+                self._run_wind_finder()
+
                 try:
                     btn.reset()
                 except Exception:
                     pass
 
-            elif action in ("single", "quad", "sleep"):
+            # Triple click: deliberately ignored.
+            elif action == "triple":
+                try:
+                    btn.reset()
+                except Exception:
+                    pass
+
+            # Other actions.
+            elif action in ("quad", "sleep"):
+                self._release_pwm()
                 return action
+
+            # Background tick only while idle. We intentionally do NOT call
+            # tick_fn during the luff sweep; the nav controller must not issue
+            # competing servo commands while WindFinder owns the servo.
+            if tick_fn is not None:
+                now = time.ticks_ms()
+
+                if time.ticks_diff(now, _tick_next) >= 0:
+                    try:
+                        tick_fn()
+                    except Exception:
+                        pass
+
+                    _tick_next = time.ticks_add(now, _tick_every)
 
             time.sleep_ms(2)

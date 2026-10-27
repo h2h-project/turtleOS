@@ -14,6 +14,10 @@ _REG_CTRL_MEAS = 0xF4
 _REG_CONFIG    = 0xF5
 _REG_DATA      = 0xF7  # 8 bytes: press[3], temp[3], hum[2]
 
+_CHIP_ID_BME280 = 0x60
+# BMP280 production silicon is 0x58; 0x56/0x57 are engineering samples.
+_CHIP_IDS_BMP280 = (0x56, 0x57, 0x58)
+
 _OSRS_x1    = 0b001
 _MODE_SLEEP  = 0b00
 _MODE_FORCED = 0b01
@@ -27,6 +31,17 @@ class BME280:
         self._calib_T = None
         self._calib_P = None
         self._calib_H = None
+        # 0x77 is shared with the BMP180 (GY-87 barometer): refuse anything
+        # that isn't BME280 (0x60) / BMP280 (0x58) silicon so AirSensor never
+        # reads a BMP180's calibration block as BME280 coefficients.
+        cid = self._read(_REG_CHIP_ID, 1)[0]
+        if cid != _CHIP_ID_BME280 and cid not in _CHIP_IDS_BMP280:
+            raise OSError("BME280: chip ID 0x{:02X} at 0x{:02X} is not BME280/BMP280".format(cid, addr))
+        self.chip_id = cid
+        # A BMP280 has no humidity sensor: its humidity data and calibration
+        # registers don't exist, and running the compensation over them yields a
+        # junk value that clamps to 100% (or 0%). Only BME280 silicon has humidity.
+        self.has_humidity = cid == _CHIP_ID_BME280
         self._load_calibration()
         self._apply_settings()
 
@@ -55,6 +70,9 @@ class BME280:
             s16(raw, 10), s16(raw, 12), s16(raw, 14), s16(raw, 16),
         )
 
+        if not self.has_humidity:
+            return
+
         h1 = self._read(0xA1, 1)[0]
         raw = self._read(0xE1, 7)
         h2 = (raw[1] << 8) | raw[0]
@@ -73,8 +91,9 @@ class BME280:
         self._calib_H = (h1, h2, h3, h4, h5, h6)
 
     def _apply_settings(self):
-        # osrs_h = x1
-        self._write(_REG_CTRL_HUM, _OSRS_x1)
+        # osrs_h = x1 (ctrl_hum only exists on BME280)
+        if self.has_humidity:
+            self._write(_REG_CTRL_HUM, _OSRS_x1)
         # osrs_t = x1, osrs_p = x1, mode = sleep (forced triggered per read)
         self._write(_REG_CTRL_MEAS, (_OSRS_x1 << 5) | (_OSRS_x1 << 2) | _MODE_SLEEP)
         # standby 1000 ms, IIR filter off
@@ -116,10 +135,12 @@ class BME280:
     def read(self):
         """
         Trigger a forced measurement and return (temp_c, humidity_pct, pressure_hpa).
+        humidity_pct is None on a BMP280 (no humidity sensor).
         Raises OSError/ValueError on hardware or sanity failures.
         """
         # Trigger forced measurement (ctrl_hum must be written before ctrl_meas)
-        self._write(_REG_CTRL_HUM, _OSRS_x1)
+        if self.has_humidity:
+            self._write(_REG_CTRL_HUM, _OSRS_x1)
         self._write(_REG_CTRL_MEAS, (_OSRS_x1 << 5) | (_OSRS_x1 << 2) | _MODE_FORCED)
 
         # Wait for measurement complete (~9 ms for x1/x1/x1)
@@ -132,11 +153,12 @@ class BME280:
         raw = self._read(_REG_DATA, 8)
         adc_P = (raw[0] << 12) | (raw[1] << 4) | (raw[2] >> 4)
         adc_T = (raw[3] << 12) | (raw[4] << 4) | (raw[5] >> 4)
-        adc_H = (raw[6] << 8) | raw[7]
-
         temp_c = self._compensate_temp(adc_T)
         pressure_hpa = self._compensate_pressure(adc_P)
-        humidity = self._compensate_humidity(adc_H)
+        humidity = None
+        if self.has_humidity:
+            adc_H = (raw[6] << 8) | raw[7]
+            humidity = self._compensate_humidity(adc_H)
 
         if not (-40.0 <= temp_c <= 85.0):
             raise ValueError("BME280 temp out of range: {}".format(temp_c))

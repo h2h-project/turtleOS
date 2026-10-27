@@ -48,6 +48,7 @@ elif _TAG == "xiao_esp32s3":
         usb_power_present,
         servo_pin,
         servo_pwm_config,
+        servo_power_pin,
         user_led_pin,
         user_led_active_value,
         init_i2c_ext,
@@ -83,6 +84,14 @@ try:
     servo_pwm_config
 except NameError:
     def servo_pwm_config():
+        return None
+
+# Servo power switch (SSR EN) is only wired on XIAO ESP32-S3; None elsewhere,
+# and src/drivers/servo_power.py then leaves the servo always powered.
+try:
+    servo_power_pin
+except NameError:
+    def servo_power_pin():
         return None
 
 # I2C_EXT (second bus for plug-in sensors) exists only on XIAO ESP32-S3.

@@ -30,7 +30,11 @@ from src.ui.connection_header import GPS_NONE, GPS_INIT, GPS_FIXED  # noqa: F401
 
 def _to_gps_state(val):
     """Convert a bool or int GPS value to GPS_NONE/GPS_INIT/GPS_FIXED int."""
-    if isinstance(val, int):
+    # bool is a subclass of int, so isinstance(val, int) alone would also
+    # match True/False and pass them straight through — int(True) is 1
+    # (GPS_INIT), not 2 (GPS_FIXED), silently downgrading a "has fix" bool
+    # to the "hardware present, no fix" icon. Exclude bool explicitly.
+    if isinstance(val, int) and not isinstance(val, bool):
         return val
     return GPS_FIXED if bool(val) else GPS_NONE
 

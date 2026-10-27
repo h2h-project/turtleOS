@@ -1,7 +1,7 @@
 # src/ui/screens/logging.py
 
 import time
-from config import load_config, save_config
+from config import load_config
 from src.ui.toggle import ToggleSwitch
 from src.ui import grace as _grace
 
@@ -43,11 +43,6 @@ class LoggingScreen:
         self._api_base = ""
         self._single_grace_ms = 350
 
-        # Live config dict handed in by the carousel, so a mode change takes
-        # effect on the very next background tick instead of after the carousel
-        # exits and the main loop re-reads config.json.
-        self._live_cfg = None
-
     # ----------------------------
     # Config
     # ----------------------------
@@ -68,22 +63,21 @@ class LoggingScreen:
         return m if m in MODE_CYCLE else "auto"
 
     def _cycle_mode(self):
-        """Advance off -> auto -> manual -> off and persist."""
-        cfg = self._reload_config()
+        """Advance off -> auto -> manual -> off and persist.
+
+        actions.telemetry_set_mode() also mirrors the change into the live
+        config the background tick reads, so it takes effect on the very next
+        tick instead of after the carousel exits."""
+        self._reload_config()
         try:
             nxt = MODE_CYCLE[(MODE_CYCLE.index(self._mode) + 1) % len(MODE_CYCLE)]
         except Exception:
             nxt = "auto"
 
-        self._mode = nxt
-        cfg["telemetry_mode"] = nxt
-        cfg["telemetry_enabled"] = (nxt != "off")
-        save_config(cfg)
-
-        # Push into the live dict the background tick reads from.
-        if isinstance(self._live_cfg, dict):
-            self._live_cfg["telemetry_mode"] = nxt
-            self._live_cfg["telemetry_enabled"] = (nxt != "off")
+        from src.app import actions
+        code, _info = actions.telemetry_set_mode(nxt)
+        if code == actions.OK:
+            self._mode = nxt
 
     # ----------------------------
     # Drawing
@@ -183,7 +177,6 @@ class LoggingScreen:
     def show_live(self, btn, get_queue_size=None, get_last_sent=None, tick_fn=None, cfg=None):
         btn.reset()
 
-        self._live_cfg = cfg if isinstance(cfg, dict) else None
         self._reload_config()
         self._draw()
 

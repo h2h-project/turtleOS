@@ -94,8 +94,19 @@ class SleepScreen:
         fb.show()
 
     def _do_sleep(self, btn, tick_fn):
-        """Block until single click. OLED off. LED: 11 s off / 1 s on pulse."""
+        """Block until single click. OLED off. LED: 11 s off / 1 s on pulse.
+        Bluetooth is shut down for the duration and comes back on wake with a
+        fresh wrangle window (only if it was on before)."""
         self.oled.poweroff()
+
+        _ble = None
+        try:
+            from src.net import ble_service
+            _ble = ble_service.instance()
+            if _ble is not None:
+                _ble.suspend()
+        except Exception:
+            _ble = None
 
         # Start with LED off; first pulse fires after 11 s
         led_state = False
@@ -134,6 +145,27 @@ class SleepScreen:
         finally:
             self._set_led(False)
             self.oled.poweron()
+            if _ble is not None:
+                try:
+                    _ble.resume()
+                except Exception:
+                    pass
+
+    def go_to_sleep(self, btn, tick_fn=None):
+        """"Good night!" -> sleep until a single click -> "Good morning!".
+        Shared by the double-click here and the Bluetooth SLEEP command
+        (which reaches it through run()'s enter_sleep source)."""
+        self._toggle_on = True
+        self._set_led(True)                # LED on during goodnight message
+        self._draw(sleeping=True)          # "Good night!" + toggle ON
+        time.sleep_ms(3500)                # hold for 3.5 s
+        self._set_led(False)
+        self._do_sleep(btn, tick_fn)       # blocks until single click
+
+        # Wake confirmation
+        self._toggle_on = False
+        self._draw(waking=True)            # "Good morning!"
+        time.sleep_ms(2000)
 
     def show_live(self, btn, tick_fn=None):
         try:
@@ -163,19 +195,11 @@ class SleepScreen:
 
             if action == "single":
                 return "single"
+            if action == "sleep":
+                return "sleep"
 
             if action == "double":
-                self._toggle_on = True
-                self._set_led(True)                # LED on during goodnight message
-                self._draw(sleeping=True)          # "Good night!" + toggle ON
-                time.sleep_ms(3500)                # hold for 3.5 s
-                self._set_led(False)
-                self._do_sleep(btn, tick_fn)       # blocks until single click
-
-                # Wake confirmation
-                self._toggle_on = False
-                self._draw(waking=True)            # "Good morning!"
-                time.sleep_ms(2000)
+                self.go_to_sleep(btn, tick_fn)
                 self._draw()                       # back to normal idle screen
 
             time.sleep_ms(25)

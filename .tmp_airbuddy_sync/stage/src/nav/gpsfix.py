@@ -60,3 +60,35 @@ def get():
 
 def cog_deg():
     return _fix[2]
+
+
+# GGA detail: fix quality (field 6: 0 none, 1 GPS, 2 DGPS, ...), satellites
+# in use (field 7), ticks_ms of the sentence. Kept apart from the RMC fix so
+# a GGA-only reader never disturbs lat/lon/COG.
+_gga = [None, None, 0]
+
+
+def note_gga(line):
+    """Cache fix quality + satellite count from a $GPGGA/$GNGGA sentence.
+    Returns (quality, sats) or (None, None) if the sentence is unusable."""
+    try:
+        p = line.split(",")
+        if len(p) < 8:
+            return None, None
+        q = int(p[6]) if p[6] else None
+        s = int(p[7]) if p[7] else None
+        if q is None and s is None:
+            return None, None
+        _gga[0] = q
+        _gga[1] = s
+        _gga[2] = time.ticks_ms()
+        return q, s
+    except Exception:
+        return None, None
+
+
+def gga():
+    """Return (quality, sats, age_ms) of the last GGA, or (None, None, None)."""
+    if _gga[0] is None and _gga[1] is None:
+        return None, None, None
+    return _gga[0], _gga[1], time.ticks_diff(time.ticks_ms(), _gga[2])

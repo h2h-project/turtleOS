@@ -19,6 +19,23 @@ import time
 from src.hal.board import init_i2c, gps_pins
 
 # ----------------------------
+# Boot guard — EARLY sample
+# ----------------------------
+# Sample the button here, before board detection, the two I2C bus scans and
+# init_oled() — all of which used to run first, so "hold the button at
+# power-on" was really "hold it through MicroPython startup + imports + I2C
+# scans + 2 s more", with no on-screen feedback until well after the user
+# had let go. This early call blocks ONLY while the button is actually held
+# (instant return otherwise), so a normal boot pays nothing. The OLED debug
+# screen + wait loop still run later, once init_oled() exists.
+_bg_debug = False
+try:
+    from src.app.boot_guard import check_hold_early
+    _bg_debug = bool(check_hold_early())
+except Exception as _bg_e:
+    print("[BOOT] boot_guard early check error:", repr(_bg_e))
+
+# ----------------------------
 # Boot pacing
 # ----------------------------
 BOOT_STEP_HOLD_MS = 500  # hold each step so OLED text is readable
@@ -63,6 +80,28 @@ def i2c_scan():
         return []
 
 
+def i2c_scan_ext():
+    """One-shot scan of the I2C_EXT bus (plug-in sensors). [] when the board
+    has no second bus or the scan fails."""
+    try:
+        from src.hal.board import init_i2c_ext
+        i2c = init_i2c_ext()
+        if i2c is None:
+            return []
+        return i2c.scan() or []
+    except Exception:
+        return []
+
+
+def _chip_id(addr, reg=0xD0):
+    """Read a Bosch-style chip-ID register; None on error. Used to tell the
+    BMP180 (0x55) from a BME280 (0x60) / BMP280 (0x58) — they share 0x77."""
+    try:
+        return init_i2c().readfrom_mem(addr, reg, 1)[0]
+    except Exception:
+        return None
+
+
 # Common I2C addresses we care about
 I2C_ADDR_OLED    = 0x3C
 I2C_ADDR_RTC     = 0x68
@@ -71,26 +110,28 @@ I2C_ADDR_AHT2X   = 0x38  # AHT10/AHT20/AHT21
 I2C_ADDR_SCD41   = 0x62  # SCD40/SCD41 true CO2 sensor
 I2C_ADDR_BME280     = 0x76  # BME280 temp + humidity + pressure (SDO=LOW)
 I2C_ADDR_BME280_ALT = 0x77  # BME280 alternate address (SDO=HIGH)
-I2C_ADDR_QMC5883 = 0x0D  # QMC5883L (GY-271 clone) — retired from boot path, see mpu9250.py
-I2C_ADDR_HMC5883 = 0x1E  # HMC5883L (genuine) — retired from boot path, see mpu9250.py
+I2C_ADDR_QMC5883 = 0x0D  # QMC5883L — GY-87 on-board mag (via bypass) or standalone GY-271, see step_imu()
+I2C_ADDR_HMC5883 = 0x1E  # HMC5883L — same roles as above (genuine Honeywell part)
+I2C_ADDR_QMC5883P = 0x2C  # QMC5883P — newer QST mag on GY-87/GY-271 clones, same roles
 I2C_ADDR_AS5600  = 0x36  # AS5600 magnetic angle sensor (sail position)
-I2C_ADDR_MPU9250 = 0x69  # MPU-9250 IMU (AD0 strapped high — 0x68 is DS3231's)
-I2C_ADDR_AK8963  = 0x0C  # AK8963 magnetometer, visible once MPU-9250 bypass is enabled
+I2C_ADDR_MPU6050 = 0x68  # MPU6050 IMU on the GY-87 — factory address; only probed on I2C_EXT (0x68 on I2C_SYS is the RTC)
+I2C_ADDR_MPU6050_ALT = 0x69  # MPU6050 with AD0 strapped high
+I2C_ADDR_BMP180  = 0x77  # BMP180 barometer on the GY-87 — shares 0x77 with BME280-alt, see step_warmup()
 
 _I2C_NAMES = {
-    0x0C: "AK8963",
     0x0D: "QMC5883L",
     0x1E: "HMC5883L",
+    0x2C: "QMC5883P",
     0x36: "AS5600",
     0x38: "AHT21",
     0x3C: "OLED",
     0x40: "INA219",
     0x53: "ENS160",
     0x62: "SCD41",
-    0x68: "DS3231",
-    0x69: "MPU9250",
+    0x68: "DS3231",       # on I2C_SYS; the same address is the MPU6050 on I2C_EXT
+    0x69: "MPU6050",
     0x76: "BME280",
-    0x77: "BME280",
+    0x77: "BMP180/BME280",
 }
 
 
@@ -115,7 +156,11 @@ def init_oled():
         return OLED(col_offset=col_offset)
 
     except OSError as e:
-        if e.args[0] in (5, 19, 110):  # EIO, ENODEV, ETIMEDOUT — no I2C device present
+        if e.args[0] in (110, 116):  # ETIMEDOUT (Linux 110 / ESP-IDF newlib 116)
+            # The OLED ACKs the scan but stalls the bus mid-write: a hung
+            # controller (power-cycle it) or a marginal SDA/SCL/VCC contact.
+            print("[BOOT] OLED: 0x3C not responding (I2C timeout) — check wiring/power; running headless")
+        elif e.args[0] in (5, 19):  # EIO, ENODEV — no I2C device present
             print("[BOOT] OLED: not found — running headless")
         else:
             print("[BOOT] OLED: init failed:", repr(e))
@@ -174,7 +219,7 @@ def sync_rtc_from_ds3231():
             osf = bool(i2c.readfrom_mem(0x68, 0x0F, 1)[0] & 0x80)
             info["battery_ok"] = not osf
             if osf:
-                print("[RTC] WARNING: OSF set — DS3231 lost power (check battery)")
+                print("[RTC] battery fault: OSF set — DS3231 lost power (replace its coin cell)")
         except Exception:
             pass
 
@@ -232,7 +277,101 @@ def sync_rtc_from_ds3231():
 # ----------------------------
 # API Device Lookup (LOW-RAM, inline)
 # ----------------------------
-def api_device_lookup(cfg):
+def _wait_socket_readable(s, tick_fn, deadline_ms, poll_ms=250):
+    """
+    Block until `s` has data to read, calling tick_fn() every poll_ms while
+    it waits — used so the API check's boot-step DotTicker keeps animating
+    through what is otherwise one long blocking network wait (DNS + connect
+    + server round-trip), the same way step_wifi/gps_boot_check tick from
+    their own poll loops. select.poll() only *observes* readiness; it never
+    consumes bytes, so it's safe to interleave with the normal blocking
+    socket reads that follow.
+    """
+    import uselect as select
+
+    poller = select.poll()
+    poller.register(s, select.POLLIN)
+    try:
+        while True:
+            if poller.poll(poll_ms):
+                return
+            if tick_fn:
+                tick_fn()
+            if time.ticks_diff(deadline_ms, time.ticks_ms()) <= 0:
+                raise OSError("timeout waiting for API response")
+    finally:
+        poller.unregister(s)
+
+
+def _api_get_ticked(url, headers, timeout_s=6, tick_fn=None):
+    """
+    Minimal GET, equivalent to urequests.get(), but waits for the socket to
+    become readable via _wait_socket_readable() before each blocking read so
+    tick_fn() runs throughout the wait instead of the caller staring at a
+    frozen 0-dot ticker for the whole request. Kept separate from
+    src/lib/urequests.py (used elsewhere for telemetry) so this doesn't risk
+    that shared path — this is only ever used for the boot-time API check.
+    """
+    import usocket as socket
+
+    proto, _, host, path = url.split("/", 3)
+    if proto != "http:":
+        raise ValueError("Unsupported protocol: " + proto)
+    port = 80
+    if ":" in host:
+        host, port = host.split(":", 1)
+        port = int(port)
+
+    deadline_ms = time.ticks_add(time.ticks_ms(), int(timeout_s * 1000))
+
+    # Tick once before DNS + connect — both are blocking with no callback
+    # hook, so without this the dot ticker sits frozen at zero dots for
+    # however long that takes instead of showing its first dot right away.
+    if tick_fn:
+        try:
+            tick_fn()
+        except Exception:
+            pass
+
+    ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0]
+    s = socket.socket(ai[0], ai[1], ai[2])
+    s.settimeout(timeout_s)
+
+    try:
+        s.connect(ai[-1])
+
+        s.write(b"GET /%s HTTP/1.0\r\nHost: %s\r\n" % (path.encode(), host.encode()))
+        for k, v in headers.items():
+            s.write(("%s: %s\r\n" % (k, v)).encode())
+        s.write(b"\r\n")
+
+        _wait_socket_readable(s, tick_fn, deadline_ms)
+        l = s.readline()
+        l = l.split(None, 2)
+        status = int(l[1])
+
+        while True:
+            _wait_socket_readable(s, tick_fn, deadline_ms)
+            l = s.readline()
+            if not l or l == b"\r\n":
+                break
+
+        _wait_socket_readable(s, tick_fn, deadline_ms)
+        body = s.read()
+
+        class _TickedResponse:
+            def close(self):
+                pass
+
+        resp = _TickedResponse()
+        resp.status_code = status
+        resp.text = str(body, "utf-8") if body else ""
+        return resp
+    finally:
+        s.close()
+
+
+def api_device_lookup(cfg, tick_fn=None):
     info = {
         "ok": False,
         "device_name": "",
@@ -276,8 +415,6 @@ def api_device_lookup(cfg):
         except Exception:
             import json  # type: ignore
 
-        import urequests
-
         headers = {
             "X-Device-Id": device_id,
             "X-Device-Key": device_key,
@@ -287,10 +424,7 @@ def api_device_lookup(cfg):
 
         print("API lookup: GET", url)
 
-        try:
-            r = urequests.get(url, headers=headers, timeout=6)
-        except TypeError:
-            r = urequests.get(url, headers=headers)
+        r = _api_get_ticked(url, headers=headers, timeout_s=6, tick_fn=tick_fn)
 
         code = getattr(r, "status_code", None)
         print("API lookup: HTTP", code)
@@ -363,6 +497,26 @@ def api_device_lookup(cfg):
             or data.get("mission_name")
             or ""
         )
+        # Aliases matching the config key names step_api() writes.
+        info["mission_dest_short_name"] = info["mission_short_name"]
+        info["mission_dest_full_name"] = info["mission_full_name"]
+
+        # Mission destination coords (missions_tb.target_*). Tolerant of
+        # nested mission.target_lat / flat mission_target_lat. Only kept when
+        # both are finite numbers and in range.
+        try:
+            _mlat = (mis.get("target_lat") if isinstance(mis, dict) else None)
+            if _mlat is None:
+                _mlat = data.get("mission_target_lat")
+            _mlon = (mis.get("target_lng") if isinstance(mis, dict) else None)
+            if _mlon is None:
+                _mlon = data.get("mission_target_lng")
+            if _mlat is not None and _mlon is not None:
+                _mlat = float(_mlat); _mlon = float(_mlon)
+                if -90.0 <= _mlat <= 90.0 and -180.0 <= _mlon <= 180.0:
+                    info["mission_destination"] = [_mlat, _mlon]
+        except Exception:
+            pass
 
         info["time_zone"] = str(
             data.get("time_zone")
@@ -436,10 +590,11 @@ def gps_boot_check(cfg):
         if gps is None:
             info["ok"] = False
             info["detected"] = False
-            return True, "NOT DETECTED", info
+            return True, "GPS not found", info
 
         # Presence-only check: just wait for any bytes on the UART — no read needed.
         # Max 5 seconds. Avoids uart.read(n) blocking on inter-character timeouts.
+        # Animates the shared per-step ticker (see step_wifi) from this poll loop.
         start = time.ticks_ms()
         seen = False
         while time.ticks_diff(time.ticks_ms(), start) < 5000:
@@ -449,16 +604,18 @@ def gps_boot_check(cfg):
                     break
             except Exception:
                 pass
+            if booter and booter.step_ticker:
+                booter.step_ticker.tick()
             time.sleep_ms(100)
 
         info["detected"] = bool(seen)
         info["ok"] = bool(seen)
-        return True, ("OK" if seen else "NOT DETECTED"), info
+        return True, ("OK" if seen else "GPS not found"), info
 
     except Exception:
         info["ok"] = False
         info["detected"] = False
-        return True, "NOT DETECTED", info
+        return True, "GPS not found", info
     finally:
         gps = None
         _gc()
@@ -543,6 +700,7 @@ try:
     _pt = _platform_tag()
     _is_esp32 = _pt in ("esp32", "esp32s3", "xiao_esp32s3")
     _is_pico  = (_pt == "pico")
+    _is_xiao  = (_pt == "xiao_esp32s3")  # 8 MB PSRAM heap — no screen-preload needed
     try:
         import json as _ptj
         with open("config.json") as _ptf:
@@ -562,6 +720,7 @@ except Exception:
     _pt = "unknown"
     _is_esp32 = False  # safe default: skip preload
     _is_pico  = False
+    _is_xiao  = False
     print("[BOOT] Board: unknown")
 
 # Pico W: import the LARGEST modules before OLED+fonts allocate 53 KB of
@@ -629,18 +788,43 @@ try:
 except Exception as _di2c_e:
     print("[BOOT] I2C scan: FAILED", repr(_di2c_e))
 
+# I2C_EXT — the plug-in bus (GY-87). Labels differ from I2C_SYS: 0x68 here
+# is the MPU6050, never the RTC.
+try:
+    from src.hal.board import i2c_ext_pins as _i2c_ext_pins_fn
+    _de = _i2c_ext_pins_fn()
+    if _de is not None:
+        print("[BOOT] I2C_EXT: I2C({}) SDA=GPIO{} SCL=GPIO{} {}kHz".format(
+            _de[0], _de[2], _de[1], _de[3] // 1000))
+        _de_found = i2c_scan_ext()
+        _de_names = {0x68: "MPU6050", 0x69: "MPU6050(AD0)", 0x0D: "QMC5883L", 0x1E: "HMC5883L", 0x2C: "QMC5883P", 0x77: "BMP180"}
+        if _de_found:
+            print("[BOOT] I2C_EXT scan: [{}]".format(", ".join(
+                "{} {}".format(hex(a), _de_names[a]) if a in _de_names else hex(a) for a in _de_found)))
+        else:
+            print("[BOOT] I2C_EXT scan: no devices (GY-87 not wired?)")
+        del _de_found, _de_names
+    del _de
+except Exception as _de_e:
+    print("[BOOT] I2C_EXT scan: FAILED", repr(_de_e))
+
 oled = init_oled()
 
-# Boot guard: hold button 2 s at power-on, OR create "debug_mode" file on flash.
-# Either triggers a clean halt → MicroPython REPL (for sensor/hardware testing).
-try:
-    from src.app.boot_guard import check as _boot_guard_check
-    if _boot_guard_check(oled):
-        raise SystemExit
-except SystemExit:
-    raise
-except Exception as _bg_e:
-    print("[BOOT] boot_guard error (ignored):", repr(_bg_e))
+# Boot guard part 2: the EARLY sample above (top of file) already decided
+# whether to enter debug mode — hold button 2 s at power-on, OR a "debug_mode"
+# file on flash. Now that the OLED exists, show the screen and wait:
+#   button click → machine.reset()   Ctrl-C → SystemExit → live REPL
+if _bg_debug:
+    try:
+        from src.app.boot_guard import enter_debug
+        enter_debug(oled)
+    except SystemExit:
+        raise
+    except Exception as _bg_e:
+        print("[BOOT] boot_guard error (ignored):", repr(_bg_e))
+    # enter_debug only returns if it couldn't build a button Pin; hand over
+    # the REPL anyway rather than continuing a boot the user tried to stop.
+    raise SystemExit
 
 
 def _preload_screens(oled, is_pico=False, turtle_mode=False):
@@ -772,6 +956,7 @@ def _preload_screens(oled, is_pico=False, turtle_mode=False):
             "src.ui.screens.gps",       # GPS status + manual logging (hold flow)
             "src.ui.screens.compass",   # compass heading screen (turtle sensor carousel)
             "src.ui.screens.sailpoint", # AS5600 sail angle screen (turtle only)
+            "src.ui.screens.bluetooth", # Turtle Wrangler on/off (connectivity carousel)
             # Nav stack: imported post-WiFi via _get_nav()/get_screen("state")
             # when the heap is fragmented — bytecode must be resident by then.
             "src.nav.state_machine",    # ~1 KB — also imported by telemetry on every send
@@ -880,7 +1065,14 @@ if (_is_esp32 or _is_pico) and _preload_needed:
     _wlan_pre = None
     _net_pre = None
 
-if _preload_needed:
+# XIAO ESP32-S3: the Python heap is in 8 MB PSRAM, so there is no post-WiFi
+# fragmentation to guard against and lazy screen imports at runtime are cheap.
+# The full preload was ~110 KB of module bytecode imported serially with a
+# gc.collect() between each — several seconds of blank OLED before the boot
+# bar could even draw. Skip it here; run()'s screen cache imports each screen
+# on first use instead. WiFi PHY pre-activation above still runs (it's cheap
+# and lets step_wifi connect from an already-active radio).
+if _preload_needed and not _is_xiao:
     _preload_screens(
         oled,
         is_pico=_is_pico,
@@ -985,18 +1177,11 @@ def step_wifi():
         except Exception:
             pass
 
-        # Dot ticker: updates OLED footer with "WiFi connect...." on each
-        # connection poll (once per second on ESP32).
-        # WiFi is step 1 of 6, so p_prev = 1/6 ≈ 0.167.
-        _dots = [0]
-
+        # Animate the shared per-step ticker (boot_pipeline created it at
+        # zero dots before calling this function) from the connect poll loop.
         def _wifi_tick():
-            _dots[0] += 1
-            if booter:
-                try:
-                    booter._draw_frame(p=1.0 / 6.0, footer="WiFi connect" + "." * _dots[0])
-                except Exception:
-                    pass
+            if booter and booter.step_ticker:
+                booter.step_ticker.tick()
 
         ok, ip, status = wifi.connect(
             cfg.get("wifi_ssid", ""),
@@ -1059,8 +1244,53 @@ def step_api():
             pass
         return True, "SKIPPED (No WiFi)"
 
-    ok, detail, info = api_device_lookup(cfg)
+    # This is the slowest boot step (DNS + connect + server round-trip), so
+    # unlike step_rtc it's worth ticking: pass the shared per-step ticker's
+    # tick() in so _api_get_ticked() can animate dots while it waits on the
+    # socket instead of freezing at zero dots for the whole request.
+    _tick_fn = booter.step_ticker.tick if (booter and booter.step_ticker) else None
+    ok, detail, info = api_device_lookup(cfg, tick_fn=_tick_fn)
     api_boot = info
+
+    # Persist the mission destination (missions_tb.target_*) into config so
+    # nav has a target even before an operator sets a test-project one, and
+    # so it survives the next offline boot. Update the in-RAM boot `cfg` too
+    # — step_init_runtime() builds the NavController from it.
+    try:
+        if ok and isinstance(info, dict):
+            _md = info.get("mission_destination")
+            _updates = {}
+            if isinstance(_md, (list, tuple)) and len(_md) == 2:
+                _updates["mission_destination"] = [float(_md[0]), float(_md[1])]
+            _fn = info.get("mission_dest_full_name")
+            if _fn:
+                _updates["mission_dest_full_name"] = str(_fn)
+            _sn = info.get("mission_dest_short_name")
+            if _sn:
+                _updates["mission_dest_short_name"] = str(_sn)
+            # turtles_tb.name, so an offline boot still has a name to show and
+            # to advertise over Bluetooth.
+            _dn = str(info.get("device_name") or "").strip()
+            if _dn:
+                _updates["device_name"] = _dn
+            # airOS takes its time zone from the server: air2.earthen.io
+            # derives it from the owner's account and an AirBuddy has no
+            # phone to set it. A turtle never does (its zone comes from
+            # Wrangler's TIMEZONE_SET; hopeturtles.org has no per-turtle zone).
+            if cfg is not None and not cfg.get("turtle_mode", True):
+                _tz = info.get("tz_offset_min")
+                if _tz is not None:
+                    _updates["timezone_offset_min"] = int(_tz)
+            if _updates and cfg is not None:
+                _changed = any(cfg.get(k) != v for k, v in _updates.items())
+                if _changed:
+                    cfg.update(_updates)
+                    from config import update_config
+                    update_config(_updates)
+                    print("[BOOT] synced from API: destination={} name={!r}".format(
+                        _updates.get("mission_destination"), _updates.get("device_name")))
+    except Exception as e:
+        print("[BOOT] mission destination sync failed:", repr(e))
 
     try:
         from src.ui import connection_header
@@ -1073,6 +1303,11 @@ def step_api():
 
 def step_rtc():
     global rtc_info
+    # The DS3231 read is a single fast I2C call with no loop to tick the
+    # shared ticker from, so this stays at the zero dots boot_pipeline
+    # already drew for this step. (The rare NTP fallback below is a single
+    # blocking call too, but it's the exception path, not the common case
+    # step_api's ticking was added for.)
     ok, detail, info = sync_rtc_from_ds3231()
     rtc_info = info
 
@@ -1093,6 +1328,7 @@ def step_rtc():
                 info["synced"] = True
                 info["dt_utc"] = ntp.get("dt_utc")
                 info["unix"] = ntp.get("unix")
+                info["source"] = "ntp"
                 _ntp_src = " via NTP"
                 print("[RTC] NTP sync OK")
             else:
@@ -1102,7 +1338,7 @@ def step_rtc():
 
     # NOT FOUND only if DS3231 absent and NTP also failed
     if not info.get("detected") and not info.get("synced"):
-        return True, "NOT FOUND"
+        return True, "RTC not found"
 
     if not info.get("synced"):
         _r = info.get("reason") or info.get("error") or "?"
@@ -1115,13 +1351,10 @@ def step_rtc():
 
     h, mi = dt[4], dt[5]
 
+    # The turtle's own time zone (config, set from the phone), never the
+    # server's, so this line agrees with the Time screen.
     tz_min = None
-    try:
-        if isinstance(api_boot, dict):
-            tz_min = api_boot.get("tz_offset_min")
-    except Exception:
-        pass
-    if tz_min is None and cfg:
+    if cfg:
         try:
             tz_min = cfg.get("timezone_offset_min")
         except Exception:
@@ -1133,11 +1366,11 @@ def step_rtc():
             total_min = h * 60 + mi + tz_min
             lh = (total_min // 60) % 24
             lmi = total_min % 60
-            return True, "Ok! Its {:02d}:{:02d}".format(lh, lmi)
+            return True, "Its {:02d}:{:02d}".format(lh, lmi)
         except Exception:
             pass
 
-    return True, "Ok! Its {:02d}:{:02d}".format(h, mi)
+    return True, "Its {:02d}:{:02d}".format(h, mi)
 
 
 def step_warmup():
@@ -1153,14 +1386,18 @@ def step_warmup():
     has_aht   = I2C_ADDR_AHT2X  in addrs   # AHT10/AHT21 — temp + humidity
     has_ens   = I2C_ADDR_ENS160 in addrs   # ENS160       — eco2, tvoc, aqi
     has_scd41 = I2C_ADDR_SCD41  in addrs   # SCD41        — true co2, temp2
-    # BME280: 0x76 (SDO=LOW) or 0x77 (SDO=HIGH — also used by BMP280 at alt addr)
-    _bme_addr = (I2C_ADDR_BME280_ALT if I2C_ADDR_BME280_ALT in addrs
-                 else I2C_ADDR_BME280 if I2C_ADDR_BME280 in addrs
-                 else None)
+    # BME280: 0x76 (SDO=LOW) or 0x77 (SDO=HIGH — also used by BMP280 at alt addr).
+    # 0x77 is ALSO the GY-87's BMP180 barometer (owned by step_imu). Only hand
+    # 0x77 to AirSensor when the chip-ID register says BME280 (0x60) / BMP280 (0x58).
+    _bme_addr = None
+    if I2C_ADDR_BME280_ALT in addrs and _chip_id(I2C_ADDR_BME280_ALT) in (0x60, 0x58):
+        _bme_addr = I2C_ADDR_BME280_ALT
+    elif I2C_ADDR_BME280 in addrs:
+        _bme_addr = I2C_ADDR_BME280
     has_bme   = _bme_addr is not None
 
     if not (has_aht or has_ens or has_scd41 or has_bme):
-        return True, "NO SENSORS DETECTED"
+        return True, "No sensors found"
 
     # Line 2 of 3: inventory of detected sensor chips
     found = []
@@ -1257,7 +1494,7 @@ def step_as5600():
     """Probe the AS5600 magnetic angle sensor (sail position, 0x36)."""
     addrs = i2c_scan()
     if I2C_ADDR_AS5600 not in addrs:
-        return True, "NOT FOUND"
+        return True, "AS5600 not found"
     try:
         _gc()
         from src.drivers.as5600 import AS5600
@@ -1276,55 +1513,206 @@ def step_as5600():
         return True, "ERROR"
 
 
-def step_mpu9250():
-    """Probe the MPU-9250 IMU (0x69) and confirm AK8963 bypass (0x0C)."""
+# Built once here, shared by NavController (HeadingSource), the compass screen
+# and the telemetry scheduler via run(imu=...). None when no GY-87 is present.
+_rt_imu = None
+
+
+def step_imu():
+    """Probe the GY-87 10DOF board on I2C_EXT: MPU6050 (0x68 factory, or
+    0x69 with AD0 high), its aux-bus magnetometer (QMC5883L 0x0D / HMC5883L
+    0x1E / QMC5883P 0x2C, visible after bypass) and BMP180 (0x77). The GY87 instance is kept
+    in _rt_imu so nothing else re-probes the bus.
+
+    The IMU is never looked for on I2C_SYS: 0x68 there is the DS3231. A
+    standalone GY-271 compass on I2C_SYS still boots green — HeadingSource
+    finds it itself (src/nav/heading.py)."""
+    global _rt_imu
+
+    ext = i2c_scan_ext()
+    imu_addr = None
+    if I2C_ADDR_MPU6050 in ext:
+        imu_addr = I2C_ADDR_MPU6050
+    elif I2C_ADDR_MPU6050_ALT in ext:
+        imu_addr = I2C_ADDR_MPU6050_ALT
+
+    if imu_addr is not None or I2C_ADDR_BMP180 in ext:
+        try:
+            _gc()
+            from src.hal.board import init_i2c_ext
+            from src.drivers.gy87 import GY87
+            dev = GY87(init_i2c_ext(), imu_addr=(imu_addr or I2C_ADDR_MPU6050))
+            if dev.is_present or dev.baro is not None:
+                _rt_imu = dev
+                # A GY-87 without its mag is a failed compass, even if the
+                # IMU or barometer answered.
+                if dev.mag is None:
+                    return False, "Compass FAIL - " + dev.summary() + " only"
+                return True, "OK - " + dev.summary()
+        except Exception as e:
+            print("[IMU] GY87 probe failed:", repr(e))
+    else:
+        print("[IMU] no GY-87 on I2C_EXT (SDA=GPIO8 SCL=GPIO3)")
+
+    # Standalone compass on I2C_SYS (legacy GY-271 wiring).
     addrs = i2c_scan()
-    if I2C_ADDR_MPU9250 not in addrs:
-        return True, "NOT FOUND"
     try:
         _gc()
-        from src.drivers.mpu9250 import MPU9250
-        imu = MPU9250(init_i2c())
-        if not imu.is_present:
-            return True, "init failed"
-        if imu.mag is None:
-            return True, "OK gyro/accel - AK8963 bypass FAILED"
-        return True, "OK - gyro/accel + AK8963 (0x0C)"
-    except Exception:
-        return True, "ERROR"
-
-
-def step_servo():
-    """
-    Probe the servo output.  PWM init always succeeds on ESP32-S3 regardless
-    of physical wiring, so the servo_present config flag is authoritative.
-    """
-    pin = None
-    try:
-        from src.hal.board import servo_pin as _sp
-        pin = _sp()
+        from src.drivers.hmc5883l_qmc5883l import QMC5883L, HMC5883L, QMC5883P
+        i2c = init_i2c()
+        if I2C_ADDR_QMC5883 in addrs:
+            m = QMC5883L(i2c)
+            if m.is_present:
+                return True, "QMC5883L standalone (0x0D)"
+        if I2C_ADDR_HMC5883 in addrs:
+            m = HMC5883L(i2c)
+            if m.is_present:
+                return True, "HMC5883L standalone (0x1E)"
+        if I2C_ADDR_QMC5883P in addrs:
+            m = QMC5883P(i2c)
+            if m.is_present:
+                return True, "QMC5883P standalone (0x2C)"
     except Exception:
         pass
 
-    if pin is None:
-        print("[BOOT] Servo: no servo pin on this board")
-        return True, "No servo pin"
+    return False, "Compass NOT FOUND"
 
-    is_present = bool(cfg and cfg.get("servo_present", False))
-    if not is_present:
-        print("[BOOT] Servo: not wired (servo_present=false in config)")
-        return True, "Not wired"
+
+_rt_i2c = None
+_rt_ina = None
+_rt_gps = None
+_rt_wifi_mgr = None
+_rt_nav = None
+_rt_turtle_scr = None
+_rt_ble = None
+
+
+def _rt_mission_name():
+    # Mirrors src/app/main.py's _mission_name() — kept here too since
+    # TurtleWaitingScreen is now built during boot, before run() exists.
+    try:
+        if isinstance(api_boot, dict):
+            sn = api_boot.get("mission_short_name") or api_boot.get("mission_full_name")
+            if sn:
+                return sn
+    except Exception:
+        pass
+    return None
+
+
+def step_init_runtime():
+    """
+    Build the runtime objects (I2C, battery monitor, GPS session, WiFi
+    manager, nav controller, turtle waiting screen) that src.app.main.run()
+    used to construct silently AFTER the boot screen had already gone
+    blank — leaving several seconds of dead screen between "Locked &
+    loaded!" and the first drawn frame. Building them here keeps that work
+    visible under the boot logo/progress bar instead. run() uses whatever
+    was built here and only falls back to building it itself if a piece is
+    missing (e.g. this step was skipped on Pico, or something here failed).
+    """
+    global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr, _rt_ble
+
+    if _is_pico:
+        # Pico's tight heap doesn't have room for a second copy of this setup
+        # living in device/main.py's globals *and* run()'s locals — leave the
+        # Pico path exactly as it was.
+        return True, "SKIPPED (pico)"
+
+    if not cfg:
+        return True, "SKIPPED (No config)"
+
+    _gc()
 
     try:
-        _gc()
-        from src.drivers.servo import Servo
-        s = Servo(pin)
-        s.deinit()
-        print("[BOOT] Servo: OK GPIO{}".format(pin))
-        return True, "Servo OK (GPIO{})".format(pin)
+        _rt_i2c = init_i2c()
     except Exception as e:
-        print("[BOOT] Servo: init failed:", repr(e))
-        return True, "Servo init FAIL"
+        print("[NAV] i2c init failed:", repr(e))
+        _rt_i2c = None
+
+    try:
+        from src.drivers.ina219 import INA219
+        INA219.BATT_R_OHM = float(cfg.get("battery_r_ohm", INA219.BATT_R_OHM))
+        _ina = INA219(_rt_i2c, auto_init=True)
+        _rt_ina = _ina if _ina.is_present else None
+    except Exception:
+        _rt_ina = None
+
+    if cfg.get("gps_enabled", False):
+        try:
+            from src.sensors.xiao_gnss import GnssModule
+            _rt_gps = GnssModule(uart_id=GPS_UART_ID, baud=GPS_BAUD,
+                                  tx_pin=GPS_TX_PIN, rx_pin=GPS_RX_PIN)
+            _rt_gps.configure_mode(cfg.get("turtle_mode", False),
+                                    module=cfg.get("gps_module", "l76k"))
+        except Exception as e:
+            print("[NAV] gps init failed:", repr(e))
+            _rt_gps = None
+
+    # Same ESP32 gating run() used to apply: only re-enter the WiFi driver
+    # here if boot's own connection attempt actually succeeded, to avoid
+    # RTCWDT risk from broken driver state.
+    _boot_wifi_ok = isinstance(wifi_boot, dict) and wifi_boot.get("ok")
+    _wifi_manager_ok = _boot_wifi_ok if _is_esp32 else True
+    if cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+        try:
+            from src.net.net_caps import wifi_supported
+            if wifi_supported():
+                from src.net.wifi_manager import WiFiManager
+                _rt_wifi_mgr = WiFiManager()
+        except Exception as e:
+            print("[NAV] wifi manager init failed:", repr(e))
+            _rt_wifi_mgr = None
+
+    if not cfg.get("turtle_mode", False):
+        _gc()
+        return True, "OK"
+
+    # Turtle Wrangler BLE peripheral (docs/wrangler/). Built once; the radio
+    # only comes up when ble_enabled. run() ticks it from _bg_tick.
+    try:
+        from src.net import ble_service
+        _rt_ble = ble_service.init(cfg)
+    except Exception as e:
+        print("[BLE] init failed:", repr(e))
+        _rt_ble = None
+
+    nav_servo = None
+    if cfg.get("servo_present", False):
+        try:
+            from src.hal.board import servo_pin as _servo_pin
+            from src.drivers.servo import Servo
+            _sp = _servo_pin()
+            if _sp is not None:
+                nav_servo = Servo(_sp)
+        except Exception as e:
+            print("[NAV] servo init failed:", repr(e))
+
+    try:
+        from src.nav.controller import NavController
+        _rt_nav = NavController(cfg, i2c=_rt_i2c, gps=_rt_gps,
+                                 servo=nav_servo, battery=_rt_ina,
+                                 imu=_rt_imu)
+    except Exception as e:
+        print("[NAV] controller init failed:", repr(e))
+        _rt_nav = None
+
+    if oled is not None:
+        try:
+            from src.ui.screens.turtle_waiting import TurtleWaitingScreen
+            _rt_turtle_scr = TurtleWaitingScreen(
+                oled,
+                nav_get=lambda: _rt_nav,
+                mission_get=_rt_mission_name,
+                battery_get=lambda: (_rt_ina.battery_v() if _rt_ina else None),
+                current_get=lambda: (_rt_ina.current_ma() if _rt_ina else None),
+            )
+        except Exception as e:
+            print("[NAV] turtle_waiting init failed:", repr(e))
+            _rt_turtle_scr = None
+
+    _gc()
+    return True, ("OK" if _rt_nav else "NAV FAIL")
 
 
 # Keep the Pin object alive in a module-level global so GC cannot finalize it
@@ -1400,21 +1788,35 @@ def step_led():
 #   - WiFi early (ESP32 heap stability), API right after WiFi.
 _turtle_boot = bool((_early_cfg or {}).get("turtle_mode", False))
 
+# Labels intentionally carry no trailing "...": boot_pipeline gives every
+# step its own DotTicker (starts at zero dots) that ticks only if the step's
+# fn() has a poll loop to drive it. A hardcoded "..." would misrepresent a
+# step that finished before a single dot could show.
 steps = [
-    ("LED check...", step_led),
-    ("Loading config...", step_load_config),
+    ("LED check", step_led),
+    ("Loading config", step_load_config),
     ("WiFi connect", step_wifi),
-    ("Device API check...", step_api),
-    ("RTC clock...", step_rtc),
-    ("Warming sensors...", step_warmup),
-    ("GPS check...", step_gps),
-    ("MPU-9250 IMU...", step_mpu9250),  # imports MPU9250 driver if found; wakes chip + enables AK8963 bypass
+    ("Device API check", step_api),
+    ("RTC clock", step_rtc, True, 1500),  # hold the synced time on screen 1.5 s
+    ("Warming sensors", step_warmup),
+    ("GPS check", step_gps),
+    ("10DOF IMU", step_imu),  # GY-87: MPU6050 + aux-bus mag (bypass) + BMP180; instance kept in _rt_imu
 ]
 if _turtle_boot:
     steps += [
-        ("AS5600 sailpoint...", step_as5600),  # imports AS5600 driver if found on I2C
-        ("Servo check...", step_servo),        # imports Servo driver if servo_present=true
+        ("AS5600 sailpoint", step_as5600),  # imports AS5600 driver if found on I2C
     ]
+
+# Last step: build the runtime objects run() needs (I2C, battery, GPS
+# session, WiFi manager, nav controller, turtle waiting screen) here, under
+# the boot bar, instead of leaving them to run() to build silently behind a
+# blank screen. Label reflects what's actually happening in each mode.
+# show_footer=False: its label is shown again — centered, full-screen — by
+# boot_pipeline's finishing transition right after this step completes, so
+# the under-logo footer is suppressed to avoid printing it twice.
+steps += [
+    ("Initiating nav" if _turtle_boot else "Finishing boot", step_init_runtime, False),
+]
 
 if booter:
     try:
@@ -1423,12 +1825,15 @@ if booter:
             intro_ms=500,
             fps=18,
             settle_ms=BOOT_STEP_HOLD_MS,  # <-- hold each step on OLED
-            logger=_log
+            logger=_log,
+            # "\n" -> stacked centered lines; dots animate on the last line.
+            finishing_label=("Initiating\nNav" if _turtle_boot else "Finishing boot"),
         )
     except Exception as e:
         print("BOOTER error:", repr(e))
 else:
-    for label, fn in steps:
+    for _item in steps:
+        label, fn = _item[0], _item[1]  # steps may be 2-, 3- or 4-tuples
         _log("[BOOT] " + label)
         try:
             ok, detail = fn()
@@ -1521,7 +1926,15 @@ if _btn_hal_ok:
             oled=oled,
             air_sensor=air,
             boot_warmup_started=True,
-            rtc_info=rtc_info
+            rtc_info=rtc_info,
+            i2c=_rt_i2c,
+            ina_dev=_rt_ina,
+            gps=_rt_gps,
+            wifi_manager=_rt_wifi_mgr,
+            nav_controller=_rt_nav,
+            turtle_waiting_scr=_rt_turtle_scr,
+            imu=_rt_imu,
+            ble=_rt_ble,
         )
     except Exception as e:
         # Write crash info with minimal heap — repr(e) is cheap, no traceback capture

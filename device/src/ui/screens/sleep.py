@@ -99,6 +99,14 @@ class SleepScreen:
         fresh wrangle window (only if it was on before)."""
         self.oled.poweroff()
 
+        # Cut the servo rail now rather than after the idle timeout. An
+        # autopilot that steers during sleep powers it back on.
+        try:
+            from src.drivers import servo_power
+            servo_power.off("(sleep)")
+        except Exception:
+            pass
+
         _ble = None
         try:
             from src.net import ble_service

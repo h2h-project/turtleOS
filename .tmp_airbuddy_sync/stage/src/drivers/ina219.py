@@ -4,6 +4,23 @@
 
 import time
 
+# Battery percent: linear between these rest voltages of the single Li-ion
+# cell, on INA219.battery_v() (the I x R swing removed, so it reads the same
+# charging and not). The one estimator: NavController (low-battery trim,
+# Bluetooth Power soc_pct) and telemetry (ina_batt_pct) both call it.
+BATT_EMPTY_V = 3.30
+BATT_FULL_V = 4.20
+
+
+def pct_from_volts(volts):
+    """Battery percent 0-100 from a battery_v() reading, or None."""
+    if volts is None:
+        return None
+    try:
+        return max(0, min(100, int((float(volts) - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100)))
+    except Exception:
+        return None
+
 
 class INA219:
     # Registers
@@ -28,6 +45,13 @@ class INA219:
     _SADCRES_12BIT_1S = 0x0018
 
     _MODE_SANDBVOLT_CONTINUOUS = 0x0007
+
+    # Battery-side resistance (ohms) between the shunt's VIN+ pin and the
+    # cell's open-circuit voltage: cell internal resistance + leads + JST.
+    # battery_v() uses it to undo the I*R swing that makes the pack read
+    # ~0.1 V high on charge and low under load. Class-wide, so boot sets it
+    # once from config "battery_r_ohm" and every instance picks it up.
+    BATT_R_OHM = 0.5
 
     def __init__(self, i2c, addr=0x40, shunt_ohms=0.1, max_expected_amps=2.0, auto_init=True):
         self.i2c = i2c
@@ -154,14 +178,12 @@ class INA219:
     def current_ma(self):
         if not self.is_present:
             return None
-        self._write_register(self._REG_CALIBRATION, self.calibration_value)
         raw = self._to_signed(self._read_register(self._REG_CURRENT))
         return raw * self.current_lsb * 1000.0
 
     def power_mw(self):
         if not self.is_present:
             return None
-        self._write_register(self._REG_CALIBRATION, self.calibration_value)
         raw = self._read_register(self._REG_POWER)
         return raw * self.power_lsb * 1000.0
 
@@ -173,6 +195,38 @@ class INA219:
         if bus_v is None or shunt_mv is None:
             return None
         return bus_v + (shunt_mv / 1000.0)
+
+    # ----------------------------
+    # Battery view
+    #
+    # On the turtle the INA219 sits in the battery lead: VIN+ on the pack,
+    # VIN- on the XIAO's BAT pad. So current_ma() is positive while the
+    # XIAO draws from the pack and negative while USB charges it, and the
+    # bus register measures VIN- -- the XIAO side of the shunt, not the
+    # cell. Neither raw value is the battery's charge voltage: the charger
+    # pushes the terminal above the cell's rest voltage and a load pulls it
+    # below, by I x (shunt + leads + cell resistance).
+    # ----------------------------
+    def charge_ma(self):
+        """Pack current in mA, positive = charging, negative = discharging."""
+        c = self.current_ma()
+        return None if c is None else -c
+
+    def battery_pct(self):
+        """Battery percent from battery_v() (see pct_from_volts), or None."""
+        return pct_from_volts(self.battery_v())
+
+    def battery_v(self):
+        """Estimated rest (open-circuit) voltage of the pack: VIN+ with the
+        I x BATT_R_OHM swing removed. Use this for display and state of
+        charge so plugging in USB doesn't make the level jump."""
+        load_v = self.load_voltage_v()
+        if load_v is None:
+            return None
+        c = self.current_ma()
+        if c is None:
+            return load_v
+        return load_v + (c / 1000.0) * self.BATT_R_OHM
 
     # ----------------------------
     # Convenience

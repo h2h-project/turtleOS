@@ -76,8 +76,18 @@ def run(
         boot_warmup_started=False,
         rtc_info=None,
         gps_boot=None,
+        i2c=None,
+        ina_dev=None,
+        gps=None,
+        wifi_manager=None,
+        nav_controller=None,
+        turtle_waiting_scr=None,
+        imu=None,
+        ble=None,
 ):
     BTN_PIN = _resolve_btn_pin_default()
+    # Shared GY-87 10DOF instance built by device/main.py step_imu() (or None).
+    _imu_dev = imu
     from config import load_config
     from src.input.button import AirBuddyButton
     from src.ui.waiting import WaitingScreen
@@ -117,11 +127,14 @@ def run(
     # no stale 100 kHz handles linger alongside the new peripheral init.
     # Use air_sensor (the parameter) not air (assigned later at line ~220).
     # ------------------------------------------------------------
-    if init_i2c:
-        i2c = init_i2c()
-    else:
-        from machine import I2C, Pin
-        i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
+    if i2c is None:
+        # Fallback path: only hit when step_init_runtime() (device/main.py)
+        # didn't build one — e.g. on Pico, or if it failed.
+        if init_i2c:
+            i2c = init_i2c()
+        else:
+            from machine import I2C, Pin
+            i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
 
     if air_sensor is not None:
         air_sensor._i2c = i2c
@@ -138,15 +151,20 @@ def run(
         except Exception:
             pass
 
-    _ina_dev = None
-    try:
-        from src.drivers.ina219 import INA219 as _INA219
-        _gc()
-        _ina_dev = _INA219(i2c, auto_init=True)
-        if not _ina_dev.is_present:
+    _ina_dev = ina_dev
+    if _ina_dev is None:
+        try:
+            from src.drivers.ina219 import INA219 as _INA219
+            _gc()
+            try:
+                _INA219.BATT_R_OHM = float(load_config().get("battery_r_ohm", _INA219.BATT_R_OHM))
+            except Exception:
+                pass
+            _ina_dev = _INA219(i2c, auto_init=True)
+            if not _ina_dev.is_present:
+                _ina_dev = None
+        except Exception:
             _ina_dev = None
-    except Exception:
-        _ina_dev = None
 
     rtc = rtc_info if isinstance(rtc_info, dict) else {}
 
@@ -159,7 +177,9 @@ def run(
         GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN = (1, 9600, 8, 9)
 
     _gps_cfg = load_config() or {}
-    if _gps_cfg.get("gps_enabled", False) and init_gps is not None:
+    if gps is None and _gps_cfg.get("gps_enabled", False) and init_gps is not None:
+        # Fallback path: only hit when step_init_runtime() didn't build a
+        # GPS session already (e.g. on Pico).
         try:
             gps = init_gps(
                 uart_id=GPS_UART_ID,
@@ -177,7 +197,7 @@ def run(
                 )
             except Exception as e:
                 print("[GPS] configure:", repr(e))
-    else:
+    elif not _gps_cfg.get("gps_enabled", False):
         gps = None
 
     try:
@@ -195,12 +215,18 @@ def run(
         if gps is None:
             gps_state = GPS_NONE
             return
-        # Hardware present — check UART buffer for incoming bytes.
-        # Ublox6GPS exposes gps.uart, not gps.any() directly.
+        # Hardware present and enabled → at least GPS_INIT (empty icon).
+        # GPS_FIXED (filled icon) only when there's an actual satellite fix:
+        # a recent lat/lon in the shared gpsfix cache. Incoming UART bytes
+        # just mean the module is streaming NMEA — it emits RMC/GGA with the
+        # 'void' flag set long before it locks on, so uart.any() is not a
+        # fix. Whoever drains the UART (NavController / telemetry) publishes
+        # to gpsfix; a fix older than ~10 s (10 missed 1 Hz epochs) is stale.
         gps_state = GPS_INIT
         try:
-            uart = getattr(gps, "uart", None)
-            if uart is not None and uart.any():
+            from src.nav import gpsfix as _gpsfix
+            lat, lon, age_ms = _gpsfix.get()
+            if lat is not None and lon is not None and age_ms is not None and age_ms < 10000:
                 gps_state = GPS_FIXED
         except Exception:
             pass
@@ -230,7 +256,7 @@ def run(
     waiting = WaitingScreen(
         room_get=_room_name,
         battery_present_get=lambda: _ina_dev is not None,
-        battery_level_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+        battery_level_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
     )
 
     def _mission_name():
@@ -248,8 +274,9 @@ def run(
             pass
         return None
 
-    turtle_waiting_scr = None
-    if _gps_cfg.get("turtle_mode", False) and oled is not None:
+    if turtle_waiting_scr is None and _gps_cfg.get("turtle_mode", False) and oled is not None:
+        # Fallback path: only hit when step_init_runtime() didn't build one
+        # already (e.g. on Pico, or if it failed there).
         try:
             _gc()
             from src.ui.screens.turtle_waiting import TurtleWaitingScreen
@@ -260,7 +287,8 @@ def run(
                 oled,
                 nav_get=lambda: _nav_cell[0],
                 mission_get=_mission_name,
-                battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                battery_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
+                current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
             )
             _gc()
         except Exception as e:
@@ -292,8 +320,10 @@ def run(
         _is_esp32_loop = False
 
     _wifi_manager_ok = _boot_wifi_ok if _is_esp32_loop else True
-    wifi = None
-    if _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+    wifi = wifi_manager
+    if wifi is None and _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+        # Fallback path: only hit when step_init_runtime() didn't build one
+        # already (e.g. on Pico).
         try:
             from src.net.wifi_manager import WiFiManager
             wifi = WiFiManager()
@@ -392,6 +422,8 @@ def run(
                 wifi_manager=wifi,
                 gps=gps,
                 battery_sensor=_ina_dev,
+                imu=_imu_dev,
+                heading_getter=lambda: (_nav_cell[0].heading_deg() if _nav_cell[0] else None),
             )
             telemetry_started = True
             print("[TELEMETRY] Started.")
@@ -536,6 +568,10 @@ def run(
                 from src.ui.screens.wifi import WiFiScreen
                 screens[name] = WiFiScreen(oled)
 
+            elif name == "bluetooth":
+                from src.ui.screens.bluetooth import BluetoothScreen
+                screens[name] = BluetoothScreen(oled)
+
             elif name == "online":
                 from src.ui.screens.online import OnlineScreen
                 screens[name] = OnlineScreen(oled)
@@ -589,8 +625,12 @@ def run(
 
             elif name == "compass":
                 from src.ui.screens.compass import CompassScreen
-                screens[name] = CompassScreen(oled, i2c=i2c,
-                                              offset_deg=cfg.get("compass_offset_deg", 0))
+                _nav_for_compass = _get_nav()
+                screens[name] = CompassScreen(
+                    oled,
+                    heading_src=(_nav_for_compass.heading_source() if _nav_for_compass else None),
+                    i2c=i2c,
+                    offset_deg=cfg.get("compass_offset_deg", 0))
 
             elif name == "sailpoint":
                 from src.ui.screens.sailpoint import SailpointScreen
@@ -604,7 +644,12 @@ def run(
                     _sp = _servo_pin()
                 except Exception:
                     _sp = None
-                screens[name] = ServoScreen(oled, servo_pin=_sp)
+                screens[name] = ServoScreen(
+                    oled,
+                    servo_pin=_sp,
+                    i2c=i2c,
+                    ina=_ina_dev,
+                )
 
             elif name == "battery":
                 from src.ui.screens.battery import BatteryScreen
@@ -613,6 +658,10 @@ def run(
             elif name == "destination":
                 from src.ui.screens.destination import DestinationScreen
                 screens[name] = DestinationScreen(oled)
+
+            elif name == "journey":
+                from src.ui.screens.journey import JourneyScreen
+                screens[name] = JourneyScreen(oled)
 
             elif name == "sleep":
                 from src.ui.screens.sleep import SleepScreen
@@ -632,7 +681,8 @@ def run(
                     oled,
                     nav_get=lambda: _nav_cell[0],
                     mission_get=_mission_name,
-                    battery_get=lambda: (_ina_dev.bus_voltage_v() if _ina_dev else None),
+                    battery_get=lambda: (_ina_dev.battery_v() if _ina_dev else None),
+                    current_get=lambda: (_ina_dev.current_ma() if _ina_dev else None),
                 )
 
             elif name == "state":
@@ -671,13 +721,29 @@ def run(
     # Calling load_config() every 500 ms allocates and frees JSON dicts that
     # fragment the heap even before telemetry fires.
     _cfg_cell = [{}]
+    # Config writes made through src.app.actions (OLED gestures, and later
+    # Bluetooth commands) mirror into _cfg_cell[0] so the background tick sees
+    # them immediately, not only after the carousel exits.
+    try:
+        from src.app.actions import bind_cfg_cell as _bind_cfg_cell
+        _bind_cfg_cell(_cfg_cell)
+    except Exception as e:
+        print("[ACTIONS] cfg bind failed:", repr(e))
+
+    # Turtle clock: settle the RTC coin-cell check, note where the time came
+    # from, and arm GPS time when it can't be trusted (secure_mode off only).
+    try:
+        from src.app import clock as _clock
+        _clock.boot(rtc, i2c, lambda: _cfg_cell[0] or _gps_cfg)
+    except Exception as e:
+        print("[TIME] clock boot failed:", repr(e))
 
     # ------------------------------------------------------------
     # NAV CONTROLLER (turtle_mode only) — lazy singleton.
     # Ticked from _bg_tick and from the state screen; NavController
     # self-rate-limits, so extra calls are cheap no-ops.
     # ------------------------------------------------------------
-    _nav_cell = [None]
+    _nav_cell = [nav_controller]
 
     def _get_nav():
         if _nav_cell[0] is not None:
@@ -700,7 +766,7 @@ def run(
                     print("[NAV] servo init failed:", repr(e))
             _nav_cell[0] = NavController(
                 cfg_now, i2c=i2c, gps=gps,
-                servo=nav_servo, battery=_ina_dev,
+                servo=nav_servo, battery=_ina_dev, imu=_imu_dev,
             )
             _gc()
             print("[NAV] controller ready")
@@ -708,7 +774,50 @@ def run(
             print("[NAV] controller init failed:", repr(e))
         return _nav_cell[0]
 
+    # Turtle Wrangler: hand the BLE service getters for everything its
+    # telemetry characteristics report (src/net/ble_telemetry.py). Getters,
+    # not values — nav and telemetry are built lazily and may be rebuilt.
+    def _ble_enter_sleep():
+        # Bluetooth SLEEP: the Sleep screen's own Good night -> sleep -> wake
+        # flow. Runs nested inside the BLE tick; the screen underneath
+        # redraws on its next cycle after waking.
+        scr = get_screen("sleep")
+        if scr is not None and hasattr(scr, "go_to_sleep"):
+            scr.go_to_sleep(btn, _bg_tick)
+
+    if ble is not None:
+        try:
+            ble.attach_sources({
+                "wifi": lambda: wifi,
+                "bg": lambda: _background_process,
+                "servo_screen": lambda: get_screen("servo"),
+                "enter_sleep": _ble_enter_sleep,
+                "nav": lambda: _nav_cell[0],
+                "ina": lambda: _ina_dev,
+                "imu": lambda: _imu_dev,
+                "gps": lambda: gps,
+                "status": lambda: status,
+                "cfg": lambda: _cfg_cell[0],
+                "telemetry": lambda: telemetry,
+                "air": lambda: air,
+                "rtc": lambda: rtc,
+                "i2c": lambda: i2c,
+            })
+        except Exception as e:
+            print("[BLE] attach sources failed:", repr(e))
+
+    # A screen polls the button only between _bg_tick() calls, so a slow
+    # tick makes every click feel late. Any tick over this many ms is logged
+    # as [SLOW] with a per-stage breakdown (telemetry / nav / ble).
+    _SLOW_TICK_MS = 40
+
+    # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
+    # walks the whole heap (~50 ms each), and the two that used to bracket
+    # tick_telemetry() cost ~100 ms of every tick, long enough to swallow a
+    # click. MicroPython's automatic collection is plenty at this headroom.
     def _bg_tick():
+        t0 = time.ticks_ms()
+        t_tel = t_nav = t_ble = t0
         try:
             # Skip wlan.isconnected() when background_process is active — it blocks
             # on the WiFi driver mutex while WPA2 auth is running on the bg thread.
@@ -716,16 +825,32 @@ def run(
             if _background_process is None:
                 status["wifi_ok"] = bool(wifi.is_connected())
             start_telemetry_if_ready(_cfg_cell[0])
-            _gc()
+            t_tel = time.ticks_ms()
             tick_telemetry(_cfg_cell[0])
-            _gc()
+            t_tel = time.ticks_diff(time.ticks_ms(), t_tel)
         except Exception:
-            pass
+            t_tel = 0
+        t_nav = time.ticks_ms()
         if _nav_cell[0] is not None:
             try:
                 _nav_cell[0].tick(_cfg_cell[0])
             except Exception:
                 pass
+        t_nav = time.ticks_diff(time.ticks_ms(), t_nav)
+        # Bluetooth housekeeping (advertising / wrangle window / header).
+        # Lives here, not only in the top-level loop, because every screen
+        # owns the loop while it is showing and calls tick_fn=_bg_tick.
+        t_ble = time.ticks_ms()
+        if ble is not None:
+            try:
+                ble.tick()
+            except Exception:
+                pass
+        t_ble = time.ticks_diff(time.ticks_ms(), t_ble)
+        total = time.ticks_diff(time.ticks_ms(), t0)
+        if total >= _SLOW_TICK_MS:
+            print("[SLOW] bg_tick {}ms  telemetry={} nav={} ble={}".format(
+                total, t_tel, t_nav, t_ble))
 
     # ========================================================
     # Idle callback — defined ONCE here, uses _cfg_cell so
@@ -769,6 +894,14 @@ def run(
         except Exception as e:
             print("[NAV] state init failed:", repr(e))
         _get_nav()
+
+    # A long press on any screen goes to the hold flow (Bluetooth first in
+    # turtle mode). Flows hand a hold back as "sleep"; it is parked here
+    # and dispatched next pass instead of waiting for a fresh gesture.
+    _pending_action = None
+
+    def _hold_only(a):
+        return "sleep" if a == "sleep" else None
 
     # ============================================================
     # MAIN LOOP
@@ -818,40 +951,43 @@ def run(
         _gc()
 
         # --- Waiting screen ---
-        print("[SCREEN] waiting")
-        # The send path no longer scans for WiFi on its own (that cost a
-        # full-power scan per telemetry send with no AP in range). Returning to
-        # idle is one of the few places allowed to ask for an association
-        # attempt; the background process enforces its own retry floor, so this
-        # is safe to call on every pass.
-        if _background_process is not None:
-            try:
-                _background_process.request_wifi_check()
-            except Exception:
-                pass
-        if turtle_waiting_scr is not None:
-            # tick_fn keeps the nav autopilot + telemetry cycling (~500 ms)
-            # while idle — the 4 s on_idle cadence is far too slow for
-            # SAIL-NAV's 200-500 ms control loop.
-            action = turtle_waiting_scr.show_live(
-                btn=btn,
-                tick_fn=_bg_tick,
-                on_idle=_idle,
-                idle_every_ms=500,
-                status=status,
-            )
-        else:
-            action = waiting.show_live(
-                oled,
-                btn,
-                line="Know thy air...",
-                animate=False,
-                wifi_ok=status["wifi_ok"],
-                gps_on=status["gps_on"],
-                api_ok=status["api_ok"],
-                on_idle=_idle,
-                idle_every_ms=500,
-            )
+        action = _pending_action
+        _pending_action = None
+        if action is None:
+            print("[SCREEN] waiting")
+            # The send path no longer scans for WiFi on its own (that cost a
+            # full-power scan per telemetry send with no AP in range). Returning to
+            # idle is one of the few places allowed to ask for an association
+            # attempt; the background process enforces its own retry floor, so this
+            # is safe to call on every pass.
+            if _background_process is not None:
+                try:
+                    _background_process.request_wifi_check(cfg=cfg)
+                except Exception:
+                    pass
+            if turtle_waiting_scr is not None:
+                # tick_fn keeps the nav autopilot + telemetry cycling (~500 ms)
+                # while idle — the 4 s on_idle cadence is far too slow for
+                # SAIL-NAV's 200-500 ms control loop.
+                action = turtle_waiting_scr.show_live(
+                    btn=btn,
+                    tick_fn=_bg_tick,
+                    on_idle=_idle,
+                    idle_every_ms=500,
+                    status=status,
+                )
+            else:
+                action = waiting.show_live(
+                    oled,
+                    btn,
+                    line="Know thy air...",
+                    animate=False,
+                    wifi_ok=status["wifi_ok"],
+                    gps_on=status["gps_on"],
+                    api_ok=status["api_ok"],
+                    on_idle=_idle,
+                    idle_every_ms=500,
+                )
 
         if action:
             try:
@@ -873,26 +1009,28 @@ def run(
         # --- Click routing ---
         if action == "triple":
             screens.clear(); _gc()
-            connectivity_carousel(
+            _pending_action = _hold_only(connectivity_carousel(
                 btn, oled, status, cfg, wifi,
                 None, None, gps,
                 get_screen,
                 tick_fn=_bg_tick,
                 telemetry=telemetry,
                 device_info=api_boot,
-            )
+            ))
             continue
 
         if action == "single":
             screens.clear(); _gc()
             # If temp/co2/tvoc missing, the improved get_screen() will now PRINT WHY.
-            sensor_carousel(btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
-                            telemetry=telemetry)
+            _pending_action = _hold_only(sensor_carousel(
+                btn, oled, air, get_screen, tick_fn=_bg_tick, gps=gps, cfg=cfg,
+                telemetry=telemetry))
             continue
 
         if action == "double":
             screens.clear(); _gc()
             _time_action = time_flow(btn, oled, cfg, wifi, None, get_screen, status=status, tick_fn=_bg_tick)
+            _pending_action = _hold_only(_time_action)
             if cfg.get("turtle_mode", False) and _time_action == "single":
                 _gc()
                 scr = get_screen("state")
@@ -912,7 +1050,7 @@ def run(
                                 print("[SCREEN] state")
                     except Exception:
                         print("[SCREEN] state")
-                    scr.show_live(btn=btn, tick_fn=_bg_tick)
+                    _pending_action = _hold_only(scr.show_live(btn=btn, tick_fn=_bg_tick))
             continue
 
         if action == "quad":
@@ -922,7 +1060,8 @@ def run(
             else:
                 scr = get_screen("turtle_waiting")
                 if scr is not None:
-                    scr.show_live(btn=btn, tick_fn=_bg_tick, status=status)
+                    _pending_action = _hold_only(
+                        scr.show_live(btn=btn, tick_fn=_bg_tick, status=status))
             continue
 
         if action == "sleep":

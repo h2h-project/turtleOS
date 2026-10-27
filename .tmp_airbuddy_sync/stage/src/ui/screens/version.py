@@ -1,11 +1,14 @@
 # src/ui/screens/version.py — Version / about screen (Pico / MicroPython safe)
 #
-# Static about screen: "A Human2Human Project" top-centre, the brand mark
-# (turtleOS / airOS, same font as the booter screen) centred, and the
-# firmware version number + "by Earthen.io" attribution on the bottom row.
+# Static about screen: the brand mark (turtleOS / airOS, same font as the
+# booter screen) near the top, the "Human to Human Hope Delivery" motto
+# under it in the small font, and the firmware version number centred
+# underneath in the medium font.
 #
 # Reached via: hold 2s -> Battery screen -> Sleep screen -> single click on
-# Sleep -> Version screen -> any click returns to the waiting screen.
+# Sleep -> Version screen -> single click returns to the waiting screen;
+# triple click flips turtle_mode (turtleOS <-> airOS) and reboots — the
+# caller (sleep_flow in flows.py) acts on the returned "triple" action.
 
 import time
 
@@ -28,76 +31,71 @@ class VersionScreen:
         self._turtle_screen_get = turtle_screen_get
 
     # ------------------------------------------------------------
-    # Bottom row: version number bottom-left, attribution bottom-right.
-    # ------------------------------------------------------------
-    def _draw_footer(self, dst):
-        o = self.oled
-        writer = getattr(o, "f_small", None)
-        if writer is None:
-            return
-
-        h = int(getattr(o, "height", 64))
-        w = int(getattr(o, "width", 128))
-        try:
-            _, line_h = o._text_size(writer, "Ag")
-        except Exception:
-            line_h = 7
-        y = h - line_h - 1
-
-        try:
-            writer.write("v" + str(VERSION_NUM), 0, y)
-        except Exception:
-            pass
-
-        attrib = "by Earthen.io"
-        try:
-            aw, _ = o._text_size(writer, attrib)
-            x = max(0, w - int(aw))
-        except Exception:
-            x = 0
-        try:
-            writer.write(attrib, x, y)
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------
-    # Top row: project tagline, centred.
-    # ------------------------------------------------------------
-    def _draw_tagline(self, dst):
-        o = self.oled
-        writer = getattr(o, "f_small", None)
-        if writer is None:
-            return
-        w = int(getattr(o, "width", 128))
-        txt = "A Human2Human Project"
-        try:
-            tw, _ = o._text_size(writer, txt)
-            x = max(0, (w - int(tw)) // 2)
-        except Exception:
-            x = 0
-        try:
-            writer.write(txt, x, 1)
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------
-    # Middle: brand mark, same font as the booter screen's brand label.
+    # Top: brand mark, same font as the booter screen's brand label.
     # ------------------------------------------------------------
     def _draw_brand(self, dst):
         o = self.oled
         writer = getattr(o, "f_arvo20", None) or getattr(o, "f_med", None)
         if writer is None:
-            return
+            return None
         w = int(getattr(o, "width", 128))
-        h = int(getattr(o, "height", 64))
         try:
             bw, bh = o._text_size(writer, self.brand)
         except Exception:
             bw, bh = len(self.brand) * 14, 20
         x = max(0, (w - int(bw)) // 2)
-        y = max(0, (h - int(bh)) // 2)
+        y = 2
         try:
             writer.write(self.brand, x, y)
+        except Exception:
+            pass
+        return y + bh
+
+    # ------------------------------------------------------------
+    # Motto: under the turtleOS brand mark only.
+    # ------------------------------------------------------------
+    def _draw_motto(self, dst, brand_bottom):
+        if not self.turtle_mode or brand_bottom is None:
+            return None
+        o = self.oled
+        writer = getattr(o, "f_small", None)
+        if writer is None:
+            return brand_bottom
+        w = int(getattr(o, "width", 128))
+        txt = "Human to Human Hope Delivery"
+        try:
+            tw, th = o._text_size(writer, txt)
+            x = max(0, (w - int(tw)) // 2)
+        except Exception:
+            th = 7
+            x = 0
+        y = brand_bottom + 3
+        try:
+            writer.write(txt, x, y)
+        except Exception:
+            pass
+        return y + th
+
+    # ------------------------------------------------------------
+    # Version number: centred, medium font, under the motto.
+    # ------------------------------------------------------------
+    def _draw_version(self, dst, top):
+        if top is None:
+            return
+        o = self.oled
+        writer = getattr(o, "f_med", None)
+        if writer is None:
+            return
+        w = int(getattr(o, "width", 128))
+        txt = "v" + str(VERSION_NUM)
+        try:
+            tw, _ = o._text_size(writer, txt)
+            x = max(0, (w - int(tw)) // 2)
+        except Exception:
+            x = 0
+        y = top + 4
+        try:
+            writer.write(txt, x, y)
         except Exception:
             pass
 
@@ -107,9 +105,9 @@ class VersionScreen:
         if fb is None:
             return
         fb.fill(0)
-        self._draw_tagline(fb)
-        self._draw_brand(fb)
-        self._draw_footer(fb)
+        brand_bottom = self._draw_brand(fb)
+        motto_bottom = self._draw_motto(fb, brand_bottom)
+        self._draw_version(fb, motto_bottom if motto_bottom is not None else brand_bottom)
         fb.show()
 
     # ------------------------------------------------------------

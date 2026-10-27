@@ -151,6 +151,62 @@ def draw_x_mark(fb, x, y, color=1):
 
 
 # ------------------------------------------------------------
+# Lightning bolt (solid) — "charging" marker
+# ------------------------------------------------------------
+
+BOLT_W = 5
+BOLT_H = 8
+
+_BOLT_5x8 = [
+    "00011",
+    "00110",
+    "01110",
+    "11111",
+    "00111",
+    "00110",
+    "01100",
+    "01000",
+]
+
+
+def draw_bolt(fb, x, y, color=1):
+    """Draw a solid 5x8 lightning bolt with its top-left at (x, y).
+    The extra 8th row is the tip pixel, so callers can sit the glyph
+    flush to the bottom screen line with y = height - BOLT_H."""
+    draw_bitmap_rows(fb, x, y, _BOLT_5x8, c=color)
+
+
+# ------------------------------------------------------------
+# Minus bar — "discharging" marker
+#
+# Same 5x8 footprint as the lightning bolt so the two markers are
+# interchangeable in a fixed-width slot: the battery current number does
+# not shift when the sign flips between charge and discharge. The bar
+# sits on rows 3-4 so it lands near the vertical middle of the f_small
+# text row when drawn flush to the bottom line (y = height - MINUS_H).
+# ------------------------------------------------------------
+
+MINUS_W = 5
+MINUS_H = 8
+
+_MINUS_5x8 = [
+    "00000",
+    "00000",
+    "00000",
+    "11111",
+    "11111",
+    "00000",
+    "00000",
+    "00000",
+]
+
+
+def draw_minus(fb, x, y, color=1):
+    """Draw a 5x8 minus bar (BOLT_W-wide) with its top-left at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _MINUS_5x8, c=color)
+
+
+# ------------------------------------------------------------
 # Pixel "C" glyph (for LARGE temp units)
 # ------------------------------------------------------------
 
@@ -349,6 +405,36 @@ _WIFI_OFF_6 = [
 ]
 
 
+# Bluetooth indicators (Turtle Wrangler, src/net/ble_service.py).
+#   draw_ble_rune: 5x7, the cap height of the f_small heading text —
+#                  waiting screen only, top-left, left of the flèche.
+#   draw_plus3:    3x3 "+" tucked into the empty lower-right corner of the
+#                  header WiFi icon, on every screen. See connection_header.
+BLE_RUNE_W = 5
+BLE_RUNE_H = 7
+
+_BLE_RUNE_7 = (
+    "..11.",
+    "1.1.1",
+    ".111.",
+    "..1..",
+    ".111.",
+    "1.1.1",
+    "..11.",
+)
+
+
+def draw_ble_rune(fb, x, y, color=1):
+    draw_bitmap_rows(fb, x, y, _BLE_RUNE_7, c=color)
+
+
+def draw_plus3(fb, x, y, color=1):
+    """3x3 plus with its top-left at (x, y)."""
+    _pix(fb, x + 1, y, color)
+    _hline(fb, x, y + 1, 3, color)
+    _pix(fb, x + 1, y + 2, color)
+
+
 def draw_wifi(fb, x, y, on=True, color=1):
     """
     Draw compact WiFi indicator at (x, y). Size: 9x6.
@@ -359,6 +445,85 @@ def draw_wifi(fb, x, y, on=True, color=1):
 
 def draw_wifi9(fb, x, y, on=True, color=1):
     draw_wifi(fb, x, y, on=on, color=color)
+
+
+# ----------------------------
+# WiFi signal-strength indicator (9x6) — 4-tier version of draw_wifi().
+#
+# Same concentric-arc shape as draw_wifi(), filled from the centre dot
+# outward so strength reads at a glance:
+#   WIFI_NONE (0) : fully hollow          — reuses _WIFI_OFF_6
+#   WIFI_LOW  (1) : dot + innermost arc   filled, outer two arcs hollow
+#   WIFI_ALOT (2) : dot + inner two arcs  filled, outermost arc hollow
+#   WIFI_FULL (3) : fully filled          — reuses _WIFI_ON_6
+#
+# The top row (row 0) is always the same solid bar in both the filled and
+# hollow originals, so it stays filled at every tier.
+# ----------------------------
+
+WIFI_NONE = 0
+WIFI_LOW  = 1
+WIFI_ALOT = 2
+WIFI_FULL = 3
+
+_WIFI_LOW_6 = [
+    "111111111",
+    "100000001",
+    "010000010",
+    "001111100",
+    "000111000",
+    "000010000",
+]
+
+_WIFI_ALOT_6 = [
+    "111111111",
+    "100000001",
+    "011111110",
+    "001111100",
+    "000111000",
+    "000010000",
+]
+
+_WIFI_SIGNAL_ROWS = {
+    WIFI_NONE: _WIFI_OFF_6,
+    WIFI_LOW:  _WIFI_LOW_6,
+    WIFI_ALOT: _WIFI_ALOT_6,
+    WIFI_FULL: _WIFI_ON_6,
+}
+
+
+def draw_wifi_signal(fb, x, y, level=WIFI_FULL, color=1):
+    """
+    Draw the 4-tier WiFi signal-strength indicator at (x, y). Size: 9x6.
+    level: WIFI_NONE (0) .. WIFI_FULL (3), see tier table above.
+    """
+    rows = _WIFI_SIGNAL_ROWS.get(int(level), _WIFI_OFF_6)
+    draw_bitmap_rows(fb, x, y, rows, c=color)
+
+
+def wifi_level_from_rssi(rssi):
+    """
+    Map an RSSI reading (dBm, e.g. from WiFiManager.rssi()) to a
+    WIFI_NONE..WIFI_FULL tier for draw_wifi_signal().
+
+    rssi is None (not connected, or hardware doesn't report RSSI) -> WIFI_NONE.
+    Thresholds follow the common informal RSSI bands for WiFi (dBm, less
+    negative = stronger): >= -60 excellent, -60..-70 good, -70..-80 weak,
+    < -80 very weak / unusable.
+    """
+    if rssi is None:
+        return WIFI_NONE
+    try:
+        rssi = int(rssi)
+    except Exception:
+        return WIFI_NONE
+    if rssi >= -60:
+        return WIFI_FULL
+    if rssi >= -70:
+        return WIFI_ALOT
+    if rssi >= -80:
+        return WIFI_LOW
+    return WIFI_NONE
 
 
 #
@@ -375,7 +540,12 @@ def draw_wifi9(fb, x, y, on=True, color=1):
 # GPS indicator (14x6) — right-angle triangle
 #
 # Three states:
-#   GPS_NONE  (0) : outline only    — no hardware / disabled
+#   GPS_NONE  (0) : nothing drawn  — no hardware / disabled. An outline was
+#                   tried here previously, but even an "empty" outline has
+#                   solid right/bottom edges (~18% of the icon's pixels lit),
+#                   which reads as "slightly filled" at this size and wrongly
+#                   alludes to GPS presence when there is none. Drawing
+#                   nothing is the only way to guarantee zero pixels lit.
 #   GPS_INIT  (1) : bottom 2 rows filled, top 4 outlined — hardware present, no fix
 #   GPS_FIXED (2) : fully filled   — has satellite fix
 # ----------------------------
@@ -391,16 +561,6 @@ _GPS_TRI_6 = [
     "00000000000111",
     "00000000001111",
     "00000000011111",
-    "00000000111111",
-]
-
-# Outline only (hypotenuse + right edge + bottom edge)
-_GPS_EMPTY_6 = [
-    "00000000000001",
-    "00000000000011",
-    "00000000000101",
-    "00000000001001",
-    "00000000010001",
     "00000000111111",
 ]
 
@@ -421,13 +581,14 @@ def draw_gps(fb, x, y, on=True, color=1, state=None):
 
     state (GPS_NONE/GPS_INIT/GPS_FIXED) overrides `on` when provided.
     Legacy callers using on=True/False continue to work (True→GPS_FIXED, False→GPS_NONE).
+    GPS_NONE draws nothing — see the state-table comment above.
     """
     if state is None:
         state = GPS_FIXED if bool(on) else GPS_NONE
     state = int(state)
 
     if state == GPS_NONE:
-        draw_bitmap_rows(fb, x, y, _GPS_EMPTY_6, c=color)
+        return
     elif state == GPS_INIT:
         draw_bitmap_rows(fb, x, y, _GPS_PART_6, c=color)
     else:
@@ -513,8 +674,8 @@ def draw_battery_level(fb, x, y, bands_filled=5, color=1):
 
 def battery_display_bands(volts, now_ms=None):
     """
-    Map bus voltage to (bands_filled, status) for the compact 12x7 level
-    glyph. At "critical" charge, bands_filled blinks between 0 and 1 on a
+    Map battery_v() to (bands_filled, status) for the compact 12x7 level
+    glyph (see battery_status: one band per 20 %). At "critical" charge, bands_filled blinks between 0 and 1 on a
     1 Hz cadence (500 ms empty / 500 ms showing the single critical bar)
     so a near-dead battery draws attention instead of sitting static.
     """
@@ -629,6 +790,75 @@ def draw_api(fb, x, y, on=True, color=1, *, heartbeat=False, sending=False, now_
         draw_bitmap_rows(fb, x, y, _API_FILLED_6, c=color)
     else:
         draw_bitmap_rows(fb, x, y, _API_RING_6, c=color)
+
+
+# ------------------------------------------------------------
+# Navigation flèche — machine-state arrow for the waiting screen
+#
+# A 7x8 up-pointing arrowhead with a V-notch in its base, shown top-left of
+# the compass reading. Hollow while the turtle is still finding itself
+# (BOOT / ACQUIRE); filled once the mission is under way (SAIL_NAV /
+# ARRIVAL). Its lower 7 rows line up with the 7 px caps of the f_small
+# reading beside it; the tip takes the one spare row above them. Draw it at
+# the text's y (the font's blank top row is where the tip lands).
+# ------------------------------------------------------------
+
+NAV_FLECHE_W = 7
+NAV_FLECHE_H = 8
+
+_FLECHE_HOLLOW = [
+    "...1...",
+    "..1.1..",
+    "..1.1..",
+    ".1...1.",
+    ".1...1.",
+    ".1.1.1.",
+    "1.1.1.1",
+    "11...11",
+]
+
+_FLECHE_FILLED = [
+    "...1...",
+    "..111..",
+    "..111..",
+    ".11111.",
+    ".11111.",
+    ".11111.",
+    "111.111",
+    "11...11",
+]
+
+
+def draw_nav_fleche(fb, x, y, filled=False, color=1):
+    """Draw the 11x9 navigation flèche at (x, y).
+    filled=True  -> solid arrow (mission under way)
+    filled=False -> outline only (still acquiring)."""
+    rows = _FLECHE_FILLED if filled else _FLECHE_HOLLOW
+    draw_bitmap_rows(fb, x, y, rows, c=color)
+
+
+# ------------------------------------------------------------
+# Small degree ring (3x3 hollow)
+#
+# draw_degree()'s r=2 ring is ~5px and rides too tall as a superscript
+# next to the 7px PT Sans Narrow caps on the waiting screen. This one is
+# a bare 3x3 outline — centre pixel left unset, so it must be drawn over
+# clear background.
+# ------------------------------------------------------------
+
+DEGREE_SM_W = 3
+DEGREE_SM_H = 3
+
+_DEGREE_SM_3 = [
+    "111",
+    "101",
+    "111",
+]
+
+
+def draw_degree_sm(fb, x, y, color=1):
+    """Draw a compact 3x3 hollow degree ring with its top-left at (x, y)."""
+    draw_bitmap_rows(fb, x, y, _DEGREE_SM_3, c=color)
 
 
 # ============================================================
@@ -1043,20 +1273,33 @@ def draw_gear(fb, cx, cy, body_r=6, tooth_len=2, teeth=6, center_r=3,
 # Vertical battery glyph with horizontal fill bands
 # ------------------------------------------------------------
 
+_BATTERY_STATUS = ("critical", "low", "medium", "high", "full")
+
+
+def battery_bands(pct):
+    """Bands (1-5) for a battery percent: one per 20 %, so 1-20 % is one
+    band, 81-100 % five. Never 0 (that's the critical blink's off phase).
+    Wrangler's Dashboard battery icon uses the same rule."""
+    if pct is None:
+        return 1
+    return max(1, min(5, (int(pct) + 19) // 20))
+
+
 def battery_status(volts):
-    """Map bus voltage (V) to a charge-level string."""
+    """Map a battery_v() reading to a charge-level string, through the one
+    battery-percent estimator (ina219.pct_from_volts), so the OLED icon,
+    the Battery screen, telemetry and Wrangler all agree. 20 % or less is
+    "critical" (the icon blinks)."""
     if volts is None:
         return "critical"
-    if volts >= 4.05:
-        return "full"
-    elif volts >= 3.90:
-        return "high"
-    elif volts >= 3.75:
-        return "medium"
-    elif volts >= 3.55:
-        return "low"
-    else:
+    try:
+        from src.drivers.ina219 import pct_from_volts
+        pct = pct_from_volts(volts)
+    except Exception:
+        pct = None
+    if pct is None:
         return "critical"
+    return _BATTERY_STATUS[battery_bands(pct) - 1]
 
 
 _BATTERY_LEVEL_BANDS = {

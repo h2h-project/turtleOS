@@ -309,6 +309,7 @@ class DeviceScreen:
 
         _tick_next = time.ticks_ms()
         _tick_every = 500
+        _ble = _ch.BleWatch() if _ch else None
 
         while True:
             now = time.ticks_ms()
@@ -326,5 +327,9 @@ class DeviceScreen:
 
             if action is not None:
                 return action
+
+            # Static screen: redraw only for the header's Bluetooth "+".
+            if _ble is not None and _ble.changed():
+                self._render(api_info)
 
             time.sleep_ms(25)

@@ -59,6 +59,9 @@ DEFAULTS = {
     "telemetry_mode": "auto",
     "telemetry_enabled": True,
     "telemetry_post_every_s": 120,
+    # While a journey is open, log at least this often (s) so a short field
+    # test has a usable track. 0 = just use telemetry_post_every_s. Min 10.
+    "journey_log_every_s": 0,
     "morse_bless": False,   # blink button LED in Morse before each send; only useful when LED is wired
 
     # --- Device Identity / API ---
@@ -66,6 +69,27 @@ DEFAULTS = {
     "api_base": "",
     "device_id": "",
     "device_key": "",
+    # Human-readable turtle name (turtles_tb.name). Written by step_api() on
+    # every online boot from GET /v1/device's "device_name", so an offline boot
+    # still has a name to show and to advertise over Bluetooth.
+    "device_name": "",
+
+    # --- Bluetooth (Turtle Wrangler, docs/wrangler/) ---
+    # ble_enabled: master switch. False = the radio is never activated — the
+    #   setting for a real mission voyage.
+    # ble_window_min: after boot, wake, and each visit to the Bluetooth screen
+    #   the turtle advertises for this many minutes. 0 = always while enabled.
+    # ble_require_bond: commands need a bonded, encrypted link. False is for
+    #   bench development only; never on a deployed turtle.
+    "ble_enabled": True,
+    "ble_window_min": 10,
+    "ble_require_bond": True,
+
+    # --- Secure mode (docs/wrangler/README.md "Clock and secure mode") ---
+    # For missions where GPS may be spoofed: the clock never takes GPS time
+    # (more precautions will follow). Refused while the RTC coin cell is
+    # faulty — with it on, the DS3231 is the only time source at sea.
+    "secure_mode": False,
 
     # --- Time ---
     # Minutes offset from UTC.
@@ -74,6 +98,8 @@ DEFAULTS = {
     "timezone_offset_min": None,
 
     # --- Compass calibration ---
+    # Applied by src/nav/heading.py to the raw magnetometer heading (the
+    # GY-87's on-board QMC5883L/HMC5883L, or a standalone GY-271 fallback).
     # Degrees to add to raw heading so that the reading matches true North.
     # Example: if raw=80 when pointing North, set compass_offset_deg to -80.
     "compass_offset_deg": 0,
@@ -88,21 +114,50 @@ DEFAULTS = {
     "joke_mode": False,
 
     # --- Servo ---
-    # Set to true only when the MG996R servo is physically wired to D8/GPIO7.
-    # PWM init always succeeds regardless of physical connection, so this flag
-    # is the only reliable way to know if a servo is actually present.
-    "servo_present": False,
+    # The MG996R servo is wired to D8/GPIO7 on every current turtle, so this is
+    # on by default. PWM init always succeeds regardless of physical connection,
+    # so this flag is the only way to say a servo is NOT present — set it false
+    # on a bench board with no servo attached.
+    "servo_present": True,
+    # Sail-servo pulse range (us) the wind-finder sweep runs between, each
+    # just inside the servo's end stops. 500/2500 suits the MG996R; find
+    # another servo's stops by eye from the REPL and set them here.
+    "servo_min_us": 500,
+    "servo_max_us": 2500,
 
-    # --- Destination (turtle mode) ---
-    # Target waypoint shown on the Destination screen.
-    # dest_coord: [lat_float, lon_float] in decimal degrees.
-    "dest_name": "Al Mawasi, Gaza",
-    "dest_coord": [31.35, 34.27],
+    # --- Battery ---
+    # Ohms between the INA219's VIN+ and the cell (cell internal resistance
+    # + leads). Removes the I*R swing so the battery reads the same plugged
+    # and unplugged. Calibrate: set 0, note V and mA on the Battery screen
+    # unplugged and charging, then R = (V_charging - V_unplugged) /
+    # (mA_charging + mA_unplugged) * 1000.
+    "battery_r_ohm": 0.5,
+
+    # --- Mission destination (turtle mode) ---
+    # The grand-mission target, assigned on hopeturtles.org and pushed to the
+    # device by the Device API boot step (GET /v1/device -> mission_target_*).
+    # mission_destination: [lat_float, lon_float] in decimal degrees.
+    "mission_dest_full_name": "Al Mawasi, Gaza",
+    "mission_dest_short_name": "",
+    "mission_destination": [31.35, 34.27],
+    # mission_waypoints: ordered mission list of [lat, lon] pairs; when empty
+    # the sequencer falls back to a single-waypoint mission at
+    # mission_destination.
+    "mission_waypoints": [],
+
+    # --- Operator-set test project (turtle mode) ---
+    # Set by hand on the Destination screen for pond/field tests, independent
+    # of the grand mission above. WaypointSequencer prefers these when set.
+    # Each *_destination/departure/arrival is [lat, lon] or None (not set).
+    # Mirrored to turtles_tb via PATCH /v1/device for the dashboard.
+    "set_destination": None,
+    "set_departure": None,
+    "set_arrival": None,
+    "set_waypoints": [],
+    "set_short_name": "",
+    "set_full_name": "",
 
     # --- Navigation (turtle mode, src/nav/) ---
-    # waypoints: ordered mission list of [lat, lon] pairs; when empty the
-    # sequencer falls back to a single-waypoint mission at dest_coord.
-    "waypoints": [],
     "nav_cycle_ms": 300,          # autopilot cycle (PDF spec: 200-500 ms)
     "arrival_radius_m": 300,      # waypoint arrival radius
     "luff_sweep_dps": 8,          # sweep speed, deg/s (PDF spec: 5-10)
@@ -140,6 +195,23 @@ def load_config():
     if "api_base" not in cfg and "api-base" in cfg:
         cfg["api_base"] = cfg.get("api-base")
         changed = True
+
+    # dest_* / waypoints -> mission_* (clarity: mission_ = grand mission,
+    # set_ = operator test project). Copy the value across, then drop the
+    # old key so it does not linger in config.json.
+    for _old, _new in (
+        ("dest_name", "mission_dest_full_name"),
+        ("dest_coord", "mission_destination"),
+        ("waypoints", "mission_waypoints"),
+    ):
+        if _old in cfg:
+            if _new not in cfg:
+                cfg[_new] = cfg.get(_old)
+            try:
+                del cfg[_old]
+            except Exception:
+                pass
+            changed = True
 
     for k in LEGACY_KEYS_TO_REMOVE:
         if k in cfg:
@@ -189,6 +261,22 @@ def save_config(cfg):
     os.rename(tmp_file, CONFIG_FILE)
 
 
+def update_config(changes):
+    """Merge `changes` into the config on flash and return the saved config.
+
+    Reads the file fresh, merges, normalizes and writes it back in one step.
+    Every writer should use this instead of saving a cfg dict it loaded
+    earlier: a screen that holds a stale copy and calls save_config() on it
+    silently reverts anything written in the meantime (a Bluetooth command,
+    the boot API sync, another screen).
+    """
+    cfg = load_config()
+    cfg.update(changes)
+    cfg, _ = _normalize_types(cfg)
+    save_config(cfg)
+    return cfg
+
+
 def file_exists(path):
     try:
         os.stat(path)
@@ -236,7 +324,8 @@ def _normalize_types(cfg):
         changed = True
 
     # --- Booleans ---
-    for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present"):
+    for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present",
+                "ble_enabled", "ble_require_bond", "secure_mode"):
         old_val = cfg.get(key, DEFAULTS[key])
         new_val = _to_bool(old_val, DEFAULTS[key])
         if old_val != new_val:
@@ -339,46 +428,98 @@ def _normalize_types(cfg):
         cfg["compass_offset_deg"] = compass_offset
         changed = True
 
-    # --- Destination name ---
-    dest_name = str(cfg.get("dest_name", DEFAULTS["dest_name"]) or "").strip()
-    if cfg.get("dest_name") != dest_name:
-        cfg["dest_name"] = dest_name
+    # --- Servo pulse range ---
+    try:
+        s_min = max(400, min(2600, int(cfg.get("servo_min_us", DEFAULTS["servo_min_us"]))))
+        s_max = max(400, min(2600, int(cfg.get("servo_max_us", DEFAULTS["servo_max_us"]))))
+        if s_max - s_min < 200:
+            raise ValueError
+    except Exception:
+        s_min, s_max = DEFAULTS["servo_min_us"], DEFAULTS["servo_max_us"]
+    if cfg.get("servo_min_us") != s_min or cfg.get("servo_max_us") != s_max:
+        cfg["servo_min_us"] = s_min
+        cfg["servo_max_us"] = s_max
         changed = True
 
-    # --- Destination coordinates ---
-    dest_coord = cfg.get("dest_coord", DEFAULTS["dest_coord"])
-    _coord_ok = False
-    if isinstance(dest_coord, list) and len(dest_coord) == 2:
-        try:
-            _lat = float(dest_coord[0])
-            _lon = float(dest_coord[1])
-            if -90.0 <= _lat <= 90.0 and -180.0 <= _lon <= 180.0:
-                _coord_ok = True
-        except Exception:
-            pass
-    if not _coord_ok:
-        cfg["dest_coord"] = DEFAULTS["dest_coord"]
+    # --- Battery resistance ---
+    try:
+        r_batt = max(0.0, min(2.0, float(cfg.get("battery_r_ohm", DEFAULTS["battery_r_ohm"]))))
+    except Exception:
+        r_batt = DEFAULTS["battery_r_ohm"]
+    if cfg.get("battery_r_ohm") != r_batt:
+        cfg["battery_r_ohm"] = r_batt
         changed = True
 
-    # --- Waypoint list (nav) ---
-    # Keep only well-formed [lat, lon] pairs; a malformed list degrades to
-    # the dest_coord fallback inside WaypointSequencer rather than crashing.
-    wps = cfg.get("waypoints", DEFAULTS["waypoints"])
-    if not isinstance(wps, list):
-        cfg["waypoints"] = []
-        changed = True
-    else:
-        _clean = []
-        for wp in wps:
+    # --- Destination name strings (mission + operator-set) ---
+    for _key in ("mission_dest_full_name", "mission_dest_short_name",
+                 "set_short_name", "set_full_name"):
+        _s = str(cfg.get(_key, DEFAULTS[_key]) or "").strip()
+        if cfg.get(_key) != _s:
+            cfg[_key] = _s
+            changed = True
+
+    # --- Destination coordinates (mission + operator-set) ---
+    # A point is [lat, lon] with lat in +/-90, lon in +/-180. mission_
+    # destination falls back to the default; the set_ points fall back to
+    # None (meaning "not set"), so an invalid value can't masquerade as a
+    # target.
+    def _valid_pair(val):
+        if isinstance(val, (list, tuple)) and len(val) == 2:
             try:
-                _lat = float(wp[0]); _lon = float(wp[1])
-                if -90.0 <= _lat <= 90.0 and -180.0 <= _lon <= 180.0:
-                    _clean.append([_lat, _lon])
+                _la = float(val[0]); _lo = float(val[1])
+                if -90.0 <= _la <= 90.0 and -180.0 <= _lo <= 180.0:
+                    return [_la, _lo]
             except Exception:
                 pass
-        if len(_clean) != len(wps):
-            cfg["waypoints"] = _clean
+        return None
+
+    _md = _valid_pair(cfg.get("mission_destination", DEFAULTS["mission_destination"]))
+    if _md is None:
+        _md = list(DEFAULTS["mission_destination"])
+    if cfg.get("mission_destination") != _md:
+        cfg["mission_destination"] = _md
+        changed = True
+
+    for _key in ("set_destination", "set_departure", "set_arrival"):
+        _p = _valid_pair(cfg.get(_key))
+        if cfg.get(_key) != _p:
+            cfg[_key] = _p
             changed = True
+
+    # --- Waypoint lists (mission + operator-set) ---
+    # Keep only well-formed [lat, lon] pairs; a malformed list degrades to
+    # the *_destination fallback inside WaypointSequencer rather than
+    # crashing.
+    for _key in ("mission_waypoints", "set_waypoints"):
+        _wps = cfg.get(_key, DEFAULTS[_key])
+        if not isinstance(_wps, list):
+            if cfg.get(_key) != []:
+                cfg[_key] = []
+                changed = True
+            continue
+        _clean = []
+        for _wp in _wps:
+            _cp = _valid_pair(_wp)
+            if _cp is not None:
+                _clean.append(_cp)
+        if _clean != _wps:
+            cfg[_key] = _clean
+            changed = True
+
+    # --- Bluetooth wrangle window (minutes; 0 = always advertise) ---
+    try:
+        _bw = int(cfg.get("ble_window_min", DEFAULTS["ble_window_min"]))
+        _bw = max(0, min(240, _bw))
+    except Exception:
+        _bw = DEFAULTS["ble_window_min"]
+    if cfg.get("ble_window_min") != _bw:
+        cfg["ble_window_min"] = _bw
+        changed = True
+
+    _dn = str(cfg.get("device_name", "") or "").strip()
+    if cfg.get("device_name") != _dn:
+        cfg["device_name"] = _dn
+        changed = True
 
     # --- Mission link mode ---
     try:

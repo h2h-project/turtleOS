@@ -7,9 +7,11 @@
 #
 # AirBuddy wiring summary:
 #   - D1 / GPIO2  -> Button LED signal (active HIGH, wire LED + resistor to GND)
+#   - D2 / GPIO3  -> I2C_EXT SCL  (external / plug-in bus — GY-87 IMU lives here)
 #   - D3 / GPIO4  -> Button signal
-#   - D4 / GPIO5  -> I2C SDA
-#   - D5 / GPIO6  -> I2C SCL
+#   - D4 / GPIO5  -> I2C_SYS SDA  (system bus — OLED, RTC, INA219, AS5600, AHT, ...)
+#   - D5 / GPIO6  -> I2C_SYS SCL
+#   - D9 / GPIO8  -> I2C_EXT SDA
 #   - D6 / GPIO43 -> GPS RX  (XS3 TX -> GPS RX)
 #   - D7 / GPIO44 -> GPS TX  (GPS TX -> XS3 RX)
 #   - D8 / GPIO7  -> Servo PWM signal, e.g. MG996R rudder actuator
@@ -22,6 +24,15 @@
 #   - 5V / 3V3 / GND -> power
 #   D1, D2, D3, D4, D5, D8, D9 are pass-through and free to use.
 #   The button LED was moved off D0 -> D1 because the module now owns D0.
+#   I2C_EXT deliberately uses D2/D9 (not D10/GPIO9) so it stays clear of
+#   the module's GPS_RESET line.
+#
+# Two I2C buses (turtleShell v3.0 architecture, firmware 2.4+):
+#   I2C_SYS  I2C(0) SDA=GPIO5 SCL=GPIO6 — everything onboard. Address 0x68
+#            is the DS3231 here, so an MPU6050 can never share this bus.
+#   I2C_EXT  I2C(1) SDA=GPIO8 SCL=GPIO3 — plug-in sensors. The GY-87 10DOF
+#            (MPU6050 at its factory 0x68, no AD0 strap needed) goes here.
+#            Sensors migrate from SYS to EXT as the v3.0 PCB develops.
 #
 # Sensor power:
 #   - 3V3 -> OLED VCC, RTC VCC, SCD41 VCC, AHT10/AHT21 VCC, INA219 VCC
@@ -138,17 +149,37 @@ def neopixel_pin():
 #   AHT10 and AHT21 usually both use 0x38. Do not put both on the same
 #   I2C bus unless you use a mux or one module has a changed address.
 #
+# I2C_SYS — the system bus (OLED, RTC, INA219, AS5600, air sensors)
 I2C_ID = 0
 I2C_SDA = 5
 I2C_SCL = 6
 I2C_FREQ = 400_000
 
+# I2C_EXT — the external / plug-in bus (GY-87 10DOF IMU). GPIO9 (D10) was
+# rejected for SCL because the stacked L76K GNSS module drives it as GPS_RESET.
+I2C_EXT_ID = 1
+I2C_EXT_SDA = 8
+I2C_EXT_SCL = 3
+I2C_EXT_FREQ = 400_000
+
 
 def init_i2c():
     """
-    Create and return the shared I2C bus used by OLED, RTC, sensors, etc.
+    Create and return the I2C_SYS bus used by OLED, RTC, sensors, etc.
     """
     return I2C(I2C_ID, scl=Pin(I2C_SCL), sda=Pin(I2C_SDA), freq=I2C_FREQ)
+
+
+def init_i2c_ext():
+    """
+    Create and return the I2C_EXT bus for plug-in sensors (GY-87 IMU).
+    """
+    return I2C(I2C_EXT_ID, scl=Pin(I2C_EXT_SCL), sda=Pin(I2C_EXT_SDA), freq=I2C_EXT_FREQ)
+
+
+def i2c_ext_pins():
+    """Returns (i2c_id, scl_pin, sda_pin, freq_hz) for I2C_EXT."""
+    return (I2C_EXT_ID, I2C_EXT_SCL, I2C_EXT_SDA, I2C_EXT_FREQ)
 
 
 def i2c_pins():

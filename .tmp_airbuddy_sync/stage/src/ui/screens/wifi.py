@@ -3,7 +3,7 @@
 import time
 import sys as _sys
 from src.ui.toggle import ToggleSwitch
-from config import load_config, save_config
+from config import load_config
 from src.net.wifi_manager import WiFiManager
 from src.ui import grace as _grace
 
@@ -50,6 +50,7 @@ class WiFiScreen:
 
         self._last_status = ""
         self._last_ip = ""
+        self._last_rssi = None
         self._last_refresh_ms = 0
         self._checking = False
         self._dots = 0
@@ -80,9 +81,14 @@ class WiFiScreen:
             except Exception:
                 self._last_ip = ""
             self._last_status = "Connected"
+            try:
+                self._last_rssi = self.wifi.rssi()
+            except Exception:
+                self._last_rssi = None
         else:
             self._last_status = "Not connected"
             self._last_ip = ""
+            self._last_rssi = None
 
     # ----------------------------
     # Drawing
@@ -123,16 +129,18 @@ class WiFiScreen:
             o.f_med.write("WiFi is set off.", 0, data_y)
             o.f_med.write("2x click to", 0, data_y + line_h)
             o.f_med.write("turn on.", 0, data_y + line_h * 2)
+        elif connected:
+            if self.ssid:
+                o.f_med.write(self.ssid[:18], 0, data_y)
+            if self._last_rssi is not None:
+                o.f_med.write("%ddBm" % self._last_rssi, 0, data_y + line_h)
+            if self._last_ip:
+                o.f_med.write(self._last_ip[:18], 0, data_y + line_h * 2)
         else:
             status_text = self._last_status
             if self._checking:
                 status_text = status_text + ("." * self._dots)
             o.f_med.write(status_text[:18], 0, data_y)
-            if connected:
-                if self.ssid:
-                    o.f_med.write(self.ssid[:18], 0, data_y + line_h)
-                if self._last_ip:
-                    o.f_med.write(self._last_ip[:18], 0, data_y + line_h * 2)
 
         self.toggle.draw(fb, on=self.enabled)
         fb.show()
@@ -310,9 +318,14 @@ class WiFiScreen:
         self._draw()
 
     def _toggle_enabled(self):
+        # actions.wifi_set_enabled() persists the flag (and mirrors it into the
+        # live config); the connect animation / radio-off drawing stay here.
+        from src.app import actions
+        code, _info = actions.wifi_set_enabled(not self.enabled)
+        if code != actions.OK:
+            return
         self.enabled = not self.enabled
-        self.cfg["wifi_enabled"] = self.enabled
-        save_config(self.cfg)
+        self._reload_cfg()
         if self.enabled:
             self._animated_connect(min_ms=1500, timeout_ms=10000)
         else:

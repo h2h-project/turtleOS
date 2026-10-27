@@ -21,6 +21,11 @@
 #   "Offline" and the pending unsent-telemetry count when WiFi is down.
 # - Removed the wifi_ok gates that previously hid Online/Device offline.
 #
+# PATCH (Oct 2026 - Bluetooth first):
+# - In turtle mode the Bluetooth screen now leads the carousel, so pairing
+#   with Turtle Wrangler is one triple-click away:
+#   Bluetooth -> Online -> Logging -> WiFi -> Device.
+
 # PATCH (Jul 2026 - Manual GPS logging):
 # - GPS screen moved OUT of the single-click and triple-click carousels and to
 #   the FRONT of the hold flow (GPS -> Battery -> Sleep -> Version), so a
@@ -348,20 +353,32 @@ def _fetch_device_info(cfg, tick_cb=None, wifi=None):
     return {}
 
 
-def _show_frowny(oled, btn, line1, line2):
+def _show_frowny(oled, btn, line1, line2, tick_fn=None):
     """
     Show FrownyScreen with two message lines and wait for any button click.
     Falls back to a plain centered text + brief sleep if the import fails.
     """
     try:
         from src.ui.screens.frowny import FrownyScreen
-        FrownyScreen(oled).show(btn, line1=line1, line2=line2)
+        FrownyScreen(oled).show(btn, line1=line1, line2=line2, tick_fn=tick_fn)
     except Exception:
         _draw_center_lines(oled, [line1, line2], y0=22, line_h=12)
         try:
             time.sleep_ms(2000)
         except Exception:
             pass
+
+
+def _log_crash(name, e):
+    """A screen's show_live() raised: say so on serial with the traceback.
+    The flow carries on (the OLED keeps the screen's last frame), so without
+    this a crash looks like a silent freeze."""
+    print("[SCREEN] {} crashed: {!r}".format(name, e))
+    try:
+        import sys
+        sys.print_exception(e)
+    except Exception:
+        pass
 
 
 def _log_screen(name, info=None, err=None):
@@ -391,16 +408,18 @@ def _offline_notice(oled, btn, lines, dwell_ms=1200, poll_ms=25):
         return None
 
 
-def _request_wifi_check(telemetry, force=False):
+def _request_wifi_check(telemetry, cfg=None, force=False):
     """Ask the telemetry background process to try associating.
 
     Non-blocking and best-effort: no background process (or no telemetry yet)
-    simply means nothing to ask.
+    simply means nothing to ask. cfg is passed through so the bg thread can
+    still reconnect + flush the queue even when it has no payload of its own
+    to piggyback the check on (see TelemetryBackgroundProcess._run()).
     """
     try:
         bp = telemetry.scheduler._background_process
         if bp is not None:
-            bp.request_wifi_check(force=force)
+            bp.request_wifi_check(cfg=cfg, force=force)
     except Exception:
         pass
 
@@ -476,10 +495,11 @@ def connectivity_carousel(
     # bypasses the background process's retry floor. The send path itself no
     # longer scans (see TelemetryBackgroundProcess._send) — without this, a
     # device that dropped its AP at sea would have no user-driven way back on.
-    _request_wifi_check(telemetry, force=True)
+    _request_wifi_check(telemetry, cfg=cfg, force=True)
 
     # ------------------------------------------------------------
-    # 1) ONLINE/API SCREEN — ALWAYS shown, first in the carousel.
+    # 1) ONLINE/API SCREEN — ALWAYS shown, first. (Bluetooth used to lead
+    #    here in turtle mode; it now leads the hold flow — see sleep_flow.)
     #    Viewable offline: shows "Offline" title + pending (unsent) count.
     # ------------------------------------------------------------
     try:
@@ -637,7 +657,7 @@ def connectivity_carousel(
     if sp in ("quad", "debug"):
         return sp
 
-    return _exit(None)
+    return _exit("sleep" if a == "sleep" else None)
 
 # ============================================================
 # SENSOR CAROUSEL (SINGLE CLICK)
@@ -658,13 +678,13 @@ def sensor_carousel(
     _turtle_mode = bool((cfg or {}).get("turtle_mode", False))
 
     # Air sensors are optional in turtle_mode — the single-click carousel there
-    # is navigation screens (sailpoint/servo/destination), which don't need
-    # the ENS160/AHT21. Only block on missing sensors in airOS mode.
+    # is navigation screens (destination/compass/sailpoint/servo), which don't
+    # need the ENS160/AHT21. Only block on missing sensors in airOS mode.
     reading = None
     if air is None:
         if not _turtle_mode:
             print("[SINGLE] air=None — no sensors available")
-            _show_frowny(oled, btn, "Ack! No sensors", "are connected!")
+            _show_frowny(oled, btn, "Ack! No sensors", "are connected!", tick_fn=tick_fn)
             return
         print("[SINGLE] air=None — turtle_mode, showing nav screens only")
     else:
@@ -700,47 +720,39 @@ def sensor_carousel(
     if _has_scd41:
         _sensor_screens.append("temp2")     # SCD4X temperature screen
 
-    _all_screens = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) \
+    # Servo leads the turtle carousel. Journey follows it, but ONLY while a journey is open —
+    # otherwise it stays out of the way. Starting a journey is done from the
+    # Destination screen's menu (which hands off to the same Journey screen).
+    _journey_open = False
+    if _turtle_mode:
+        try:
+            from src.app.journey import active as _journey_active
+            _journey_open = bool(_journey_active())
+        except Exception:
+            _journey_open = False
+
+    _nav_screens = (["servo"] + (["journey"] if _journey_open else []) + ["destination", "compass", "sailpoint"]) \
+                   if _turtle_mode else []
+
+    # Summary is airOS-only: turtleOS never shows it, even with air sensors attached.
+    _show_summary = bool(_sensor_screens) and not _turtle_mode
+
+    _all_screens = _nav_screens \
                    + _sensor_screens \
-                   + (["summary"] if _sensor_screens else [])
+                   + (["summary"] if _show_summary else [])
     print("[SINGLE] screens:", _all_screens if _all_screens else "none")
 
     # Preload ALL carousel screens now, while the heap is clean.
     # If _bg_tick fires telemetry during a dwell, get_screen() will return
     # the cached instance without needing a 1280-byte module bytecode allocation.
-    _preload = (["sailpoint", "servo", "compass", "destination"] if _turtle_mode else []) + _sensor_screens + ["summary"]
+    _preload = _nav_screens + _sensor_screens + (["summary"] if _show_summary else [])
     for _n in _preload:
         get_screen(_n)
         _gc()
     reset_and_flush(btn, flush_ms, poll_ms)
 
     if _turtle_mode:
-        # ---- SAILPOINT (first in single-click carousel, turtle mode only) ----
-        _gc()
-        compass_scr = get_screen("sailpoint")
-        try:
-            _sp_angle = compass_scr._read() if compass_scr else None
-            if _sp_angle is not None:
-                _log_screen("sailpoint", "angle={:.1f} deg".format(_sp_angle))
-            else:
-                _log_screen("sailpoint", err="AS5600 not connected")
-        except Exception:
-            _log_screen("sailpoint")
-        if compass_scr and hasattr(compass_scr, "show_live"):
-            try:
-                a = compass_scr.show_live(btn, tick_fn=tick_fn)
-            except Exception:
-                a = None
-        else:
-            draw_text(oled, "Sailpoint", y=24)
-            a = wait_for_single(btn, tick_fn=tick_fn)
-
-        if a not in ("single", None):
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return a
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-        # ---- SERVO (second in single-click carousel, turtle mode only) ----
+        # ---- SERVO (first in single-click carousel, turtle mode only) ----
         _gc()
         servo_scr = get_screen("servo")
         try:
@@ -750,7 +762,7 @@ def sensor_carousel(
             _log_screen("servo")
         if servo_scr and hasattr(servo_scr, "show_live"):
             try:
-                a = servo_scr.show_live(btn)
+                a = servo_scr.show_live(btn, tick_fn=tick_fn)
             except Exception:
                 a = None
         else:
@@ -762,11 +774,59 @@ def sensor_carousel(
             return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- COMPASS (third in single-click carousel, turtle mode only) ----
+        # ---- JOURNEY (only present while a journey is open; follows Servo) ----
+        if _journey_open:
+            _gc()
+            journey_scr = get_screen("journey")
+            _log_screen("journey", "trip in progress")
+            if journey_scr and hasattr(journey_scr, "show_live"):
+                try:
+                    a = journey_scr.show_live(btn, gps=gps, cfg=cfg, tick_fn=tick_fn)
+                except Exception:
+                    a = None
+            else:
+                draw_text(oled, "Journey", y=24)
+                a = wait_for_single(btn, tick_fn=tick_fn)
+
+            if a not in ("single", None):
+                reset_and_flush(btn, flush_ms, poll_ms)
+                return a
+            _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- DESTINATION (after Servo / Journey, turtle mode only) ----
+        _gc()
+        dest_scr = get_screen("destination")
+        try:
+            _c = cfg or {}
+            _d_name = str(_c.get("set_full_name") or _c.get("mission_dest_full_name") or "")
+            _d_coord = _c.get("set_destination") or _c.get("mission_destination") or [None, None]
+            _d_lat = _d_coord[0] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 0 else None
+            _d_lon = _d_coord[1] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 1 else None
+            if _d_name or _d_lat is not None:
+                _log_screen("destination", "name='{}' lat={} lon={}".format(_d_name, _d_lat, _d_lon))
+            else:
+                _log_screen("destination", "no destination set")
+        except Exception:
+            _log_screen("destination")
+        if dest_scr and hasattr(dest_scr, "show_live"):
+            try:
+                a = dest_scr.show_live(btn, gps=gps, cfg=cfg, tick_fn=tick_fn)
+            except Exception:
+                a = None
+        else:
+            draw_text(oled, "Destination", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+
+        if a not in ("single", None):
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+        # ---- COMPASS (second in single-click carousel, turtle mode only) ----
         _gc()
         compass_scr2 = get_screen("compass")
         try:
-            _hdg = compass_scr2._read() if compass_scr2 else None
+            _hdg = compass_scr2.read_heading() if compass_scr2 else None
             if _hdg is not None:
                 _log_screen("compass", "heading={:.1f} deg".format(_hdg))
             else:
@@ -787,27 +847,24 @@ def sensor_carousel(
             return a
         _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
-        # ---- DESTINATION (fourth in single-click carousel, turtle mode only) ----
+        # ---- SAILPOINT (third in single-click carousel, turtle mode only) ----
         _gc()
-        dest_scr = get_screen("destination")
+        compass_scr = get_screen("sailpoint")
         try:
-            _d_name = str((cfg or {}).get("dest_name", "") or "")
-            _d_coord = (cfg or {}).get("dest_coord") or [None, None]
-            _d_lat = _d_coord[0] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 0 else None
-            _d_lon = _d_coord[1] if isinstance(_d_coord, (list, tuple)) and len(_d_coord) > 1 else None
-            if _d_name or _d_lat is not None:
-                _log_screen("destination", "name='{}' lat={} lon={}".format(_d_name, _d_lat, _d_lon))
+            _sp_angle = compass_scr._read() if compass_scr else None
+            if _sp_angle is not None:
+                _log_screen("sailpoint", "angle={:.1f} deg".format(_sp_angle))
             else:
-                _log_screen("destination", "no destination set")
+                _log_screen("sailpoint", err="AS5600 not connected")
         except Exception:
-            _log_screen("destination")
-        if dest_scr and hasattr(dest_scr, "show_live"):
+            _log_screen("sailpoint")
+        if compass_scr and hasattr(compass_scr, "show_live"):
             try:
-                a = dest_scr.show_live(btn, tick_fn=tick_fn)
+                a = compass_scr.show_live(btn, tick_fn=tick_fn)
             except Exception:
                 a = None
         else:
-            draw_text(oled, "Destination", y=24)
+            draw_text(oled, "Sailpoint", y=24)
             a = wait_for_single(btn, tick_fn=tick_fn)
 
         if a not in ("single", None):
@@ -946,9 +1003,9 @@ def sensor_carousel(
         reset_and_flush(btn, flush_ms, poll_ms)
         return a
 
-    # SUMMARY (after TEMP) — air-quality summary; only meaningful when air
-    # sensors are present. Skip entirely for a sensorless (turtle) carousel.
-    if _sensor_screens:
+    # SUMMARY (after TEMP) — air-quality summary, airOS only. Needs air
+    # sensors; never shown in turtle mode.
+    if _show_summary:
         _gc()   # (bug fix) reclaim heap before summary allocation
         _log_screen("summary")
         summ = get_screen("summary")
@@ -1023,24 +1080,89 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     """
     Hold flow (carousel order):
 
-    Waiting
-       ↓ (hold 2 s)
-    GPS Screen  ← manual telemetry stamps live here: one click = one reading
-       ↓ advance (double click in manual mode, single otherwise)
+    Any screen
+       ↓ (hold 3 s)
+    Bluetooth Screen (turtle mode only — pairing happens here)
+       ↓ single click
     Battery Screen (skipped when no INA219)
        ↓ single click
+    GPS Screen  ← manual telemetry stamps live here: one click = one reading
+       ↓ advance (double click in manual mode, single otherwise)
     Sleep Screen
        ↓ single click
     Version Screen
        ↓
     Waiting
 
-    GPS leads the hold flow because hand-taken position stamps are the most
-    frequent field action on the turtle: hold, click, click, click.
+    A hold on any screen here starts the flow again from the top, the
+    same as a hold anywhere else (run() routes every carousel's "sleep"
+    here), so a long press always lands on the Bluetooth screen.
     """
+    while _sleep_flow_pass(btn, oled, get_screen, flush_ms, poll_ms, tick_fn,
+                           gps, cfg, telemetry, status) == "sleep":
+        print("[CLICK] sleep -> sleep flow")
+
+
+def _sleep_flow_pass(btn, oled, get_screen, flush_ms, poll_ms, tick_fn,
+                     gps, cfg, telemetry, status):
+    """One run through the hold flow; returns "sleep" on a hold."""
     _post_screen_flush(btn, ms=50, poll_ms=poll_ms)
 
-    # ---- GPS SCREEN (first — reads UART only, no TCP) ----
+    # ---- BLUETOOTH SCREEN (first, turtle mode only — Turtle Wrangler) ----
+    # Opening it reopens the wrangle window and opens the pairing gate;
+    # double-click turns Bluetooth on/off, triple-click forgets phones.
+    if bool((cfg or {}).get("turtle_mode", False)):
+        _gc()
+        try:
+            from src.net import ble_service as _bles
+            _svc = _bles.instance()
+            _log_screen("bluetooth", "state={}  name={}".format(
+                _svc.state() if _svc else "none", _svc.name if _svc else "?"))
+        except Exception:
+            _log_screen("bluetooth")
+        ble_scr = get_screen("bluetooth")
+        if ble_scr and hasattr(ble_scr, "show_live"):
+            try:
+                a = ble_scr.show_live(btn, tick_fn=tick_fn)
+            except Exception as e:
+                _log_crash("bluetooth", e)
+                a = wait_for_single(btn, tick_fn=tick_fn)
+        else:
+            draw_text(oled, "Bluetooth", y=24)
+            a = wait_for_single(btn, tick_fn=tick_fn)
+        if a != "single":
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ---- BATTERY SCREEN (first) — skipped entirely if no INA219 is attached. ----
+    _gc()
+    bat_scr = get_screen("battery")
+    _ina_present = False
+    if bat_scr is not None:
+        try:
+            _bat_data = bat_scr._read()
+            _ina_present = bool(_bat_data.get("present", False))
+            if _ina_present:
+                _log_screen("battery", "voltage={:.2f}V  current={:.0f}mA".format(
+                    float(_bat_data.get("bus_v") or 0), float(_bat_data.get("current_ma") or 0)))
+            else:
+                _log_screen("battery", err="INA219 not connected — skipping to GPS")
+        except Exception:
+            _log_screen("battery")
+
+    if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
+        try:
+            a = bat_scr.show_live(btn, tick_fn=tick_fn)
+        except Exception as e:
+            _log_crash("battery", e)
+            a = None
+        if a != "single":
+            reset_and_flush(btn, flush_ms, poll_ms)
+            return a
+        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
+
+    # ---- GPS SCREEN (reads UART only, no TCP) ----
     _gc()
     gps_scr = get_screen("gps")
     try:
@@ -1053,8 +1175,9 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
         _log_screen("gps")
     if gps_scr and hasattr(gps_scr, "show_live"):
         try:
-            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry)
-        except Exception:
+            a = gps_scr.show_live(gps, btn, cfg=cfg, telemetry=telemetry, tick_fn=tick_fn)
+        except Exception as e:
+            _log_crash("gps", e)
             a = None
     else:
         draw_text(oled, "GPS", y=24)
@@ -1062,33 +1185,8 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
 
     if a != "single":
         reset_and_flush(btn, flush_ms, poll_ms)
-        return
+        return a
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
-
-    # Battery screen next — skip directly to sleep if INA219 is not attached.
-    bat_scr = get_screen("battery")
-    _ina_present = False
-    if bat_scr is not None:
-        try:
-            _bat_data = bat_scr._read()
-            _ina_present = bool(_bat_data.get("present", False))
-            if _ina_present:
-                _log_screen("battery", "voltage={:.2f}V  current={:.0f}mA".format(
-                    float(_bat_data.get("bus_v") or 0), float(_bat_data.get("current_ma") or 0)))
-            else:
-                _log_screen("battery", err="INA219 not connected — going to sleep")
-        except Exception:
-            _log_screen("battery")
-
-    if _ina_present and bat_scr and hasattr(bat_scr, "show_live"):
-        try:
-            a = bat_scr.show_live(btn)
-        except Exception:
-            a = None
-        if a != "single":
-            reset_and_flush(btn, flush_ms, poll_ms)
-            return
-        _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     _log_screen("sleep")
     scr = get_screen("sleep")
@@ -1104,7 +1202,7 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
 
     if a != "single":
         reset_and_flush(btn, flush_ms, poll_ms)
-        return
+        return a
     _post_screen_flush(btn, ms=120, poll_ms=poll_ms)
 
     # ------------------------------------------------------------
@@ -1113,16 +1211,28 @@ def sleep_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=None,
     # ------------------------------------------------------------
     _log_screen("version")
     ver_scr = get_screen("version")
+    _ver_action = None
     if ver_scr and hasattr(ver_scr, "show_live"):
         try:
-            ver_scr.show_live(btn=btn, tick_fn=tick_fn)
+            _ver_action = ver_scr.show_live(btn=btn, tick_fn=tick_fn)
         except Exception:
             pass
     else:
         draw_text(oled, "turtleOS", y=24)
-        wait_for_single(btn, tick_fn=tick_fn)
+        _ver_action = wait_for_single(btn, tick_fn=tick_fn)
+
+    if _ver_action == "triple":
+        # Triple click on the Version screen flips turtle_mode and reboots —
+        # turtleOS <-> airOS, mirroring the quint-click gesture on the
+        # waiting screen (src/ui/screens/togglemode.py).
+        try:
+            from src.ui.screens.togglemode import show_toggle_mode
+            show_toggle_mode(oled, (cfg or {}).get("turtle_mode", False))
+        except Exception as e:
+            print("[VERSION] mode switch failed:", repr(e))
 
     reset_and_flush(btn, flush_ms, poll_ms)
+    return _ver_action
 
 
 # ============================================================
@@ -1148,10 +1258,10 @@ def selfdestruct_flow(btn, oled, get_screen, flush_ms=250, poll_ms=25, tick_fn=N
         # Next: show(btn)
         elif hasattr(scr, "show"):
             try:
-                scr.show(btn)
+                scr.show(btn, tick_fn=tick_fn)
             except TypeError:
                 try:
-                    scr.show(btn=btn)
+                    scr.show(btn=btn, tick_fn=tick_fn)
                 except Exception:
                     pass
             except Exception:

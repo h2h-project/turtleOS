@@ -4,7 +4,7 @@
 
 import time
 
-from config import load_config, save_config
+from config import load_config
 from src.ui.toggle import ToggleSwitch
 from src.ui import grace as _grace
 
@@ -102,17 +102,22 @@ class OnlineScreen:
             status_text = status_text + ("." * self._dots)
         o.f_med.write(status_text[:18], 0, status_y)
 
-        # Second line: last sent elapsed, or device ID
+        # Second line: elapsed time since the last SUCCESSFUL send, or device ID.
+        # last_ok_ms (unlike last_ms) is only stamped when a send actually
+        # reached the API, so a stretch of failed retries doesn't make this
+        # line look freshly-sent.
         if api_state is not None:
-            last_ms = api_state.get("last_ms")
-            if last_ms is not None:
-                elapsed_s = max(0, time.ticks_diff(time.ticks_ms(), last_ms) // 1000)
+            last_ok_ms = api_state.get("last_ok_ms")
+            if last_ok_ms is not None:
+                elapsed_s = max(0, time.ticks_diff(time.ticks_ms(), last_ok_ms) // 1000)
                 if elapsed_s < 60:
                     age = "%ds ago" % elapsed_s
                 elif elapsed_s < 3600:
                     age = "%dm ago" % (elapsed_s // 60)
+                elif elapsed_s < 86400:
+                    age = "%dh ago" % (elapsed_s // 3600)
                 else:
-                    age = ">1h ago"
+                    age = ">1d ago"
                 o.f_med.write("sent " + age, 0, status_y + line_h)
             else:
                 did = (self.device_id or "---")[:14]
@@ -156,14 +161,12 @@ class OnlineScreen:
         # telemetry_enabled alone would be rebuilt from it on the next
         # load_config(). Turning back on always lands in "auto"; pick
         # "manual" explicitly on the Telemetry screen.
+        from src.app import actions
         self._load_cfg()
-        self._enabled = not self._enabled
-        try:
-            self.cfg["telemetry_mode"] = "auto" if self._enabled else "off"
-            self.cfg["telemetry_enabled"] = self._enabled
-            save_config(self.cfg)
-        except Exception:
-            pass
+        want = not self._enabled
+        code, _info = actions.telemetry_set_mode("auto" if want else "off")
+        if code == actions.OK:
+            self._enabled = want
 
     # ----------------------------------------
     # Public
@@ -212,11 +215,9 @@ class OnlineScreen:
         # after the send completes (within the next 500ms tick window).
         _requested = False
         if telemetry is not None and self._enabled:
-            try:
-                telemetry.request_now()
-                _requested = True
-            except Exception:
-                pass
+            from src.app import actions
+            code, _info = actions.api_handshake(telemetry)
+            _requested = (code == actions.IN_PROGRESS)
 
         api_state = telemetry.api_state if telemetry is not None else None
         if _requested:

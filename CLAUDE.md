@@ -102,6 +102,7 @@ device/               ← everything deployed to the microcontroller
     │   ├── ds3231.py             ← RTC driver
     │   ├── aht10.py              ← temp/humidity driver
     │   ├── servo.py              ← MG996R sail servo driver (PWM, 50 Hz)
+│   ├── servo_power.py        ← servo rail switch (Pololu SSR on GPIO40): on per write, idle cut-off
     │   ├── gy87.py               ← GY-87 10DOF composite: MPU6050 + aux-bus mag + BMP180 (one shared instance)
     │   ├── mpu6050.py            ← MPU6050 accel/gyro (0x69), I2C bypass, pitch/roll
     │   ├── bmp180.py             ← BMP180 barometer (0x77): temp, pressure, ISA altitude
@@ -192,6 +193,7 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | I2C_EXT (plug-in bus) | — | — | — | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-87 IMU; see the "Two I2C buses" note below |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
 | Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
+| Servo power switch | — | — | — | **GPIO40 (underside pad MTDO) → Pololu #5421 SSR EN** — see `adding_servo_switch.md` |
 | WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
 | USB power detect | GP24 (VBUS) | board-specific | Returns `False` | Returns `False` |
 | Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | **None — 8 MB PSRAM heap** (see Memory headroom) |
@@ -570,7 +572,9 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
   `ble.fast_tick()`, which runs `ble_commands.FAST_OPCODES` (only
   `SERVO_SET_ANGLE`, the Wrangler dial) as soon as they reach the head of
   the inbox. Only add an opcode there if it does no I/O beyond a PWM write,
-  never answers IN_PROGRESS and never blocks. `fast_tick` never runs inside
+  never answers IN_PROGRESS and never blocks. (Exception: the first servo
+  write after the servo rail was off waits 100 ms for it to come up, once
+  per power-up; see `drivers/servo_power.py`.) `fast_tick` never runs inside
   `tick()` (a command can run a flow that polls the button).
 - **Security:** commands need a bonded, encrypted, MITM-authenticated link
   (`ble_require_bond`, default true; false is for bench work only).
@@ -616,6 +620,8 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
 | `servo_min_us` / `servo_max_us` | int | `500` / `2500` | pulse range every servo path uses — the autopilot, Wrangler hand control and the Servo-screen wind-finder sweep (just inside the servo's end stops); MG996R defaults. Clamped 400–2600, ≥200 apart. The sweep parks at the midpoint and stops PWM when done. |
 | `servo_glide_us_s` | int | `4000` | Wrangler hand control glides to each dial angle at this many µs/s (a 20 ms timer in `drivers/servo.py`) instead of jumping; 4000 crosses 500–2500 in 0.5 s. `0` = jump. Clamped 0–20000. The autopilot and sweeps still write directly. |
+| `servo_power_mode` | str | `"auto"` | servo rail switch (Pololu SSR, EN on GPIO40, in the 2S pack's + lead ahead of the LM2596). `"auto"`: every servo write powers the rail (100 ms settle on the first), `_bg_tick` cuts it after `servo_power_idle_s` with no write. `"on"`: always on. `"off"`: always off, servo writes skipped. An unpowered servo doesn't hold the sail. Wiring: `adding_servo_switch.md`. |
+| `servo_power_idle_s` | int | `30` | idle seconds before `auto` cuts the servo rail. Clamped 5–3600. |
 | `battery_r_ohm` | float | `0.5` | ohms between the INA219's VIN+ and the cell (cell + leads). `INA219.battery_v()` removes the I×R swing so the pack reads the same plugged and unplugged; every battery voltage/SoC (Battery screen, waiting-screen glyph, Wrangler Power, telemetry) uses it. Clamped 0–2. Calibrate: set `0`, read V and mA on the Battery screen unplugged and charging, R = ΔV / (mA_chg + mA_dis) × 1000. |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |

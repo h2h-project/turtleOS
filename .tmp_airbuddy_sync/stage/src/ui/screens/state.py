@@ -172,11 +172,8 @@ class StateScreen:
             if action == "double" and self._nav is not None:
                 # ACQUIRE: first luff sweep (entry to SAIL-NAV on completion)
                 # SAIL-NAV: manual re-sweep. Ignored while a sweep is active.
-                try:
-                    if not self._nav.sweeping():
-                        self._nav.begin_luff_sweep()
-                except Exception:
-                    pass
+                from src.app import actions
+                actions.nav_luff_sweep(self._nav)
             elif action == "single":
                 return "single"
             elif action == "quad":

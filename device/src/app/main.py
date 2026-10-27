@@ -816,6 +816,9 @@ def run(
     # as [SLOW] with a per-stage breakdown (telemetry / nav / ble).
     _SLOW_TICK_MS = 40
 
+    # Servo power rail (Pololu SSR on GPIO40), ticked from _bg_tick.
+    from src.drivers import servo_power as _servo_power
+
     # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
     # walks the whole heap (~50 ms each), and the two that used to bracket
     # tick_telemetry() cost ~100 ms of every tick, long enough to swallow a
@@ -842,6 +845,11 @@ def run(
             except Exception:
                 pass
         t_nav = time.ticks_diff(time.ticks_ms(), t_nav)
+        # Servo power rail: servo_power_mode + the idle cut-off.
+        try:
+            _servo_power.tick(_cfg_cell[0])
+        except Exception:
+            pass
         # Bluetooth housekeeping (advertising / wrangle window / header).
         # Lives here, not only in the top-level loop, because every screen
         # owns the loop while it is showing and calls tick_fn=_bg_tick.

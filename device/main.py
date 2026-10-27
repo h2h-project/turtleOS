@@ -36,6 +36,18 @@ except Exception as _bg_e:
     print("[BOOT] boot_guard early check error:", repr(_bg_e))
 
 # ----------------------------
+# Servo power switch — EARLY
+# ----------------------------
+# The SSR's EN pin (GPIO40) floats until something drives it. Pull it low
+# (servo rail off) right after the boot guard; run()'s background tick then
+# applies servo_power_mode.
+try:
+    from src.drivers import servo_power as _servo_power
+    _servo_power.init()
+except Exception as _sp_e:
+    print("[BOOT] servo power init error:", repr(_sp_e))
+
+# ----------------------------
 # Boot pacing
 # ----------------------------
 BOOT_STEP_HOLD_MS = 500  # hold each step so OLED text is readable

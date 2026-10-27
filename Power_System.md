@@ -171,6 +171,8 @@ The XIAO supplies only the servo PWM control signal:
 
 The servo must **not** be powered from the XIAO 3V3, 5V, BAT+ pad, or the main 1S system battery.
 
+A Pololu isolated solid-state relay in the pack's + lead, controlled from XIAO GPIO40, lets turtleOS cut the LM2596 off while the servo is idle. See [adding_servo_switch.md](adding_servo_switch.md).
+
 ---
 
 ## Grounding Between Power Domains

@@ -137,6 +137,21 @@ class WiFiManager:
         except Exception:
             return ""
 
+    def rssi(self):
+        """
+        Return the current AP's RSSI in dBm (int, e.g. -55), or None if not
+        connected or the port/driver doesn't report it.
+        ESP32 MicroPython: wlan.status('rssi'). Pico/CYW43 supports the same
+        status('rssi') call, so no platform branch is needed here — any
+        failure (not connected, unsupported) just falls through to None.
+        """
+        try:
+            if not self.wlan.isconnected():
+                return None
+            return int(self.wlan.status("rssi"))
+        except Exception:
+            return None
+
     def status_code(self):
         try:
             return self.wlan.status()
@@ -307,6 +322,16 @@ class WiFiManager:
             self._apply_pm_performance()
             return (True, self.ip(), "CONNECTED")
 
+        # Tick once before any blocking radio work (WPA3 scan, hard reset,
+        # connect() call) so the boot-step dot ticker shows its first dot
+        # right away instead of freezing at zero dots for however long that
+        # setup takes — a WPA3 scan alone can run several seconds.
+        if tick_cb is not None:
+            try:
+                tick_cb()
+            except Exception:
+                pass
+
         # If the radio is already active (pre-activated during boot before heap
         # fragmentation), skip the active(False)→active(True) cycle.
         # That cycle releases and re-allocates the WiFi rx buffers — on a
@@ -413,13 +438,16 @@ class WiFiManager:
 
             if _IS_ESP32:
                 # status() also deadlocks on ESP32 during association — skip it.
+                # tick_cb runs every poll (200ms) so a DotTicker can self-pace
+                # its own animation off wall-clock time; the "connecting..."
+                # print is throttled separately to avoid log spam.
+                if tick_cb is not None:
+                    try:
+                        tick_cb()
+                    except Exception:
+                        pass
                 if time.ticks_diff(now, last_print_ms) >= 1000:
                     print("WIFI: connecting...")
-                    if tick_cb is not None:
-                        try:
-                            tick_cb()
-                        except Exception:
-                            pass
                     last_print_ms = now
                 time.sleep_ms(200)
                 continue

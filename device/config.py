@@ -128,6 +128,12 @@ DEFAULTS = {
     # this many us per second instead of jumping: 4000 crosses the 2000 us
     # MG996R range in 0.5 s. 0 = jump.
     "servo_glide_us_s": 4000,
+    # Servo power switch (Pololu SSR on GPIO40, cutting the 2S pack's feed
+    # to the LM2596). "auto": on when the servo is driven, off after
+    # servo_power_idle_s with no servo write. "on": always on. "off": always
+    # off, servo writes skipped. Boards with no switch ignore both.
+    "servo_power_mode": "auto",
+    "servo_power_idle_s": 30,
 
     # --- Battery ---
     # Ohms between the INA219's VIN+ and the cell (cell internal resistance
@@ -450,6 +456,21 @@ def _normalize_types(cfg):
         glide = DEFAULTS["servo_glide_us_s"]
     if cfg.get("servo_glide_us_s") != glide:
         cfg["servo_glide_us_s"] = glide
+        changed = True
+
+    # --- Servo power switch ---
+    sp_mode = cfg.get("servo_power_mode", DEFAULTS["servo_power_mode"])
+    if sp_mode not in ("auto", "on", "off"):
+        sp_mode = DEFAULTS["servo_power_mode"]
+    if cfg.get("servo_power_mode") != sp_mode:
+        cfg["servo_power_mode"] = sp_mode
+        changed = True
+    try:
+        sp_idle = max(5, min(3600, int(cfg.get("servo_power_idle_s", DEFAULTS["servo_power_idle_s"]))))
+    except Exception:
+        sp_idle = DEFAULTS["servo_power_idle_s"]
+    if cfg.get("servo_power_idle_s") != sp_idle:
+        cfg["servo_power_idle_s"] = sp_idle
         changed = True
 
     # --- Battery resistance ---

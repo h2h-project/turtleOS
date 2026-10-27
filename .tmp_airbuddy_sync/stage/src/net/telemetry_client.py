@@ -25,6 +25,13 @@ try:
 except Exception:
     requests = None
 
+# Reported to the server as X-Firmware-Version so the dashboard can flag
+# devices that need an OS update. booter.py is the single source of truth.
+try:
+    from src.app.booter import VERSION_NUM as _FW_VERSION
+except Exception:
+    _FW_VERSION = None
+
 QUEUE_FILE = "telemetry_queue.json"
 QUEUE_MAX = 5000
 
@@ -237,6 +244,8 @@ class TelemetryClient:
             "X-Device-Id": self.device_id,
             "X-Device-Key": self.device_key,
         }
+        if _FW_VERSION:
+            headers["X-Firmware-Version"] = str(_FW_VERSION)
 
         _gc_collect()
         j = _json()
@@ -313,6 +322,8 @@ class TelemetryClient:
             "X-Device-Id": self.device_id,
             "X-Device-Key": self.device_key,
         }
+        if _FW_VERSION:
+            headers["X-Firmware-Version"] = str(_FW_VERSION)
 
         _gc_collect()
         j = _json()
@@ -464,10 +475,12 @@ class TelemetryClient:
 
     def flush_queue(self):
         """Drain all queued readings in one batch POST.
-        Keeps queue intact on failure so the next successful send retries."""
+        Keeps queue intact on failure so the next successful send retries.
+        Returns (ok: bool, sent: int) — sent is 0 and ok is True when the
+        queue was already empty (nothing to do, not a failed attempt)."""
         q = self._load_queue()
         if not q:
-            return
+            return True, 0
 
         _gc_collect()
         print("telemetry queue: flushing", len(q), "buffered readings via batch")
@@ -482,5 +495,7 @@ class TelemetryClient:
                 extra=msg if msg and msg != "OK" else None
             )
             self._save_queue([])
+            return True, len(q)
         else:
             print("telemetry queue: batch flush failed:", msg, "- will retry next send")
+            return False, 0

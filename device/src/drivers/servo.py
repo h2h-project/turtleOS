@@ -2,6 +2,10 @@
 
 from machine import Pin, PWM, Timer
 
+# Every write powers the servo rail first (Pololu SSR on GPIO40); a False
+# request means the rail is held off, so the write is skipped.
+from src.drivers import servo_power
+
 # Never send a pulse outside this, whatever the config says (matches
 # SERVO_HARD_MIN_US / SERVO_HARD_MAX_US in ui/screens/servo.py).
 HARD_MIN_US = 400
@@ -79,6 +83,8 @@ class Servo:
 
     def write_us(self, us):
         self._stop_glide()
+        if not servo_power.request():
+            return
         us = max(self.min_us, min(self.max_us, us))
         period_us = int(1000000 / self.freq)
         duty = int((us / period_us) * 65535)
@@ -100,6 +106,8 @@ class Servo:
         deinits a PWM on this same pin when it finishes (pin_released), so
         recreate ours then, and if the write fails anyway."""
         self._stop_glide()
+        if not servo_power.request():
+            return
         self._put(us)
 
     def _put(self, us):
@@ -124,6 +132,9 @@ class Servo:
         if self._us is None or rate_us_s <= 0:
             self.write_pulse(us)
             return
+        if not servo_power.request():
+            self._stop_glide()
+            return
         self._live_pwm()           # ours again after a takeover, before the timer checks
         self._glide_to = us
         self._glide_step = max(1, int(rate_us_s) * GLIDE_STEP_MS // 1000)
@@ -144,6 +155,7 @@ class Servo:
         d = target - cur
         step = self._glide_step
         nxt = target if -step <= d <= step else cur + (step if d > 0 else -step)
+        servo_power.touch()
         try:
             self._put(nxt)
         except Exception as e:

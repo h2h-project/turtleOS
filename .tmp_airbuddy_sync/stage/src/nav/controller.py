@@ -13,7 +13,7 @@ from src.nav import gpsfix
 
 
 class NavController:
-    def __init__(self, cfg, i2c=None, gps=None, servo=None, battery=None):
+    def __init__(self, cfg, i2c=None, gps=None, servo=None, battery=None, imu=None):
         self._gps = gps
         self._servo = servo
         self._ina = battery
@@ -21,15 +21,31 @@ class NavController:
         self._sail_min = int(cfg.get("sail_min_deg", 10))
         self._sail_max = int(cfg.get("sail_max_deg", 170))
         self._next_ms = 0
+        self._next_route_ms = 0
         self._last_nav_ms = None
         self._sailnav_since_ms = None
         self._next_sweep_ms = None     # periodic re-sweep schedule (SAIL_NAV)
         self._feather_applied = False
+        self._servo_us = None          # last pulse written to the servo (us)
+        self._manual_until = None      # ticks_ms: hand control ends (SERVO_SET_ANGLE)
+        # autopilot_sail false: the autopilot never moves the servo (no
+        # steering, feathering or luff sweeps); only hand control does.
+        self._autopilot = bool(cfg.get("autopilot_sail", True))
+        # The servo's full travel, just inside its end stops (per servo
+        # model; config.py). Hand control spans exactly this range.
+        self._min_us = int(cfg.get("servo_min_us", 500))
+        self._max_us = int(cfg.get("servo_max_us", 2500))
         self.fault = None
 
+        # imu: the shared GY87 built at boot (src/drivers/gy87.py). Its mag is
+        # injected so HeadingSource never re-probes; with no GY-87 it falls
+        # back to a standalone compass on the bus.
         from src.nav.heading import HeadingSource
         self._heading = HeadingSource(
-            i2c=i2c, offset_deg=cfg.get("compass_offset_deg", 0))
+            i2c=i2c,
+            mag=(getattr(imu, "mag", None) if imu is not None else None),
+            imu=imu,
+            offset_deg=cfg.get("compass_offset_deg", 0))
 
         self._enc = None
         if i2c is not None:
@@ -66,12 +82,63 @@ class NavController:
 
     def begin_luff_sweep(self):
         """Start a sweep (ACQUIRE first-fix, or manual re-sweep in SAIL_NAV)."""
-        if sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
+        if not self._autopilot or sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
             return False
         return self._sweep.start()
 
     def sweeping(self):
         return self._sweep.active()
+
+    # Hand control of the sail (Turtle Wrangler's servo dial). 0..180 maps
+    # linearly onto servo_min_us..servo_max_us — one end stop to the other.
+    # Each move pauses autopilot servo writes for hold_ms; then steering
+    # resumes.
+
+    def servo_present(self):
+        return self._servo is not None
+
+    def autopilot_sail(self):
+        """False when config autopilot_sail is off: hand control only."""
+        return self._autopilot
+
+    def manual_sail(self, deg, hold_ms):
+        """Move the servo by hand to deg (0..180 of its full travel).
+        Returns the pulse written (us), or None: no servo, a sweep is
+        running (the caller checks sweeping() to report BUSY), or the write
+        failed."""
+        if self._servo is None or self._sweep.active():
+            return None
+        d = max(0, min(180, int(deg)))
+        us = self._min_us + (self._max_us - self._min_us) * d // 180
+        try:
+            self._servo.write_pulse(us)
+        except Exception as e:
+            print("[NAV] manual sail write failed:", repr(e))
+            return None
+        self._servo_us = us
+        self._manual_until = time.ticks_add(time.ticks_ms(), int(hold_ms))
+        self._feather_applied = False      # re-feather after the hold (ARRIVAL/SAFE)
+        self._pid.reset()                  # no integral wind-up from the paused loop
+        return us
+
+    def manual_hold_s(self, now_ms=None):
+        """Seconds of hand control left, or 0."""
+        if self._manual_until is None:
+            return 0
+        now = time.ticks_ms() if now_ms is None else now_ms
+        left = time.ticks_diff(self._manual_until, now)
+        if left <= 0:
+            self._manual_until = None
+            return 0
+        return (left + 999) // 1000
+
+    def servo_position(self):
+        """Last commanded servo position on the dial scale (0..180 of the
+        full travel, float), whoever wrote it; None if never written."""
+        if self._servo_us is None or self._max_us <= self._min_us:
+            return None
+        f = (self._servo_us - self._min_us) * 180.0 / (self._max_us - self._min_us)
+        return max(0.0, min(180.0, f))
 
     def sweep_status(self):
         return self._sweep_status
@@ -82,6 +149,28 @@ class NavController:
     def heading_deg(self):
         """Light accessor for overlays (no snapshot cost)."""
         return self._heading.heading_deg()
+
+    def heading_source(self):
+        """The shared HeadingSource — screens and telemetry read through it
+        so offset handling lives in exactly one place."""
+        return self._heading
+
+    def target(self):
+        """Active waypoint (lat, lon), or None."""
+        return self._wps.current()
+
+    def route_source(self):
+        """Which config key the route came from (waypoints.SRC_*)."""
+        return self._wps.source()
+
+    def battery_pct(self):
+        """Battery percent from the INA219 battery_v(), or None. The
+        estimator itself is ina219.pct_from_volts (shared with telemetry and
+        Bluetooth)."""
+        return self._battery_pct()
+
+    def sail_encoder_present(self):
+        return self._enc is not None
 
     def seconds_to_next_sweep(self):
         """Seconds until the next scheduled luff re-sweep, or None when not
@@ -133,6 +222,30 @@ class NavController:
 
         self._drain_gps()
 
+        # Pick up a target changed at runtime (Destination / Journey / a
+        # Bluetooth command). Cheap, but no need to do it every 50 ms.
+        if isinstance(cfg, dict) and time.ticks_diff(now, self._next_route_ms) >= 0:
+            self._next_route_ms = time.ticks_add(now, 1000)
+            try:
+                self._wps.sync(cfg)
+            except Exception as e:
+                print("[NAV] route sync failed:", repr(e))
+
+        # Hand control: no autopilot servo writes (steering, feather, scheduled
+        # re-sweep) until the hold runs out. A sweep can't be active here —
+        # manual_sail() refuses during one.
+        if self.manual_hold_s(now) > 0:
+            self._last_nav_ms = None
+            return
+
+        # Autopilot sail control switched off (config autopilot_sail): GPS and
+        # route keep updating above, but nothing here touches the servo.
+        if isinstance(cfg, dict):
+            self._autopilot = bool(cfg.get("autopilot_sail", True))
+        if not self._autopilot and not self._sweep.active():   # a running sweep finishes
+            self._last_nav_ms = None
+            return
+
         state = sm.get_state()
         if state == sm.ACQUIRE:
             if self._sweep.active():
@@ -169,6 +282,8 @@ class NavController:
                     lat, lon, cog = gpsfix.parse_rmc(line)
                     if lat is not None:
                         gpsfix.update(lat, lon, cog)
+                elif "GGA" in line:
+                    gpsfix.note_gga(line)
         except Exception:
             pass
 
@@ -243,10 +358,8 @@ class NavController:
         if self._ina is None or not getattr(self._ina, "is_present", False):
             return None
         try:
-            v = self._ina.bus_voltage_v()
-            if v is None:
-                return None
-            return max(0, min(100, int((float(v) - 3.30) / (4.20 - 3.30) * 100)))
+            from src.drivers.ina219 import pct_from_volts
+            return pct_from_volts(self._ina.battery_v())
         except Exception:
             return None
 
@@ -254,7 +367,9 @@ class NavController:
         if self._servo is None:
             return
         try:
-            self._servo.angle(int(max(self._sail_min, min(self._sail_max, deg))))
+            d = int(max(self._sail_min, min(self._sail_max, deg)))
+            self._servo.angle(d)
+            self._servo_us = self._servo.pulse_us(d)
         except Exception:
             pass
 
@@ -267,6 +382,7 @@ class NavController:
         if self._servo is not None:
             try:
                 self._servo.center()
+                self._servo_us = self._servo.pulse_us(90)
             except Exception:
                 pass
 

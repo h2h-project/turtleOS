@@ -11,6 +11,10 @@
 from machine import UART, Pin
 import time
 
+# Set by src/app/clock.py while the clock is waiting for GPS time: called
+# with each RMC line read_nmea() returns. None the rest of the time.
+rmc_hook = None
+
 
 def _pmtk_sentence(body):
     """Build a $PMTK...* sentence with XOR checksum, CR+LF terminated."""
@@ -124,13 +128,13 @@ class GnssModule:
         read was the oldest one queued and staleness grew without bound —
         that, not the fix rate, was the multi-second lag on manual stamps.
 
-        1 Hz is also enough on the merits: heading comes from the QMC5883L
-        (see nav/heading.py), the luff sweep runs off the AS5600, and at
+        1 Hz is also enough on the merits: heading comes from the GY-87's
+        magnetometer (see nav/heading.py), the luff sweep runs off the AS5600, and at
         turtle speeds (~0.5-1 m/s) a second of travel is well inside the
         receiver's ~2.5 m CEP. Raising the rate only resamples that noise.
 
         If GPS course-over-ground is ever needed (e.g. damping magnetometer
-        drift for the planned ICM-20948), raise the baud with PMTK251 first —
+        drift for the GY-87 magnetometer), raise the baud with PMTK251 first —
         do not go back to 5 Hz at 9600.
         """
         # PMTK314 field order: GLL, RMC, VTG, GGA, GSA, GSV, ...
@@ -201,6 +205,11 @@ class GnssModule:
                 txt = ""
 
             if txt.startswith("$GP") or txt.startswith("$GN"):
+                if rmc_hook is not None and "RMC" in txt:
+                    try:
+                        rmc_hook(txt)
+                    except Exception:
+                        pass
                 return txt
         return None
 
