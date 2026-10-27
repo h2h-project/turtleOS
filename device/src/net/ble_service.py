@@ -185,6 +185,7 @@ class BleService:
         self._passkey = None          # 6-digit code while pairing (drawn on the OLED)
         self._pairing_allowed = False # True only while the Bluetooth screen shows
         self._cmd_inbox = []          # raw Command writes, queued by _irq()
+        self._in_tick = 0             # tick() depth (it nests: Bluetooth SLEEP's flow ticks it)
         self._sources = None
         from src.net.ble_commands import CommandRunner
         self._runner = CommandRunner(self, lambda: self._sources)
@@ -465,10 +466,37 @@ class BleService:
 
     # ------------------------------------------------------------ tick
 
+    def fast_tick(self):
+        """Run quick commands (ble_commands.FAST_OPCODES, the app's servo
+        dial) as soon as they arrive, from every button poll, instead of
+        waiting up to ~500 ms for the next _bg_tick. Only the head of the
+        inbox, so commands still run in order; anything else waits for
+        tick(). Never runs inside tick() (a command can run a screen flow
+        that polls the button)."""
+        if not self._cmd_inbox or self._in_tick or self._conn is None:
+            return
+        from src.net.ble_commands import FAST_OPCODES
+        self._in_tick = 1
+        try:
+            while self._cmd_inbox and self._cmd_inbox[0][:1] and \
+                    self._cmd_inbox[0][0] in FAST_OPCODES and not self._runner.busy():
+                self._runner.handle(self._cmd_inbox.pop(0))
+        except Exception as e:
+            print("[BLE] fast tick err:", repr(e))
+        finally:
+            self._in_tick = 0
+
     def tick(self):
         """Main-loop housekeeping. Cheap; safe to call every _bg_tick."""
         if not self._active:
             return
+        self._in_tick += 1
+        try:
+            self._tick()
+        finally:
+            self._in_tick -= 1
+
+    def _tick(self):
         try:
             while self._events:
                 ev = self._events.pop(0)

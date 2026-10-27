@@ -668,6 +668,11 @@ at a time while the dial is dragged, always with the latest angle.
   It saves both values atomically, then reconnects if `wifi_enabled`.
   Saving the credentials never depends on the connect succeeding. The
   connect result is reported separately from the save.
+- The turtle's ESP32-S3 joins only 2.4 GHz networks secured with
+  WPA2-Personal (no WPA3, no WPA2-Enterprise). WIFI_FAILED doesn't say
+  whether the security type, a wrong password or range was the cause, so
+  the app names all three. A join asked for over Bluetooth gets the WiFi
+  screen's 12 s association window inside the 25 s deadline.
 - BLE_SET_ENABLED only accepts 0. Once Bluetooth is off, no phone can
   turn it back on; only the Bluetooth screen can (see
   [Wrangle window](#wrangle-window-and-bluetooth-config)).

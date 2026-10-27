@@ -35,6 +35,9 @@ class NavController:
         # model; config.py). Hand control spans exactly this range.
         self._min_us = int(cfg.get("servo_min_us", 500))
         self._max_us = int(cfg.get("servo_max_us", 2500))
+        # Hand control glides between the dial's angles at this rate
+        # (us/s; 0 = jump straight there). config.py.
+        self._glide_us_s = int(cfg.get("servo_glide_us_s", 4000))
         self.fault = None
 
         # imu: the shared GY87 built at boot (src/drivers/gy87.py). Its mag is
@@ -102,8 +105,9 @@ class NavController:
         return self._autopilot
 
     def manual_sail(self, deg, hold_ms):
-        """Move the servo by hand to deg (0..180 of its full travel).
-        Returns the pulse written (us), or None: no servo, a sweep is
+        """Move the servo by hand to deg (0..180 of its full travel),
+        gliding there at servo_glide_us_s. Returns the target pulse (us), or
+        None: no servo, a sweep is
         running (the caller checks sweeping() to report BUSY), or the write
         failed."""
         if self._servo is None or self._sweep.active():
@@ -111,7 +115,11 @@ class NavController:
         d = max(0, min(180, int(deg)))
         us = self._min_us + (self._max_us - self._min_us) * d // 180
         try:
-            self._servo.write_pulse(us)
+            glide = getattr(self._servo, "glide_to", None)
+            if glide is not None:
+                glide(us, self._glide_us_s)
+            else:
+                self._servo.write_pulse(us)
         except Exception as e:
             print("[NAV] manual sail write failed:", repr(e))
             return None

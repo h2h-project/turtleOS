@@ -506,7 +506,11 @@ class TelemetryBackgroundProcess:
                     pw = str(cfg.get("wifi_password") or "")
                     print("[BACKGROUND] WiFi check requested, reconnecting...")
                     self._last_wifi_attempt_ms = time.ticks_ms()
-                    self._wifi.reconnect(ssid, pw, timeout_s=6)
+                    # A deliberate request (WiFi screen, Bluetooth command) gets
+                    # the 12 s the WiFi screen allows; a 6 s window missed slower
+                    # routers and reported a join failure that wasn't one.
+                    # Automatic checks keep 6 s: they retry on the backoff.
+                    self._wifi.reconnect(ssid, pw, timeout_s=12 if was_forced else 6)
                     wifi_ok = self._wifi.is_connected()
                     if wifi_ok:
                         self._wifi_fail_streak = 0

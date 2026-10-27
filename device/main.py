@@ -156,7 +156,11 @@ def init_oled():
         return OLED(col_offset=col_offset)
 
     except OSError as e:
-        if e.args[0] in (5, 19, 110):  # EIO, ENODEV, ETIMEDOUT — no I2C device present
+        if e.args[0] in (110, 116):  # ETIMEDOUT (Linux 110 / ESP-IDF newlib 116)
+            # The OLED ACKs the scan but stalls the bus mid-write: a hung
+            # controller (power-cycle it) or a marginal SDA/SCL/VCC contact.
+            print("[BOOT] OLED: 0x3C not responding (I2C timeout) — check wiring/power; running headless")
+        elif e.args[0] in (5, 19):  # EIO, ENODEV — no I2C device present
             print("[BOOT] OLED: not found — running headless")
         else:
             print("[BOOT] OLED: init failed:", repr(e))
@@ -1680,7 +1684,9 @@ def step_init_runtime():
             from src.drivers.servo import Servo
             _sp = _servo_pin()
             if _sp is not None:
-                nav_servo = Servo(_sp)
+                nav_servo = Servo(
+                    _sp, min_us=int(cfg.get("servo_min_us", 500)),
+                    max_us=int(cfg.get("servo_max_us", 2500)))
         except Exception as e:
             print("[NAV] servo init failed:", repr(e))
 

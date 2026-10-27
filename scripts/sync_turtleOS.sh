@@ -13,12 +13,48 @@ set -euo pipefail
 # full screen set, all ESP32-S3 drivers.
 #
 # Usage:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/sync_turtleOS.sh)
 #   ./scripts/sync_turtleOS.sh
 #   ./scripts/sync_turtleOS.sh --fresh
 #   ./scripts/sync_turtleOS.sh --port /dev/cu.usbmodem141301
 #
 # --fresh: non-interactive hard reset (wipe and re-upload)
 # ============================================================
+
+# ------------------------------------------------------------
+# Remote run — bash <(curl -fsSL .../scripts/sync_turtleOS.sh)
+# ------------------------------------------------------------
+# There's no repo checkout around a script run straight from GitHub, so
+# clone/refresh the installer's workspace and re-run that copy, which has
+# device/ and the helper scripts next to it. Git-ignored files there
+# (airbuddy_config.json, config_collection.json) are kept.
+_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || echo /nonexistent)"
+if [[ ! -d "$_SELF_DIR/../device" ]]; then
+  # `curl ... | bash` leaves stdin on the pipe; reconnect it so prompts work.
+  if [ ! -t 0 ] && (exec < /dev/tty) 2>/dev/null; then exec < /dev/tty; fi
+  if [[ -n "${TURTLEOS_SYNC_BOOTSTRAPPED:-}" ]]; then
+    echo "ERROR: The turtleOS workspace is missing its device/ folder."; exit 1
+  fi
+  command -v git >/dev/null 2>&1 || {
+    echo "ERROR: Git is not installed. Install it first:"
+    echo "  Ubuntu / Debian:  sudo apt install git"
+    echo "  Mac (Homebrew):   brew install git"
+    exit 1
+  }
+  REPO_DIR="$HOME/Documents/HopeTurtle/turtleOS"
+  echo
+  echo "==> Getting the latest turtleOS from GitHub"
+  echo "  $REPO_DIR"
+  mkdir -p "$(dirname "$REPO_DIR")"
+  if [[ ! -d "$REPO_DIR/.git" ]]; then
+    git clone https://github.com/h2h-project/turtleOS.git "$REPO_DIR"
+  fi
+  git -C "$REPO_DIR" fetch origin && git -C "$REPO_DIR" reset --hard origin/main || {
+    echo "ERROR: Could not update $REPO_DIR. Check your internet connection and try again."; exit 1
+  }
+  export TURTLEOS_SYNC_BOOTSTRAPPED=1
+  exec bash "$REPO_DIR/scripts/sync_turtleOS.sh" "$@"
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVICE_DIR="$ROOT_DIR/device"
@@ -49,8 +85,10 @@ Options:
   --port PORT     Serial port (default: auto)
   --help          Show this help
 
-If scripts/config_collection.json exists, options 2-4 also ask which WiFi
-network and which turtle (device_id / key) to put on the board.
+Options 2-4 also ask which WiFi network and which turtle (device_id / key)
+to put on the board, from scripts/config_collection.json. Each list ends
+with "Enter a new …", which saves the new network or turtle into the
+collection (creating it on first use).
 
 EOF
 }
@@ -258,14 +296,14 @@ done
 # Locate mpremote
 # ------------------------------------------------------------
 
+# Same tools venv the installer uses, so a device set up with
+# install_*.sh syncs without any extra setup.
+VENV_DIR="$HOME/Documents/HopeTurtle/.tools-venv"
+# shellcheck source=tools_venv.sh
+source "$SCRIPTS_DIR/tools_venv.sh"
+
 MPREMOTE=""
-if command -v mpremote >/dev/null 2>&1; then
-  MPREMOTE="mpremote"
-elif [[ -x "$HOME/venvs/micropython/bin/mpremote" ]]; then
-  MPREMOTE="$HOME/venvs/micropython/bin/mpremote"
-else
-  die "mpremote not found. Install it with: pip install mpremote  (or activate your micropython venv)"
-fi
+find_or_install_mpremote || die "Could not find or install mpremote (see above)."
 
 MPREMOTE_CMD=("$MPREMOTE" connect "$PORT")
 
@@ -374,17 +412,18 @@ fi
 # fill in the blanks. Never upload the blank example — it would wipe the
 # board's WiFi and device credentials.
 #
-# scripts/config_collection.json (also git-ignored, advanced users only) holds
-# several WiFi networks and turtles. When it exists, options 2-4 ask which
-# network and which turtle to put on the board, and those picks override the
-# matching keys of xiao_config.json. --fresh never asks.
+# scripts/config_collection.json (also git-ignored) holds several WiFi
+# networks and turtles. Options 2-4 ask which network and which turtle to put
+# on the board, and those picks override the matching keys of
+# xiao_config.json. Each list ends with "Enter a new …", which adds to the
+# collection (creating it on first use). --fresh never asks.
 
 CONFIG_FILE="$SCRIPTS_DIR/xiao_config.json"
 CONFIG_EXAMPLE="$SCRIPTS_DIR/xiao_config.example.json"
 COLLECTION_FILE="$SCRIPTS_DIR/config_collection.json"
 USE_COLLECTION=0
-if [[ -f "$COLLECTION_FILE" && "$FRESH" -eq 0 ]]; then
-  USE_COLLECTION=1
+if [[ "$FRESH" -eq 0 ]]; then
+  USE_COLLECTION=1   # the pickers also offer "Enter a new …", so ask even with no collection yet
 fi
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -392,7 +431,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   if [[ "$USE_COLLECTION" -eq 0 ]]; then
     die "Created scripts/xiao_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
   fi
-  echo "Created scripts/xiao_config.json from the example; credentials come from config_collection.json."
+  echo "Created scripts/xiao_config.json from the example; pick or enter the credentials below."
 fi
 
 mkdir -p "$TMP_DIR/upload"
@@ -427,6 +466,17 @@ CONFIG_LABEL="$(build_upload_config "$CONFIG_FILE" turtles turtle "$WIFI_PICK" "
   die "Could not prepare config.json from scripts/xiao_config.json (is it valid JSON?)."
 }
 rm -f "$BOARD_CONFIG"
+
+# ── Option 4: optionally go over every config parameter ─────────────────────
+# The same questions the installer asks, defaulting to the values above.
+
+if [[ "$ACTION" == "full" && "$FRESH" -eq 0 ]]; then
+  echo
+  read -r -p "Do you want to go over all the config parameters? [y/N]: " reply
+  case "$(echo "${reply:-n}" | tr '[:upper:]' '[:lower:]')" in
+    y|yes) review_config_params turtle "$UPLOAD_CONFIG" ;;
+  esac
+fi
 
 # ============================================================
 # Option 2 — Sync only the config file
@@ -496,7 +546,6 @@ if [[ "$ACTION" == "quick" ]]; then
                     Your turtle is updated.
 
                                  "
-
   open_repl
   exit 0
 fi

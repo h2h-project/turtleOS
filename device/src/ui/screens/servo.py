@@ -452,6 +452,12 @@ class ServoScreen:
 
     def _ensure_pwm(self):
         if self._pwm is None:
+            # Stop a hand-control glide on this pin before we drive it.
+            try:
+                from src.drivers.servo import pin_released
+                pin_released(self._pin)
+            except Exception:
+                pass
             self._pwm = self._make_pwm()
         return self._pwm
 
@@ -604,6 +610,12 @@ class ServoScreen:
                 pass
 
             self._pwm = None
+            # The nav controller's Servo shares this pin; it rebuilds its PWM.
+            try:
+                from src.drivers.servo import pin_released
+                pin_released(self._pin)
+            except Exception:
+                pass
 
 
     # ----------------------------------------------------------------

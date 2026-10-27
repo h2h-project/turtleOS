@@ -25,6 +25,13 @@ try:
 except Exception:
     requests = None
 
+# Reported to the server as X-Firmware-Version so the dashboard can flag
+# devices that need an OS update. booter.py is the single source of truth.
+try:
+    from src.app.booter import VERSION_NUM as _FW_VERSION
+except Exception:
+    _FW_VERSION = None
+
 QUEUE_FILE = "telemetry_queue.json"
 QUEUE_MAX = 5000
 
@@ -237,6 +244,8 @@ class TelemetryClient:
             "X-Device-Id": self.device_id,
             "X-Device-Key": self.device_key,
         }
+        if _FW_VERSION:
+            headers["X-Firmware-Version"] = str(_FW_VERSION)
 
         _gc_collect()
         j = _json()
@@ -313,6 +322,8 @@ class TelemetryClient:
             "X-Device-Id": self.device_id,
             "X-Device-Key": self.device_key,
         }
+        if _FW_VERSION:
+            headers["X-Firmware-Version"] = str(_FW_VERSION)
 
         _gc_collect()
         j = _json()

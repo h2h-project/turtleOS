@@ -761,7 +761,9 @@ def run(
                     from src.drivers.servo import Servo
                     _sp = _servo_pin()
                     if _sp is not None:
-                        nav_servo = Servo(_sp)
+                        nav_servo = Servo(
+                            _sp, min_us=int(cfg_now.get("servo_min_us", 500)),
+                            max_us=int(cfg_now.get("servo_max_us", 2500)))
                 except Exception as e:
                     print("[NAV] servo init failed:", repr(e))
             _nav_cell[0] = NavController(
@@ -805,6 +807,9 @@ def run(
             })
         except Exception as e:
             print("[BLE] attach sources failed:", repr(e))
+        # Fast commands (the app's servo dial) run from every button poll,
+        # not only at _bg_tick's ~500 ms cadence.
+        btn.on_poll = ble.fast_tick
 
     # A screen polls the button only between _bg_tick() calls, so a slow
     # tick makes every click feel late. Any tick over this many ms is logged

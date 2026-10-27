@@ -124,6 +124,10 @@ DEFAULTS = {
     # another servo's stops by eye from the REPL and set them here.
     "servo_min_us": 500,
     "servo_max_us": 2500,
+    # Hand control (Turtle Wrangler's servo dial) glides to each angle at
+    # this many us per second instead of jumping: 4000 crosses the 2000 us
+    # MG996R range in 0.5 s. 0 = jump.
+    "servo_glide_us_s": 4000,
 
     # --- Battery ---
     # Ohms between the INA219's VIN+ and the cell (cell internal resistance
@@ -439,6 +443,13 @@ def _normalize_types(cfg):
     if cfg.get("servo_min_us") != s_min or cfg.get("servo_max_us") != s_max:
         cfg["servo_min_us"] = s_min
         cfg["servo_max_us"] = s_max
+        changed = True
+    try:
+        glide = max(0, min(20000, int(cfg.get("servo_glide_us_s", DEFAULTS["servo_glide_us_s"]))))
+    except Exception:
+        glide = DEFAULTS["servo_glide_us_s"]
+    if cfg.get("servo_glide_us_s") != glide:
+        cfg["servo_glide_us_s"] = glide
         changed = True
 
     # --- Battery resistance ---

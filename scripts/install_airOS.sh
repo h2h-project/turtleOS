@@ -95,23 +95,56 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Helper: create the venv and bootstrap pip, with visible progress
-_ensure_venv() {
-    if [[ ! -d "$VENV_DIR" ]]; then
-        echo "  [1/2] Creating Python environment at $VENV_DIR ..."
-        python3 -m venv "$VENV_DIR"
-        echo "  [2/2] Upgrading pip inside the environment..."
-        "$VENV_DIR/bin/pip" install --upgrade pip
-        echo "  Environment ready."
-        echo
-    fi
+# Tools venv helpers — identical to scripts/tools_venv.sh (keep in step).
+# A venv counts as ready only if its own python can run pip. Checking just for
+# the folder misses a half-made venv — e.g. Debian/Ubuntu without the
+# python3-venv package, where `python3 -m venv` fails after creating the
+# folder but before installing pip — which then breaks every later run.
+_venv_ready() {
+    [[ -x "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1
 }
 
-# Helper: install a package into the venv with visible pip output
+# Create (or repair) the venv and bootstrap pip, with visible progress.
+# Falls back to get-pip.py when this Python has no ensurepip, so no sudo is
+# needed. Returns non-zero (after explaining why) if it still can't be done.
+_ensure_venv() {
+    _venv_ready && return 0
+
+    if [[ -d "$VENV_DIR" ]]; then
+        echo "  Found an incomplete Python environment — rebuilding it."
+        rm -rf "$VENV_DIR"
+    fi
+
+    echo "  [1/2] Creating Python environment at $VENV_DIR ..."
+    if ! { python3 -c "import ensurepip" >/dev/null 2>&1 && python3 -m venv "$VENV_DIR"; }; then
+        rm -rf "$VENV_DIR"
+        echo "  This Python has no built-in pip installer — downloading pip instead."
+        if ! { python3 -m venv --without-pip "$VENV_DIR" \
+               && curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - --quiet; }; then
+            rm -rf "$VENV_DIR"
+            local pyver
+            pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo 3)"
+            echo
+            echo "Could not set up a Python environment for the installer tools."
+            echo "Install Python's venv support, then run this again:"
+            echo "  Ubuntu / Debian:  sudo apt install python3-venv python${pyver}-venv"
+            echo "  Fedora:           sudo dnf install python3-pip"
+            echo "  Mac:              brew install python"
+            return 1
+        fi
+    fi
+
+    echo "  [2/2] Upgrading pip inside the environment..."
+    "$VENV_DIR/bin/python" -m pip install --upgrade pip
+    echo "  Environment ready."
+    echo
+}
+
+# Install a package into the venv with visible pip output.
 _venv_install() {
     local pkg="$1"
     echo "  Installing $pkg (this may take a minute on a slow connection)..."
-    "$VENV_DIR/bin/pip" install "$pkg"
+    "$VENV_DIR/bin/python" -m pip install "$pkg"
 }
 
 # Locate or auto-install mpremote
@@ -121,7 +154,7 @@ else
     echo "mpremote not found — setting up a local Python environment."
     echo "(Tools stay in $VENV_DIR and do not affect your system Python.)"
     echo
-    _ensure_venv
+    _ensure_venv || exit 1
     _venv_install mpremote
     MPREMOTE_BIN="$VENV_DIR/bin/mpremote"
     echo "  ✓  mpremote ready"
@@ -140,7 +173,7 @@ if [[ "$NEEDS_FLASH" == "true" ]]; then
     else
         echo "esptool not found — installing into the local Python environment."
         echo
-        _ensure_venv
+        _ensure_venv || exit 1
         _venv_install esptool
         ESPTOOL_BIN="$VENV_DIR/bin/esptool"
         echo "  ✓  esptool ready"

@@ -13,12 +13,48 @@ set -euo pipefail
 # screens simply go unused in airOS mode.
 #
 # Usage:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/scripts/sync_airOS.sh)
 #   ./scripts/sync_airOS.sh
 #   ./scripts/sync_airOS.sh --fresh
 #   ./scripts/sync_airOS.sh --port /dev/cu.usbmodem141301
 #
 # --fresh: non-interactive hard reset (wipe and re-upload)
 # ============================================================
+
+# ------------------------------------------------------------
+# Remote run — bash <(curl -fsSL .../scripts/sync_airOS.sh)
+# ------------------------------------------------------------
+# There's no repo checkout around a script run straight from GitHub, so
+# clone/refresh the installer's workspace and re-run that copy, which has
+# device/ and the helper scripts next to it. Git-ignored files there
+# (airbuddy_config.json, config_collection.json) are kept.
+_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || echo /nonexistent)"
+if [[ ! -d "$_SELF_DIR/../device" ]]; then
+  # `curl ... | bash` leaves stdin on the pipe; reconnect it so prompts work.
+  if [ ! -t 0 ] && (exec < /dev/tty) 2>/dev/null; then exec < /dev/tty; fi
+  if [[ -n "${TURTLEOS_SYNC_BOOTSTRAPPED:-}" ]]; then
+    echo "ERROR: The airOS workspace is missing its device/ folder."; exit 1
+  fi
+  command -v git >/dev/null 2>&1 || {
+    echo "ERROR: Git is not installed. Install it first:"
+    echo "  Ubuntu / Debian:  sudo apt install git"
+    echo "  Mac (Homebrew):   brew install git"
+    exit 1
+  }
+  REPO_DIR="$HOME/Documents/AirBuddy/turtleOS"
+  echo
+  echo "==> Getting the latest airOS from GitHub"
+  echo "  $REPO_DIR"
+  mkdir -p "$(dirname "$REPO_DIR")"
+  if [[ ! -d "$REPO_DIR/.git" ]]; then
+    git clone https://github.com/h2h-project/turtleOS.git "$REPO_DIR"
+  fi
+  git -C "$REPO_DIR" fetch origin && git -C "$REPO_DIR" reset --hard origin/main || {
+    echo "ERROR: Could not update $REPO_DIR. Check your internet connection and try again."; exit 1
+  }
+  export TURTLEOS_SYNC_BOOTSTRAPPED=1
+  exec bash "$REPO_DIR/scripts/sync_airOS.sh" "$@"
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVICE_DIR="$ROOT_DIR/device"
@@ -49,8 +85,10 @@ Options:
   --port PORT     Serial port (default: auto)
   --help          Show this help
 
-If scripts/config_collection.json exists, options 2-4 also ask which WiFi
-network and which AirBuddy (device_id / key) to put on the board.
+Options 2-4 also ask which WiFi network and which AirBuddy (device_id / key)
+to put on the board, from scripts/config_collection.json. Each list ends
+with "Enter a new …", which saves the new network or AirBuddy into the
+collection (creating it on first use).
 
 EOF
 }
@@ -258,14 +296,14 @@ done
 # Locate mpremote
 # ------------------------------------------------------------
 
+# Same tools venv the installer uses, so a device set up with
+# install_*.sh syncs without any extra setup.
+VENV_DIR="$HOME/Documents/AirBuddy/.tools-venv"
+# shellcheck source=tools_venv.sh
+source "$SCRIPTS_DIR/tools_venv.sh"
+
 MPREMOTE=""
-if command -v mpremote >/dev/null 2>&1; then
-  MPREMOTE="mpremote"
-elif [[ -x "$HOME/venvs/micropython/bin/mpremote" ]]; then
-  MPREMOTE="$HOME/venvs/micropython/bin/mpremote"
-else
-  die "mpremote not found. Install it with: pip install mpremote  (or activate your micropython venv)"
-fi
+find_or_install_mpremote || die "Could not find or install mpremote (see above)."
 
 MPREMOTE_CMD=("$MPREMOTE" connect "$PORT")
 
@@ -336,7 +374,7 @@ else
   echo "What would you like to do?  (Hit return for option 1)"
   echo "  1. Reboot the device and see the full boot log.  [default]"
   echo "  2. Sync only the config file"
-  echo "  3. Do a quick sync — for any changes to the OS"
+  echo "  3. Do a quick sync — update the OS, keep the board's config"
   echo "  4. Do a more in depth sync with full options"
   echo
   while true; do
@@ -362,6 +400,63 @@ if [[ "$ACTION" == "reboot" ]]; then
 fi
 
 # ============================================================
+# Staging (shared by quick and full)
+# ============================================================
+# Extra rsync arguments go straight through (quick sync uses them to keep a
+# local device/config.json off the board).
+
+stage_firmware() {
+  msg "Staging XIAO ESP32-S3 firmware"
+
+  rm -rf "$STAGE_DIR"
+  mkdir -p "$STAGE_DIR"
+
+  rsync -a "$@" \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    --exclude '*.pyo' \
+    --exclude '.gitignore' \
+    `# ── Device-owned runtime data (never overwrite the board's own records) ─` \
+    --exclude 'telemetry_queue.json' \
+    --exclude 'telemetry_last_sent.json' \
+    --exclude 'journey_state.json' \
+    --exclude 'nav_state.json' \
+    --exclude 'ble_bonds.json' \
+    \
+    `# ── Pico HAL (not needed on ESP32-S3) ───────────────────────` \
+    --exclude 'src/hal/board_pico.py' \
+    \
+    `# ── Pico-only override sources (never installed on XIAO) ─────` \
+    --exclude 'src/ui/flows_pico.py' \
+    --exclude 'src/ui/glyphs_pico.py' \
+    --exclude 'src/app/main_pico.py' \
+    \
+    "$DEVICE_DIR/" "$STAGE_DIR/"
+}
+
+# ============================================================
+# Option 3 — Quick sync (any changes to the OS)
+# ============================================================
+# Updates the OS only and leaves the board's own config.json exactly as it
+# is, so no local airbuddy_config.json is needed — this is the path the
+# dashboard's "Update airOS" command uses.
+
+if [[ "$ACTION" == "quick" ]]; then
+  "${MPREMOTE_CMD[@]}" fs cat :config.json >/dev/null 2>&1 \
+    || die "No config.json on the board yet. Run the first-time setup (install_airOS.sh), or option 2 or 4 here, to configure it."
+
+  stage_firmware --exclude '/config.json'
+  echo "Config: keeping the board's existing config.json"
+  do_upload_sync
+
+  echo
+  echo "  Done!  airOS is installed."
+
+  open_repl
+  exit 0
+fi
+
+# ============================================================
 # Local config (untracked — holds WiFi + device credentials)
 # ============================================================
 # scripts/airbuddy_config.json is git-ignored so credentials never reach the public
@@ -369,18 +464,18 @@ fi
 # fill in the blanks. Never upload the blank example — it would wipe the
 # board's WiFi and device credentials.
 #
-# scripts/config_collection.json (also git-ignored, advanced users only) holds
-# several WiFi networks and devices. When it exists, options 2-4 ask which
-# network and which AirBuddy (its "airbuddies" list) to put on the board, and
-# those picks override the matching keys of airbuddy_config.json. --fresh
-# never asks.
+# scripts/config_collection.json (also git-ignored) holds several WiFi
+# networks and devices. Options 2-4 ask which network and which AirBuddy (its
+# "airbuddies" list) to put on the board, and those picks override the
+# matching keys of airbuddy_config.json. Each list ends with "Enter a new …",
+# which adds to the collection (creating it on first use). --fresh never asks.
 
 CONFIG_FILE="$SCRIPTS_DIR/airbuddy_config.json"
 CONFIG_EXAMPLE="$SCRIPTS_DIR/airbuddy_config.example.json"
 COLLECTION_FILE="$SCRIPTS_DIR/config_collection.json"
 USE_COLLECTION=0
-if [[ -f "$COLLECTION_FILE" && "$FRESH" -eq 0 ]]; then
-  USE_COLLECTION=1
+if [[ "$FRESH" -eq 0 ]]; then
+  USE_COLLECTION=1   # the pickers also offer "Enter a new …", so ask even with no collection yet
 fi
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -388,7 +483,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   if [[ "$USE_COLLECTION" -eq 0 ]]; then
     die "Created scripts/airbuddy_config.json from the example. Fill in wifi_ssid, wifi_password, device_id and device_key, then run this again."
   fi
-  echo "Created scripts/airbuddy_config.json from the example; credentials come from config_collection.json."
+  echo "Created scripts/airbuddy_config.json from the example; pick or enter the credentials below."
 fi
 
 mkdir -p "$TMP_DIR/upload"
@@ -424,6 +519,17 @@ CONFIG_LABEL="$(build_upload_config "$CONFIG_FILE" airbuddies airbuddy "$WIFI_PI
 }
 rm -f "$BOARD_CONFIG"
 
+# ── Option 4: optionally go over every config parameter ─────────────────────
+# The same questions the installer asks, defaulting to the values above.
+
+if [[ "$ACTION" == "full" && "$FRESH" -eq 0 ]]; then
+  echo
+  read -r -p "Do you want to go over all the config parameters? [y/N]: " reply
+  case "$(echo "${reply:-n}" | tr '[:upper:]' '[:lower:]')" in
+    y|yes) review_config_params air "$UPLOAD_CONFIG" ;;
+  esac
+fi
+
 # ============================================================
 # Option 2 — Sync only the config file
 # ============================================================
@@ -440,53 +546,9 @@ if [[ "$ACTION" == "config" ]]; then
   exit 0
 fi
 
-# ============================================================
-# Staging (shared by quick and full)
-# ============================================================
-
-msg "Staging XIAO ESP32-S3 firmware"
-
-rm -rf "$STAGE_DIR"
-mkdir -p "$STAGE_DIR"
-
-rsync -a \
-  --exclude '__pycache__' \
-  --exclude '*.pyc' \
-  --exclude '*.pyo' \
-  --exclude '.gitignore' \
-  `# ── Device-owned runtime data (never overwrite the board's own records) ─` \
-  --exclude 'telemetry_queue.json' \
-  --exclude 'telemetry_last_sent.json' \
-  --exclude 'journey_state.json' \
-  --exclude 'nav_state.json' \
-  --exclude 'ble_bonds.json' \
-  \
-  `# ── Pico HAL (not needed on ESP32-S3) ───────────────────────` \
-  --exclude 'src/hal/board_pico.py' \
-  \
-  `# ── Pico-only override sources (never installed on XIAO) ─────` \
-  --exclude 'src/ui/flows_pico.py' \
-  --exclude 'src/ui/glyphs_pico.py' \
-  --exclude 'src/app/main_pico.py' \
-  \
-  "$DEVICE_DIR/" "$STAGE_DIR/"
-
+stage_firmware
 cp "$UPLOAD_CONFIG" "$STAGE_DIR/config.json"
 echo "Config: $CONFIG_LABEL → config.json"
-
-# ============================================================
-# Option 3 — Quick sync (any changes to the OS)
-# ============================================================
-
-if [[ "$ACTION" == "quick" ]]; then
-  do_upload_sync
-
-  echo
-  echo "  Done!  airOS is installed."
-
-  open_repl
-  exit 0
-fi
 
 # ============================================================
 # Option 4 / --fresh — Full sync with options

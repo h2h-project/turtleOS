@@ -11,7 +11,9 @@
 #   - framing / length / bond checks happen before a handler runs, each with
 #     its own result code, so the app always learns why;
 #   - commands run from BleService.tick() on the main loop — the IRQ handler
-#     only queued the raw bytes.
+#     only queued the raw bytes. FAST_OPCODES also run from fast_tick() on
+#     every button poll, so the app's servo dial isn't held to the ~500 ms
+#     _bg_tick cadence.
 #
 # Handlers live in OPCODES and call src.app.actions (the same code the OLED
 # gestures use). A handler returns (code, payload_bytes, followup):
@@ -576,6 +578,11 @@ OPCODES = {
     0x45: (1, _op_secure_mode_set),
     0x46: (2, _op_timezone_set),
 }
+
+
+# Opcodes quick enough to run from a button poll (BleService.fast_tick):
+# no I/O beyond a PWM write, never IN_PROGRESS, never blocking.
+FAST_OPCODES = (0x12,)   # SERVO_SET_ANGLE
 
 
 def _length_ok(rule, n):
