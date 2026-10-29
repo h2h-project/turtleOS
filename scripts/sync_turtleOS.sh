@@ -330,7 +330,7 @@ cat <<'BANNER'
 
                                      _______    ___
                                    /         \ |  0|
-                   D E V I C E     |         |/ __\|     U P D A T E R
+           ....   D E V I C E     |         |/ __\|     U P D A T E R ....
                                    |___________/
                                      |__| |__|
 BANNER
