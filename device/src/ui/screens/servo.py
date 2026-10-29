@@ -520,7 +520,7 @@ class ServoScreen:
         )
 
 
-    def _run_wind_finder(self):
+    def _run_wind_finder(self, step_us=None, hold_ms=None, idle_cb=None):
         if not self._connected:
             self._draw("Servo unavailable")
             return
@@ -549,6 +549,9 @@ class ServoScreen:
                 progress_cb=self._wind_progress,
                 min_us=self._min_us,
                 max_us=self._max_us,
+                hold_ms=hold_ms,
+                idle_cb=idle_cb,
+                **({"step_us": step_us} if step_us else {}),
             )
 
             try:
@@ -575,20 +578,30 @@ class ServoScreen:
             )
 
 
-    def run_bench_sweep(self):
+    def run_bench_sweep(self, step_x10=None, hold_ms=None, idle_cb=None):
         """One complete bench sweep outside the carousel (Bluetooth
         SERVO_BENCH_SWEEP). Blocks for the whole sweep and draws its
-        progress/result on the OLED like the double-click does. Returns the
-        WindFinder result dict, or {"ok": False, "error": ...}."""
+        progress/result on the OLED like the double-click does. step_x10:
+        step in tenths of a degree on the SERVO_SET_ANGLE scale (0..180 =
+        full travel); hold_ms: time at each position; None = the OLED
+        sweep's own (50 us, ~0.55 s). idle_cb runs while the servo holds
+        still (the BLE pump). Returns the WindFinder result dict, or
+        {"ok": False, "error": ...}."""
         self._probe()
         if not self._connected:
             return {"ok": False, "error": "no servo"}
         if self._get_as5600() is None:
             return {"ok": False, "error": "no AS5600"}
         self._view = "normal"
+        step_us = None
+        if step_x10:
+            step_us = step_x10 / 10.0 * (self._max_us - self._min_us) / 180.0
+        from src.app import actions
+        actions.set_bench_running(True)
         try:
-            self._run_wind_finder()
+            self._run_wind_finder(step_us, hold_ms, idle_cb)
         finally:
+            actions.set_bench_running(False)
             self._release_pwm()
         if self._view == "wind" and self._wind_result:
             return self._wind_result

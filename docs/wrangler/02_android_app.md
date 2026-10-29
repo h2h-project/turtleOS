@@ -589,6 +589,27 @@ the power-test results table: the Wrangler repo's
   connected idle link; a command to set `ble_beacon_ms` from the app
   (today it's `config.json` only).
 
+### Diagnostics: servo panel and Find the Wind (pairs with turtleOS 2.6.5)
+
+For testing how well the luff sweep finds the wind.
+- **The sail servo dial moved from Navigate to the top of Diagnostics**,
+  as a green top panel (edge to edge, the dial on its own light frame).
+- **Wind-finder panel:** a north-up compass circle with the turtle's
+  heading (dark needle), this phone's (pink marker on the ring), the
+  sail (grey bar) and, once found, the wind (green line, the faint dashed
+  one the other end of the luff axis). The phone's heading comes from its
+  rotation sensor, corrected to true north with the declination at the
+  turtle's GPS position (never the phone's location), so the phone can be
+  lined up with the turtle. The sail and wind lines assume encoder 0° is
+  the sail along the hull, as the Dashboard does.
+- **Sweep settings:** step 1–20° of the servo's 270° travel (default 10°)
+  and hold 1–10 s per position (default 5 s), sent with SERVO_BENCH_SWEEP;
+  the pink **Find the Wind** button asks first, then shows a progress bar
+  while the dial follows the sail live. The command waits the sweep's own
+  length (+25 % + 60 s) instead of 180 s. The autopilot's own sweep stays
+  underneath as a text button.
+- **Not done:** phone-testing; checking the AS5600's zero against the bow.
+
 ---
 
 ## Phase 8 — turtles at sea: Buwana login (planned, not in v1)

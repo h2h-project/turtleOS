@@ -307,11 +307,25 @@ def _op_nav_luff_sweep(ctx, payload):
     return IN_PROGRESS, b"", ("poll", _poll, NAV_SWEEP_TIMEOUT_MS)
 
 
+BENCH_STEP_X10 = (1, 1800)       # 0.1 .. 180 on the SERVO_SET_ANGLE scale
+BENCH_HOLD_MS = (200, 10_000)
+
+
 def _op_servo_bench_sweep(ctx, payload):
-    """0x11 SERVO_BENCH_SWEEP — WindFinder on the real servo. Blocks the main
+    """0x11 SERVO_BENCH_SWEEP [<HH> step_x10, hold_ms] — WindFinder on the
+    real servo. No payload = the OLED sweep's own settings. Blocks the main
     loop for the whole sweep (it owns the servo; nav is not ticked), drawing
-    its progress on the OLED. IN_PROGRESS first, then
+    its progress on the OLED and pumping BLE telemetry while the servo
+    holds still. IN_PROGRESS first, then
     OK <HHB> wind_x10, alt_wind_x10, confidence_pct."""
+    step_x10 = hold_ms = None
+    if len(payload) == 4:
+        step_x10, hold_ms = struct.unpack("<HH", payload)
+        if not (BENCH_STEP_X10[0] <= step_x10 <= BENCH_STEP_X10[1]
+                and BENCH_HOLD_MS[0] <= hold_ms <= BENCH_HOLD_MS[1]):
+            return ERR_BAD_VALUE, b"", None
+    elif payload:
+        return ERR_BAD_LENGTH, b"", None
     cfg = _get(ctx, "cfg") or {}
     if not cfg.get("servo_present", False):
         return ERR_NO_HARDWARE, b"", None
@@ -326,7 +340,9 @@ def _op_servo_bench_sweep(ctx, payload):
         if time.ticks_diff(time.ticks_ms(), start_at) < 0:
             return None
         from src.app import actions
-        r = scr.run_bench_sweep()
+        svc = ctx.get("svc")
+        r = scr.run_bench_sweep(step_x10, hold_ms,
+                                getattr(svc, "pump_now", None))
         if not r.get("ok"):
             print("[BLE] bench sweep:", r.get("error"))
             if r.get("error") in ("no servo", "no AS5600"):
@@ -603,7 +619,7 @@ OPCODES = {
     0x23: (2, _op_telemetry_set_interval),
     0x24: (0, _op_api_handshake),
     0x10: (0, _op_nav_luff_sweep),
-    0x11: (0, _op_servo_bench_sweep),
+    0x11: (None, _op_servo_bench_sweep),     # 0 or 4 bytes; the handler checks
     0x12: (1, _op_servo_set_angle),
     0x30: (1, _op_wifi_set_enabled),
     0x31: (("min", 2), _op_wifi_set_credentials),

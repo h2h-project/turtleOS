@@ -743,6 +743,20 @@ def last_bench_result():
     return _bench
 
 
+_bench_running = False
+
+
+def set_bench_running(on):
+    """ServoScreen.run_bench_sweep brackets the sweep with this, so the
+    Sail characteristic can report sweep_state 2 while it runs."""
+    global _bench_running
+    _bench_running = bool(on)
+
+
+def bench_running():
+    return _bench_running
+
+
 def compass_set_offset(deg, heading=None):
     """Set compass_offset_deg (App-only; no OLED writer). Pass the shared
     HeadingSource (nav.heading_source()) to apply it immediately; otherwise

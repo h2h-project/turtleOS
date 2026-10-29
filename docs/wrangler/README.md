@@ -377,7 +377,8 @@ only the first 13 bytes)* `compass_offset_deg i16`
   sweep: `NavController.wind_angle()`; bench sweep: the `WindFinder`
   result).
 - `sweep_state`: 0 idle · 1 nav luff sweep running · 2 servo bench sweep
-  running.
+  running (sent from turtleOS 2.6.5, which notifies during the bench
+  sweep; earlier firmware sent nothing while it ran).
 - `confidence_pct`: comes from the bench sweep's jitter score. The nav
   sweep (`luff.py`) produces no confidence, so it reports `0xFF`.
 - `servo_pos`: the last servo position **commanded**, by the
@@ -522,7 +523,8 @@ the same way, and adding a command doesn't add a characteristic.
    telemetry `_thread`.
 6. The app times out a command it has heard nothing about in 5 s. Once
    `IN_PROGRESS` has been received, the timeout is 180 s (a bench sweep
-   can take minutes).
+   can take minutes), or longer for a bench sweep with settings (see
+   SERVO_BENCH_SWEEP).
 7. Result is also readable: a read returns the last result, so the app
    can recover after a reconnect.
 8. Firmware sizes the Command attribute buffer at 128 bytes
@@ -612,7 +614,7 @@ empty.
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
 | `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV; `0xFF` = the autopilot is off) · BUSY (sweep already running) |
-| `0x11` | SERVO_BENCH_SWEEP | — | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) |
+| `0x11` | SERVO_BENCH_SWEEP | — or *(turtleOS 2.6.5)* `<HH>` step_x10, hold_ms | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) · BAD_VALUE (settings out of range) · BAD_LENGTH (not 0 or 4 bytes; also what firmware before 2.6.5 answers to settings) |
 | `0x12` | SERVO_SET_ANGLE *(added 2026-10-05)* | `<B>` 0–180 | **App-only** (Navigate servo dial) | OK `<H>` pulse written (µs) · BAD_VALUE (> 180) · BUSY (a luff sweep is moving the servo) · NO_HARDWARE (no NavController or `servo_present` false) |
 
 `SERVO_SET_ANGLE` maps 0–180 linearly onto `servo_min_us` →
@@ -630,6 +632,19 @@ at a time while the dial is dragged, always with the latest angle.
   and nav is deliberately not ticked). During that time no notifications
   go out, but NimBLE keeps the link alive. The app should put up a
   modal "Bench sweep running…" and wait for the final result.
+- **Bench sweep settings** *(turtleOS 2.6.5)*, for testing how well the
+  luff sweep finds the wind. `step_x10` is the step between positions in
+  tenths of a degree on the SERVO_SET_ANGLE scale (0–180 = the servo's
+  full travel), 1–1800. `hold_ms` is the time at each position, 200–10000:
+  150 ms to settle, then AS5600 samples every 25 ms for the rest. With no
+  payload the sweep keeps the OLED's own settings (50 µs steps, about
+  0.55 s each). The sweep runs from `servo_min_us` to `servo_max_us`, so
+  it tests `floor(1800 / step_x10) + 1` positions and takes about that
+  many × `hold_ms`, plus 1.4 s. Since 2.6.5 the turtle sends telemetry
+  while the servo holds still at each position (Sail at 2 Hz with
+  `sweep_state` 2), so the app can show the sail moving. The app waits
+  for the final result for the sweep's own length rather than the usual
+  180 s.
 
 **GPS & logging**
 
@@ -907,6 +922,9 @@ read it without knowing turtleOS:
   only where the points come from changed (a per-journey track file
   instead of the unsent queue), so a track now includes readings already
   sent.
+- **turtleOS 2.6.5 stays contract v1.** SERVO_BENCH_SWEEP gains an
+  optional payload (older firmware answers it `ERR_BAD_LENGTH`, and the
+  app says to update); no field changes.
 - **turtleOS 2.6.4 stays contract v1.** The beacon (`ble_beacon_ms`)
   changes when the turtle advertises and who may keep a link while the
   window is closed. BLE_POWER_TEST and BLE_POWER_RESULT are new opcodes

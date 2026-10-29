@@ -282,7 +282,9 @@ class TurtleData:
         # angle stands in until a nav sweep has produced one.
         conf = None
         try:
-            from src.app.actions import last_bench_result
+            from src.app.actions import last_bench_result, bench_running
+            if sweep == 0 and bench_running():
+                sweep = 2
             b = last_bench_result()
             if b is not None:
                 conf = b.get("confidence_pct")
@@ -303,6 +305,12 @@ class TurtleData:
                            sweep, _u8(conf), _x10_u16(pos, True), _u8(hold))
 
     def sweeping(self):
+        try:
+            from src.app.actions import bench_running
+            if bench_running():
+                return True
+        except Exception:
+            pass
         nav = self._g("nav")
         try:
             return bool(nav is not None and nav.sweeping())

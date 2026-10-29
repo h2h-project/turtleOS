@@ -164,7 +164,7 @@ class GPS:
 
 
 class ServoScreen:
-    def run_bench_sweep(self):
+    def run_bench_sweep(self, step_x10=None, hold_ms=None, idle_cb=None):
         return random.choice([
             {"ok": True, "wind_angle_deg": 198.4, "opposite_angle_deg": 18.4, "confidence": 3.0},
             {"ok": False, "error": "no AS5600"},

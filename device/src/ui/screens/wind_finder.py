@@ -31,6 +31,10 @@ MIN_VALID_SAMPLES = 8
 
 TOP_RESULTS = 5
 
+# Sweep settings from the Wrangler app (SERVO_BENCH_SWEEP payload): a hold
+# replaces the fixed 400 ms observation with (hold - settle) of sampling.
+IDLE_EVERY_MS = 500        # idle_cb cadence while holding (BLE telemetry)
+
 
 class WindFinder:
     """
@@ -58,6 +62,9 @@ class WindFinder:
         progress_cb=None,
         min_us=SWEEP_MIN_US,
         max_us=SWEEP_MAX_US,
+        step_us=SWEEP_STEP_US,
+        hold_ms=None,
+        idle_cb=None,
     ):
         self._write_pulse_us = write_pulse_us
         self._read_angle_deg = read_angle_deg
@@ -65,6 +72,19 @@ class WindFinder:
         self._progress_cb = progress_cb
         self._min_us = int(min_us)
         self._max_us = int(max_us)
+        # step_us may be fractional (a step in degrees of travel); each
+        # position is min_us + round(i * step_us).
+        self._step_us = max(1.0, float(step_us))
+        # hold_ms None = the original 150 ms settle + 16 x 25 ms window.
+        if hold_ms is None:
+            self._samples = SAMPLE_COUNT
+        else:
+            self._samples = max(MIN_VALID_SAMPLES,
+                                (int(hold_ms) - POSITION_SETTLE_MS) // SAMPLE_PERIOD_MS)
+        self._hold_ms = POSITION_SETTLE_MS + self._samples * SAMPLE_PERIOD_MS
+        # Called while the servo holds still (never mid-move): the BLE
+        # pump, so the app sees the sail and heading during a long sweep.
+        self._idle_cb = idle_cb
 
 
     # ----------------------------------------------------------------
@@ -159,11 +179,16 @@ class WindFinder:
     def _observe_position(self, pulse_us, progress):
         self._write_pulse_us(pulse_us)
         time.sleep_ms(POSITION_SETTLE_MS)
+        self._idle()
+        idle_at = time.ticks_add(time.ticks_ms(), IDLE_EVERY_MS)
 
         angles = []
         currents = []
 
-        for _ in range(SAMPLE_COUNT):
+        for _ in range(self._samples):
+            if self._idle_cb is not None and time.ticks_diff(time.ticks_ms(), idle_at) >= 0:
+                self._idle()
+                idle_at = time.ticks_add(time.ticks_ms(), IDLE_EVERY_MS)
             angle = self._read_angle_deg()
 
             if angle is not None:
@@ -230,6 +255,17 @@ class WindFinder:
         )
 
 
+    def _idle(self):
+        if self._idle_cb is not None:
+            try:
+                self._idle_cb()
+            except Exception:
+                pass
+
+    def positions(self):
+        """How many positions run() will test."""
+        return int((self._max_us - self._min_us) / self._step_us) + 1
+
     # ----------------------------------------------------------------
     # Main sweep
     # ----------------------------------------------------------------
@@ -253,13 +289,13 @@ class WindFinder:
         print("[WIND] ========================================")
         print("[WIND] Luff sweep start")
         print(
-            "[WIND] range={}..{} us  step={} us  "
+            "[WIND] range={}..{} us  step={:.1f} us  "
             "settle={} ms  samples={} x {} ms".format(
                 self._min_us,
                 self._max_us,
-                SWEEP_STEP_US,
+                self._step_us,
                 POSITION_SETTLE_MS,
-                SAMPLE_COUNT,
+                self._samples,
                 SAMPLE_PERIOD_MS,
             )
         )
@@ -275,14 +311,10 @@ class WindFinder:
 
         results = []
 
-        total_positions = (
-            ((self._max_us - self._min_us) // SWEEP_STEP_US) + 1
-        )
+        total_positions = self.positions()
 
-        index = 0
-        pulse = self._min_us
-
-        while pulse <= self._max_us:
+        for index in range(total_positions):
+            pulse = min(self._max_us, self._min_us + int(round(index * self._step_us)))
             progress = index / float(max(1, total_positions - 1))
 
             result = self._observe_position(
@@ -292,9 +324,6 @@ class WindFinder:
 
             if result is not None:
                 results.append(result)
-
-            index += 1
-            pulse += SWEEP_STEP_US
 
         if not results:
             print("[WIND] FAILED: no valid AS5600 observations")

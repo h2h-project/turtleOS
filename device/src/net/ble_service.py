@@ -526,6 +526,16 @@ class BleService:
         finally:
             self._in_tick = 0
 
+    def pump_now(self):
+        """Refresh and notify telemetry now, for a command that holds the
+        main loop (the bench sweep calls it while the servo holds still)."""
+        if self._conn is None:
+            return
+        try:
+            self._pump()
+        except Exception as e:
+            print("[BLE] pump err:", repr(e))
+
     def tick(self):
         """Main-loop housekeeping. Cheap; safe to call every _bg_tick."""
         if not self._active:

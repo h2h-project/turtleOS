@@ -594,8 +594,8 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
   `docs/bluetooth_strategy.md`.
 - **Testing:** `tests/ble_decode.py` (decode nRF Connect hex),
   `tests/ble_fuzz_host.py` (fuzz the command channel on the host) and
-  `tests/ble_beacon_host.py` (window, beacon and power test) run on
-  the laptop. `tests/ble_spike.py` / `ble_coex.py` are the Phase 0
+  `tests/ble_beacon_host.py` (window, beacon and power test) and
+  `tests/wind_finder_host.py` (bench sweep settings) run on the laptop. `tests/ble_spike.py` / `ble_coex.py` are the Phase 0
   hardware spikes.
 
 ---
