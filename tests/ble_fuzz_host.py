@@ -44,7 +44,7 @@ shutil.copy(os.path.join(DEVICE, "config.py"), work)
 os.chdir(work)
 sys.path.insert(0, work)
 
-side_effects = {"reset": 0, "sleep": 0}
+side_effects = {"reset": 0, "sleep": 0, "power": 0}
 mach = types.ModuleType("machine")
 mach.reset = lambda: side_effects.__setitem__("reset", side_effects["reset"] + 1)
 mach.RTC = lambda: types.SimpleNamespace(datetime=lambda: (2026, 10, 2, 4, 9, 0, 0, 0))
@@ -182,6 +182,8 @@ sources = {
     "cfg": lambda: config.load_config(), "wifi": lambda: Wifi(), "bg": lambda: BG(),
     "servo_screen": lambda: ServoScreen(),
     "enter_sleep": lambda: side_effects.__setitem__("sleep", side_effects["sleep"] + 1),
+    "ina": lambda: types.SimpleNamespace(is_present=True),
+    "ble_power_test": lambda b, r: side_effects.__setitem__("power", side_effects["power"] + 1),
 }
 
 results = []
@@ -271,8 +273,9 @@ def main():
         print("second write during IN_PROGRESS did not get ERR_BUSY")
 
     print("fuzzed %d writes (seed %d): %d clean final results, %d problems; "
-          "side effects: %d reboots, %d sleeps requested"
-          % (ITER, SEED, finals, problems, side_effects["reset"], side_effects["sleep"]))
+          "side effects: %d reboots, %d sleeps, %d power tests requested"
+          % (ITER, SEED, finals, problems, side_effects["reset"], side_effects["sleep"],
+             side_effects["power"]))
     shutil.rmtree(work, ignore_errors=True)
     sys.exit(1 if problems else 0)
 

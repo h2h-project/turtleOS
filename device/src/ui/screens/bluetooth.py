@@ -11,8 +11,10 @@
 #   Toggle ON   "Open 9:42"     advertising; countdown of the wrangle window
 #               "Open"          ble_window_min = 0 (always advertising)
 #               "Connected"     a phone is connected (header shows the rune)
-#               "Hidden"        window closed, no phone (rare here: opening
-#                               this screen reopens the window)
+#               "Paired"        window closed, beacon on: only bonded phones
+#                               can connect (rare here: opening this screen
+#                               reopens the window)
+#               "Hidden"        window closed, beacon off (ble_beacon_ms 0)
 #
 # Opening the screen reopens the wrangle window — someone standing at the hull
 # looking at Bluetooth is the intent. The on/off itself is
@@ -70,6 +72,8 @@ class BluetoothScreen:
             if svc.link_bonded():
                 return "Connected", "Paired - " + name[:14], True
             return "Connected", name, True
+        if st == "advertising" and svc.beacon():
+            return "Paired", name, True
         if st == "advertising":
             rem = svc.window_remaining_s()
             if rem is None:

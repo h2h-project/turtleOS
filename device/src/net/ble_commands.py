@@ -546,6 +546,46 @@ def _op_secure_mode_set(ctx, payload):
     return code, b"", None
 
 
+def _op_ble_power_test(ctx, payload):
+    """0x47 BLE_POWER_TEST <BB> block_s 20..255, rounds 1..10. OK <H> the
+    seconds it will take, then src/net/ble_power_test.run() drops the link
+    and owns the main loop until it's done. WRONG_STATE <B> 0 = a journey
+    is open (the autopilot would stop steering for the whole test)."""
+    block_s, rounds = payload[0], payload[1]
+    if block_s < 20 or not 1 <= rounds <= 10:
+        return ERR_BAD_VALUE, b"", None
+    ina = _get(ctx, "ina")
+    start = (ctx["src"] or {}).get("ble_power_test")
+    if ina is None or not getattr(ina, "is_present", False) or start is None:
+        return ERR_NO_HARDWARE, b"", None
+    try:
+        from src.app import journey
+        if journey.active_id():
+            return ERR_WRONG_STATE, b"\x00", None
+    except Exception:
+        pass
+    from src.net import ble_power_test
+    secs = min(ble_power_test.duration_s(block_s, rounds), 0xFFFF)
+    return OK, struct.pack("<H", secs), ("after", AFTER_RESULT_MS, lambda: start(block_s, rounds))
+
+
+def _op_ble_power_result(ctx, payload):
+    """0x48 BLE_POWER_RESULT — OK + the last test's results. WRONG_STATE
+    <B> 0 = no test has run, 1 = the link's MTU can't carry them."""
+    from src.net import ble_power_test
+    res = ble_power_test.load()
+    if not res:
+        return ERR_WRONG_STATE, b"\x00", None
+    out = ble_power_test.result_payload(res)
+    try:
+        mtu = int(ctx["svc"].mtu())
+    except Exception:
+        mtu = 23
+    if _RESULT_HDR + len(out) > min(mtu - 3, _RESULT_MAX):
+        return ERR_WRONG_STATE, b"\x01", None
+    return OK, out, None
+
+
 # opcode -> (payload length, handler). Length: int = exact, ("min", n) = at
 # least n, None = anything.
 OPCODES = {
@@ -577,6 +617,8 @@ OPCODES = {
     0x44: (4, _op_time_set),
     0x45: (1, _op_secure_mode_set),
     0x46: (2, _op_timezone_set),
+    0x47: (2, _op_ble_power_test),
+    0x48: (0, _op_ble_power_result),
 }
 
 

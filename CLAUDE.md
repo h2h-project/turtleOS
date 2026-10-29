@@ -313,7 +313,7 @@ Waiting → Online screen
 - Online screen is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
 - The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
-- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`, first screen of the **hold flow**, before Battery): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. Closing the window stops advertising but never drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
+- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`, first screen of the **hold flow**, before Battery): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. When the window closes the turtle drops to the **beacon** (`ble_beacon_ms`, turtleOS 2.6.4): the same advert, slower, for phones that already hold a bond, so a lost link comes back without the button (body text "Paired"). Neither ever drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
 
@@ -581,11 +581,20 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
   Pairing uses a passkey shown on the OLED and is accepted **only while
   the Bluetooth screen is showing**. Bonds live in `/ble_bonds.json`
   (device-owned; excluded from the sync/install uploads).
-- **Wrangle window:** advertise for `ble_window_min` after boot, after
-  wake and on each Bluetooth-screen visit. `ble_enabled: false` is the
-  mission lockdown, and only the Bluetooth screen can undo it.
-- **Testing:** `tests/ble_decode.py` (decode nRF Connect hex) and
-  `tests/ble_fuzz_host.py` (fuzz the command channel on the host) run on
+- **Wrangle window:** advertise every 0.5 s for `ble_window_min` after
+  boot, after wake and on each Bluetooth-screen visit. Then the **beacon**
+  (2.6.4): every `ble_beacon_ms`, only while a bond is stored, and a link
+  made through it that isn't bonded within 15 s is dropped. After any
+  disconnect advertising resumes at whichever rate applies.
+  `ble_enabled: false` is the mission lockdown, and only the Bluetooth
+  screen can undo it.
+- **Power test:** BLE_POWER_TEST (`src/net/ble_power_test.py`) measures
+  each advertising rate with the INA219 (128-sample averaging) to set
+  `ble_beacon_ms`; results go in the Wrangler repo's
+  `docs/bluetooth_strategy.md`.
+- **Testing:** `tests/ble_decode.py` (decode nRF Connect hex),
+  `tests/ble_fuzz_host.py` (fuzz the command channel on the host) and
+  `tests/ble_beacon_host.py` (window, beacon and power test) run on
   the laptop. `tests/ble_spike.py` / `ble_coex.py` are the Phase 0
   hardware spikes.
 
@@ -611,6 +620,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `device_name` | str | `""` | human-readable turtle name (`turtles_tb.name`, sent as `device_name` by `GET /v1/device`); Bluetooth advertises it |
 | `ble_enabled` | bool | `true` | Bluetooth master switch; `false` = radio never activated (mission lockdown) |
 | `ble_window_min` | int | `10` | minutes the turtle advertises after boot / wake / opening the Bluetooth screen; `0` = always; max 240 |
+| `ble_beacon_ms` | int | `2000` | once the window closes, advertise this often for bonded phones only; `0` = off (stop advertising); else 1000–10240 |
 | `ble_require_bond` | bool | `true` | Bluetooth commands need a bonded link; `false` for bench development only |
 | `mission_connection_mode` | str | `"wifi_auto"` | how records are **shipped**: `"wifi_auto"` = association attempts on exponential backoff (15 min → 12 h cap); `"wifi_manual"` = only a triple-click ever connects; `"lora"` reserved. Orthogonal to `telemetry_mode`, which governs when records are **created**. |
 | `gps_enabled` | bool | `false` | |

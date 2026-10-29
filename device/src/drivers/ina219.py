@@ -150,6 +150,27 @@ class INA219:
         self._write_register(self._REG_CONFIG, config)
         time.sleep_ms(1)
 
+    # ADC field codes for 1..128 averaged 12-bit conversions (datasheet table 5)
+    _ADC_AVG = {1: 0x3, 2: 0x9, 4: 0xA, 8: 0xB, 16: 0xC, 32: 0xD, 64: 0xE, 128: 0xF}
+
+    def set_averaging(self, samples):
+        """Average this many conversions per reading (1, 2, 4 ... 128). At
+        128 a reading covers 68 ms, so short bursts (a BLE advert) are
+        averaged in instead of caught or missed. wake() / _configure()
+        put back the single 532 us conversion everything else expects."""
+        if not self.is_present:
+            return False
+        code = self._ADC_AVG.get(int(samples))
+        if code is None:
+            return False
+        try:
+            self._write_register(self._REG_CONFIG,
+                                 self._BRNG_32V | self._PG_320MV | (code << 7) | (code << 3) |
+                                 self._MODE_SANDBVOLT_CONTINUOUS)
+            return True
+        except Exception:
+            return False
+
     def wake(self):
         if not self.is_present:
             return False

@@ -277,6 +277,9 @@ for how the version changes are under [Versioning](#versioning).
 - **Advertising packet:** flags plus the complete list of 128-bit service
   UUIDs, containing only the Turtle service (`0001`). That takes 21 of
   the 31 available bytes. The app's scanner filters on this UUID.
+- **Two speeds, same packet:** every 0.5 s while the wrangle window is
+  open, and every `ble_beacon_ms` (the **beacon**) after it closes. See
+  [Wrangle window](#wrangle-window-and-bluetooth-config).
 - **Scan response:** complete local name = **`device_name`**, truncated to
   29 bytes UTF-8. The full name is always readable from the Turtle name
   characteristic (`0102`).
@@ -688,6 +691,8 @@ at a time while the dial is dragged, always with the latest angle.
 | `0x44` | TIME_SET *(added 2026-10-08)* | `<I>` unix seconds, UTC | **App-only** (Diagnostics "Set turtle clock to phone time") | OK `<B>` rtc_chip_written (1 = the DS3231 was set too · 0 = system clock only, lost at the next boot) · BAD_VALUE (before 2020 or after 2099) |
 | `0x45` | SECURE_MODE_SET *(added 2026-10-08)* | `<B>` 0 off · 1 on | **App-only** (Diagnostics "Secure mode") | OK · BAD_VALUE (> 1) · WRONG_STATE `<B>` 1 (turning on refused: RTC battery fault, or no RTC chip) |
 | `0x46` | TIMEZONE_SET *(added 2026-10-08)* | `<h>` minutes from UTC, −720…840 | **App-only** (sent with TIME_SET by "Set turtle clock to phone time") | OK · BAD_VALUE |
+| `0x47` | BLE_POWER_TEST *(turtleOS 2.6.4)* | `<BB>` block_s 20–255, rounds 1–10 | **App-only** (Diagnostics "Bluetooth power test") | OK `<H>` seconds the test will take, then the turtle drops the link and runs it · BAD_VALUE · NO_HARDWARE (no INA219) · WRONG_STATE `<B>` 0 = a journey is open |
+| `0x48` | BLE_POWER_RESULT *(turtleOS 2.6.4)* | — | **App-only** | OK + the last test's results (below) · WRONG_STATE `<B>` 0 = no test has run · 1 = link MTU too small |
 
 - The app confirms 0x40–0x42 with the user before sending, because each
   one ends the connection.
@@ -708,6 +713,36 @@ at a time while the dial is dragged, always with the latest angle.
   screen and the boot clock line used the account's).
 - SECURE_MODE_SET saves `secure_mode` to config and takes effect at
   once. Turning it **off** always works over a bonded link.
+- **BLE_POWER_TEST** measures what each kind of advertising costs, with
+  the turtle's own INA219, to set `ble_beacon_ms`. It is a bench test:
+  run it on battery (USB unplugged, or the INA219 reads the charger),
+  with WiFi off and nothing moving. After the OK the turtle drops the
+  link, cuts the servo rail, and blocks its main loop for the whole test
+  like SERVO_BENCH_SWEEP (no nav, no telemetry ticks), showing the step
+  on the OLED. A single click on the turtle stops it early. Each round
+  runs seven blocks of `block_s` seconds, in this order: radio off;
+  radio on, not advertising; advertising every 500, 1000, 2000, 5000 and
+  10240 ms (connectable, the real advertising packet). The INA219
+  averages 128 conversions per reading (68 ms) during the test, the
+  first 3 s of each block are discarded, and blocks of the same kind are
+  pooled across rounds. A phone that connects during the test is
+  dropped, and its block is flagged. When the test ends (or is stopped)
+  the turtle opens a fresh wrangle window, so the app can reconnect
+  straight away. The app holds off reconnecting until the OK's
+  duration has passed. Results are kept in `/ble_power_test.json`
+  until the next test.
+- **BLE_POWER_RESULT** payload: header `<IBBBB>` `finished_at u32`
+  (unix seconds, 0 = clock not set), `block_s u8`, `rounds u8`,
+  `n u8` (rows), `flags u8` (bit 0 = stopped early by the button),
+  then `n` × row `<BHiHHHB>`, 14 bytes: `mode u8` (0 radio off · 1 on,
+  not advertising · 2 advertising), `interval_ms u16` (0 unless mode 2),
+  `mean_ua i32` (INA219 sign, positive = drawing from the battery;
+  `0x7FFFFFFF` = no samples), `sem_ua u16` (standard error of that mean,
+  capped at `0xFFFE`; `0xFFFF` = fewer than 2 samples), `samples u16`,
+  `mean_mv u16` (battery voltage; `0xFFFF` = none), `flags u8` (bit 0 =
+  a phone connected during this block and was dropped). Seven rows fit
+  in 106 bytes, so the link needs an MTU of at least 112. The cost of
+  advertising is a row's `mean_ua` minus the mode-1 row's.
 
 **Deliberately not in the contract:**
 - Carousel navigation (single-click advance, hold to enter the flow).
@@ -737,6 +772,11 @@ and useful to any nearby phone.
   re-upload would un-pair every phone. Firmware implements
   `_IRQ_GET_SECRET` / `_IRQ_SET_SECRET` against it (or uses aioble's
   `security` module).
+- **Strangers only while the window is open.** Outside the wrangle
+  window the turtle is reachable through the beacon, but only by phones
+  it already has a bond with: a link that isn't encrypted and bonded
+  15 s after connecting is dropped. A bonded Android phone encrypts with
+  its stored key as soon as it connects, so this costs it nothing.
 - **An unbonded command** gets `ERR_NOT_BONDED`. Firmware checks this
   itself rather than relying on attribute permissions, so the app always
   gets a readable reason.
@@ -751,20 +791,30 @@ hardening item. See 01_firmware_ble.md.
 
 ### Wrangle window and Bluetooth config
 
-Bluetooth is off, or only briefly discoverable, unless someone at the
-hull asks for it. Three new config keys:
+Any phone can find the turtle only briefly, unless someone at the hull
+asks for it. After that, only phones already paired with it can reach
+it, through the slow beacon, so a dropped link at sea can be won back
+without touching the turtle. Config keys:
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `ble_enabled` | bool | `true` | Master switch. `false` means the radio is **never activated**: no advertising, no connections, no power draw. This is the setting for a real mission voyage. |
-| `ble_window_min` | int | `10` | After boot, after waking from sleep, and each time the Bluetooth screen is opened, the turtle advertises for this many minutes, then stops. `0` means advertise continuously while enabled. |
+| `ble_window_min` | int | `10` | After boot, after waking from sleep, and each time the Bluetooth screen is opened, the turtle advertises every 0.5 s to any phone for this many minutes. `0` means the window never closes. |
+| `ble_beacon_ms` | int | `2000` | *(turtleOS 2.6.4)* Advertising interval once the window has closed, for **bonded phones only** (see [Security](#security-bonding-with-an-on-screen-passkey)). `0` turns the beacon off: advertising stops when the window closes, as before 2.6.4. Otherwise clamped to 1000–10240 (10.24 s is BLE's longest advertising interval). The default is provisional until the beacon's current is measured on battery. |
 | `ble_require_bond` | bool | `true` | See [Security](#security-bonding-with-an-on-screen-passkey). |
 
-- **Closing the window never drops an open connection.** It only stops
-  advertising. After a disconnect, advertising resumes only if the
-  window is still open.
+- **Closing the window never drops an open connection.** It only slows
+  advertising to the beacon (or stops it, with `ble_beacon_ms: 0`).
+- **After a disconnect, advertising always resumes:** at 0.5 s while
+  the window is open, otherwise at the beacon interval. Only a bonded
+  phone can keep a link made through the beacon.
+- **The beacon keeps the link recoverable, not the phone.** The app
+  keeps trying to reconnect for as long as the user hasn't pressed
+  Stop (see `02_android_app.md`), so it finds the turtle again whenever
+  the two are back in range.
 - **Sleep shuts BLE down** completely (`BLE().active(False)`). Waking
-  reopens a fresh window.
+  reopens a fresh window. There is no beacon during sleep, so a turtle
+  put to sleep from the app (`SLEEP`) can only be woken at the hull.
 - **Bluetooth screen:** first in the connectivity carousel (since
   turtleOS 2.5.5; it came after WiFi before that):
   **Bluetooth** → Online → Logging → WiFi → Device. It uses the same
@@ -772,6 +822,8 @@ hull asks for it. Three new config keys:
   flips `ble_enabled`). Body text:
   - off: "Off"
   - on and advertising: "Open 9:42" (countdown)
+  - on, window closed, beacon on: "Paired"
+  - on, window closed, beacon off: "Hidden"
   - on with a phone connected: "Connected" plus a bonded marker
   - pairing: the 6-digit passkey, large
   - Opening the screen reopens the window, since the operator standing
@@ -855,6 +907,11 @@ read it without knowing turtleOS:
   only where the points come from changed (a per-journey track file
   instead of the unsent queue), so a track now includes readings already
   sent.
+- **turtleOS 2.6.4 stays contract v1.** The beacon (`ble_beacon_ms`)
+  changes when the turtle advertises and who may keep a link while the
+  window is closed. BLE_POWER_TEST and BLE_POWER_RESULT are new opcodes
+  (additions). No UUID or field changes. Old apps reconnect through the
+  beacon too, but give up after their short retry run.
 
 ### Turtles at sea: shore data via Buwana login — being built
 

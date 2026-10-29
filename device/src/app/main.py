@@ -787,6 +787,12 @@ def run(
         if scr is not None and hasattr(scr, "go_to_sleep"):
             scr.go_to_sleep(btn, _bg_tick)
 
+    def _ble_power_test(block_s, rounds):
+        # Bluetooth BLE_POWER_TEST: blocks the main loop like the bench
+        # sweep, also nested inside the BLE tick.
+        from src.net import ble_power_test
+        ble_power_test.run(ble, _ina_dev, btn, oled, block_s, rounds)
+
     if ble is not None:
         try:
             ble.attach_sources({
@@ -794,6 +800,7 @@ def run(
                 "bg": lambda: _background_process,
                 "servo_screen": lambda: get_screen("servo"),
                 "enter_sleep": _ble_enter_sleep,
+                "ble_power_test": _ble_power_test,
                 "nav": lambda: _nav_cell[0],
                 "ina": lambda: _ina_dev,
                 "imu": lambda: _imu_dev,

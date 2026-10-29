@@ -78,11 +78,15 @@ DEFAULTS = {
     # ble_enabled: master switch. False = the radio is never activated — the
     #   setting for a real mission voyage.
     # ble_window_min: after boot, wake, and each visit to the Bluetooth screen
-    #   the turtle advertises for this many minutes. 0 = always while enabled.
+    #   the turtle advertises to any phone for this many minutes. 0 = always.
+    # ble_beacon_ms: once the window closes, keep advertising this slowly for
+    #   phones already bonded, so a dropped link comes back without the
+    #   button. 0 = off (advertising stops with the window); else 1000-10240.
     # ble_require_bond: commands need a bonded, encrypted link. False is for
     #   bench development only; never on a deployed turtle.
     "ble_enabled": True,
     "ble_window_min": 10,
+    "ble_beacon_ms": 2000,
     "ble_require_bond": True,
 
     # --- Secure mode (docs/wrangler/README.md "Clock and secure mode") ---
@@ -546,6 +550,17 @@ def _normalize_types(cfg):
         _bw = DEFAULTS["ble_window_min"]
     if cfg.get("ble_window_min") != _bw:
         cfg["ble_window_min"] = _bw
+        changed = True
+
+    # --- Bluetooth beacon (ms; 0 = off, else BLE's 1000-10240 ms range) ---
+    try:
+        _bb = int(cfg.get("ble_beacon_ms", DEFAULTS["ble_beacon_ms"]))
+        if _bb != 0:
+            _bb = max(1000, min(10240, _bb))
+    except Exception:
+        _bb = DEFAULTS["ble_beacon_ms"]
+    if cfg.get("ble_beacon_ms") != _bb:
+        cfg["ble_beacon_ms"] = _bb
         changed = True
 
     _dn = str(cfg.get("device_name", "") or "").strip()

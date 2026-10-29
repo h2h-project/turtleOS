@@ -420,8 +420,9 @@ the gear is highlighted, no tab is, and back or any tab closes it.
   settings and pair again (optionally calling `removeBond()` itself).
 - Branding pass per the README's visual identity: green base, pink and
   fuchsia accents.
-- No background foreground-service in v1. Near-field use doesn't need
-  it.
+- ~~No background foreground-service in v1. Near-field use doesn't need
+  it.~~ Superseded by [Staying linked](#staying-linked-pairs-with-turtleos-264):
+  a turtle at sea must be won back without anyone at the hull.
 
 ### Phase 7 status — IN PROGRESS (2026-10-12)
 
@@ -561,6 +562,32 @@ are additions, see README.md).
   sync for the connection after a timeout instead of retrying every
   60 s. Journeys recorded on 2.6.0 have no track file, so they come back
   with no turtle route.
+
+### Staying linked (pairs with turtleOS 2.6.4)
+
+The link dropped after a while and only the turtle's button brought it
+back: the wrangle window had closed, so the turtle stopped advertising,
+and the app gave up after its five quick tries. Strategy, variables and
+the power-test results table: the Wrangler repo's
+`docs/bluetooth_strategy.md`.
+- **Turtle:** the beacon (`ble_beacon_ms`, README "Wrangle window"): once
+  the window closes it keeps advertising slowly, for bonded phones only.
+- **Reconnect never gives up.** After the 1, 2, 4, 8 and 16 s tries the
+  link goes to `LinkState.Waiting` and asks Android for a background
+  connect (`autoConnect`), which has no timeout and fires when the
+  beacon is heard. Only Stop (or Disconnect) ends it. The drawer says
+  "Waiting for the turtle".
+- **`LinkService`**, a `connectedDevice` foreground service from connect
+  to disconnect, with a "Linked to <turtle>" notification, so Android
+  doesn't throttle the link or the background connect with the screen
+  off. Asks for the notification permission once; a no blocks nothing.
+- **Bluetooth power test** (Diagnostics): BLE_POWER_TEST, then the link
+  holds off (`TurtleConnection.holdOff`, drawer "Power test running")
+  for the test's length, reconnects, and reads BLE_POWER_RESULT. "Copy
+  as Markdown" gives rows for the results table.
+- **Not done:** phone-testing all of it; measuring the cost of a
+  connected idle link; a command to set `ble_beacon_ms` from the app
+  (today it's `config.json` only).
 
 ---
 

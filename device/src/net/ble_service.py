@@ -23,12 +23,18 @@
 # Telemetry is only packed while a phone is connected — nothing to read
 # otherwise — and is refreshed in full the moment one connects.
 #
-# WRANGLE WINDOW
+# WRANGLE WINDOW AND BEACON
 #   After boot, after waking from sleep, and whenever the Bluetooth screen is
-#   opened, the turtle advertises for ble_window_min minutes (0 = always).
-#   Closing the window only stops advertising — an open connection is never
-#   dropped. After a disconnect, advertising resumes only while the window is
-#   still open. ble_enabled = False means the radio is never activated.
+#   opened, the turtle advertises every 0.5 s to any phone for ble_window_min
+#   minutes (0 = always). When the window closes it drops to the beacon:
+#   the same packet every ble_beacon_ms (0 = stop advertising instead), for
+#   phones that already hold a bond. A link made through the beacon that
+#   isn't encrypted and bonded within BEACON_BOND_GRACE_MS is dropped. No
+#   bonds stored = no beacon (nobody could keep the link). Closing the
+#   window never drops an open connection, and after a disconnect
+#   advertising always resumes at whichever rate applies, so a phone that
+#   lost the link at sea gets it back without anyone at the hull.
+#   ble_enabled = False means the radio is never activated.
 #
 # THREADING RULE
 #   _irq() runs in MicroPython scheduler context. It only records state and
@@ -52,6 +58,7 @@ except ImportError:          # host tests
 CONTRACT_VERSION = 1
 
 ADV_INTERVAL_US = 500_000    # 0.5 s: found within a second or two, light on power
+BEACON_BOND_GRACE_MS = 15_000  # a beacon link must be bonded by then (contract: Security)
 PREFERRED_MTU = 185
 RESULT_BUFFER = 180        # Result attribute: a JOURNEY_TRACK page at MTU 185 (contract rule 8)
 
@@ -166,11 +173,16 @@ class BleService:
     def __init__(self, cfg):
         self._name = advertised_name(cfg)
         self._dis = _device_info(cfg)
-        self._window_min = int((cfg or {}).get("ble_window_min", 10) or 0)
+        self._cfg0 = cfg or {}
+        self._window_min = int(self._cfg0.get("ble_window_min", 10) or 0)
+        self._beacon_ms = int(self._cfg0.get("ble_beacon_ms", 2000) or 0)
         self._ble = None
         self._active = False
         self._advertising = False
+        self._adv_us = None           # interval being advertised; None = not advertising
         self._conn = None
+        self._conn_at = 0             # ticks_ms of the connect
+        self._conn_beacon = False     # this link came in through the beacon (window closed)
         self._mtu = 23
         self._window_until = None     # ticks_ms deadline; None = closed
         self._events = []
@@ -204,6 +216,10 @@ class BleService:
 
     def advertising(self):
         return self._advertising
+
+    def beacon(self):
+        """True while advertising slowly for bonded phones (window closed)."""
+        return self._advertising and not self.window_open()
 
     def mtu(self):
         return self._mtu
@@ -257,6 +273,25 @@ class BleService:
         if self._window_min == 0 or self._window_until is None:
             return None
         return max(0, time.ticks_diff(self._window_until, time.ticks_ms()) // 1000)
+
+    def _cfg(self):
+        """Live config from run()'s sources, else the one we were built with."""
+        try:
+            return (self._sources or {})["cfg"]() or self._cfg0
+        except Exception:
+            return self._cfg0
+
+    def _want_adv_us(self):
+        """Advertising interval wanted with no phone connected: fast while
+        the window is open, the beacon after it (only if someone could
+        keep the link), else None."""
+        if self.window_open():
+            return ADV_INTERVAL_US
+        if self._beacon_ms <= 0:
+            return None
+        if self.bond_count() == 0 and self._cfg().get("ble_require_bond", True):
+            return None
+        return self._beacon_ms * 1000
 
     def state(self):
         """"off" | "connected" | "advertising" | "closed" (on, window shut)."""
@@ -347,6 +382,7 @@ class BleService:
             self._passkey = None
             self._cmd_inbox = []
             self._advertising = False
+            self._adv_us = None
             print("[BLE] active as %r (contract v%d)" % (self._name, CONTRACT_VERSION))
             self.open_window()
             return True
@@ -369,6 +405,7 @@ class BleService:
                 print("[BLE] deactivate err:", repr(e))
         self._active = False
         self._advertising = False
+        self._adv_us = None
         self._conn = None
         self._enc = None
         self._passkey = None
@@ -406,6 +443,9 @@ class BleService:
         if event == _IRQ_CENTRAL_CONNECT:
             self._conn = data[0]
             self._advertising = False      # the stack stops advertising on connect
+            self._adv_us = None
+            self._conn_at = time.ticks_ms()
+            self._conn_beacon = not self.window_open()
             self._mtu = 23
             self._events.append("connect")
         elif event == _IRQ_CENTRAL_DISCONNECT:
@@ -501,7 +541,7 @@ class BleService:
             while self._events:
                 ev = self._events.pop(0)
                 if ev == "connect":
-                    print("[BLE] phone connected")
+                    print("[BLE] phone connected" + (" (beacon)" if self._conn_beacon else ""))
                     # Fresh values for the phone's first reads, and a first
                     # notify for every characteristic once it subscribes.
                     self._due = {}
@@ -531,16 +571,30 @@ class BleService:
                 self._runner.handle(self._cmd_inbox.pop(0))
             self._runner.tick()          # polls, and a pending reboot / radio-off
 
+            # The beacon is for phones that already hold a bond: anyone else
+            # gets the grace period (enough for a bonded phone to encrypt),
+            # then the link goes. Bench turtles (ble_require_bond off) keep it.
+            if self._conn is not None and self._conn_beacon and not self.link_bonded() \
+                    and time.ticks_diff(time.ticks_ms(), self._conn_at) >= BEACON_BOND_GRACE_MS \
+                    and self._cfg().get("ble_require_bond", True):
+                print("[BLE] beacon link not bonded after %d s - dropping" % (BEACON_BOND_GRACE_MS // 1000))
+                self._conn_beacon = False
+                try:
+                    self._ble.gap_disconnect(self._conn)
+                except Exception:
+                    pass
+
             if self._conn is not None:
                 self._pump()
 
             if self._conn is None:
-                want = self.window_open()
-                if want and not self._advertising:
-                    self._advertise(True)
-                elif not want and self._advertising:
-                    self._advertise(False)
-                    print("[BLE] window closed - advertising stopped")
+                want = self._want_adv_us()
+                if want != self._adv_us:
+                    if want is None:
+                        print("[BLE] window closed - advertising stopped")
+                    elif want != ADV_INTERVAL_US and self._adv_us is not None:
+                        print("[BLE] window closed - beacon every %d ms" % (want // 1000))
+                    self._advertise(want)
         except Exception as e:
             print("[BLE] tick err:", repr(e))
             try:
@@ -615,21 +669,59 @@ class BleService:
                         print("[BLE] notify %04x err: %r" % (cid, e))
                 self._last_key[cid] = key
 
-    def _advertise(self, on):
+    def _advertise(self, interval_us):
+        """Advertise every interval_us (None = stop). Same packet at every
+        rate: the window, the beacon and the power test differ only here."""
         try:
-            if on:
+            if interval_us:
                 adv = _adv_field(0x01, b"\x06") + _adv_field(0x07, bytes(_uuid(0x0001)))
                 resp = _adv_field(0x09, self._name.encode()[:29])
-                self._ble.gap_advertise(ADV_INTERVAL_US, adv_data=adv,
+                self._ble.gap_advertise(interval_us, adv_data=adv,
                                         resp_data=resp, connectable=True)
                 self._advertising = True
-                print("[BLE] advertising")
+                self._adv_us = interval_us
+                print("[BLE] advertising every %d ms" % (interval_us // 1000))
             else:
                 self._ble.gap_advertise(None)
                 self._advertising = False
+                self._adv_us = None
         except Exception as e:
             print("[BLE] advertise err:", repr(e))
             self._advertising = False
+            self._adv_us = None
+
+    # ------------------------------------------------------------ power test
+    # BLE_POWER_TEST (src/net/ble_power_test.py) drives the radio directly
+    # while it owns the main loop; tick() doesn't run meanwhile.
+
+    def test_radio(self, interval_us):
+        """-1 = radio off; None = on, not advertising; else advertise."""
+        if interval_us == -1:
+            if self._active:
+                self.stop()
+            return
+        if not self._active:
+            self.start()
+        self._advertise(interval_us)
+
+    def test_kick(self):
+        """Drop a phone that connected during the test. True if there was one."""
+        if self._conn is None or self._ble is None:
+            return False
+        try:
+            self._ble.gap_disconnect(self._conn)
+        except Exception:
+            pass
+        return True
+
+    def test_end(self):
+        """Back to normal: radio on with a fresh window; tick() advertises."""
+        if not self._active:
+            self.start()
+        else:
+            self.open_window()
+        if self._conn is None:
+            self._advertise(ADV_INTERVAL_US)
 
 
 # ---------------------------------------------------------------- singleton
