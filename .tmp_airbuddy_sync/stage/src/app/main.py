@@ -761,7 +761,9 @@ def run(
                     from src.drivers.servo import Servo
                     _sp = _servo_pin()
                     if _sp is not None:
-                        nav_servo = Servo(_sp)
+                        nav_servo = Servo(
+                            _sp, min_us=int(cfg_now.get("servo_min_us", 500)),
+                            max_us=int(cfg_now.get("servo_max_us", 2500)))
                 except Exception as e:
                     print("[NAV] servo init failed:", repr(e))
             _nav_cell[0] = NavController(
@@ -805,11 +807,17 @@ def run(
             })
         except Exception as e:
             print("[BLE] attach sources failed:", repr(e))
+        # Fast commands (the app's servo dial) run from every button poll,
+        # not only at _bg_tick's ~500 ms cadence.
+        btn.on_poll = ble.fast_tick
 
     # A screen polls the button only between _bg_tick() calls, so a slow
     # tick makes every click feel late. Any tick over this many ms is logged
     # as [SLOW] with a per-stage breakdown (telemetry / nav / ble).
     _SLOW_TICK_MS = 40
+
+    # Servo power rail (Pololu SSR on GPIO40), ticked from _bg_tick.
+    from src.drivers import servo_power as _servo_power
 
     # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
     # walks the whole heap (~50 ms each), and the two that used to bracket
@@ -837,6 +845,11 @@ def run(
             except Exception:
                 pass
         t_nav = time.ticks_diff(time.ticks_ms(), t_nav)
+        # Servo power rail: servo_power_mode + the idle cut-off.
+        try:
+            _servo_power.tick(_cfg_cell[0])
+        except Exception:
+            pass
         # Bluetooth housekeeping (advertising / wrangle window / header).
         # Lives here, not only in the top-level loop, because every screen
         # owns the loop while it is showing and calls tick_fn=_bg_tick.

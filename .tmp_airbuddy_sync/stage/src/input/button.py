@@ -81,6 +81,12 @@ class AirBuddyButton:
         self._click_count = 0
         self._click_window_start_ms = None
 
+        # Called at the top of every poll_action(). Every screen's loop
+        # polls the button every few ms, far more often than it calls its
+        # tick_fn (~500 ms), so this is where Bluetooth's fast commands run
+        # (BleService.fast_tick, installed by app/main.py). Must be cheap.
+        self.on_poll = None
+
     # --------------------------------------------------
     # LED helper
     # --------------------------------------------------
@@ -100,6 +106,13 @@ class AirBuddyButton:
         Returns:
             "sleep", "single", "double", "triple", "quad", "quint", or None
         """
+
+        hook = self.on_poll
+        if hook is not None:
+            try:
+                hook()
+            except Exception:
+                pass
 
         now = time.ticks_ms()
         level = self.pin.value()

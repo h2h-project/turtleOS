@@ -292,3 +292,22 @@ def servo_pwm_config():
     Pass these into src/drivers/servo.py Servo constructor.
     """
     return (SERVO_PIN, SERVO_FREQ_HZ, SERVO_MIN_US, SERVO_CENTER_US, SERVO_MAX_US)
+
+
+# ------------------------------------------------------------
+# Servo power switch (Pololu #5421 isolated SSR, SPST 30V 11A)
+# ------------------------------------------------------------
+# Underside JTAG pad MTDO / GPIO40 -> SSR EN (HIGH = servo rail on).
+# SSR VIN -> XIAO 3V3, SSR GND -> XIAO GND. The SSR's load terminals sit in
+# the 2S servo pack's + lead, ahead of the LM2596 buck.
+#
+# Every header pin is taken while the L76K GNSS module is stacked, so this
+# uses an underside pad (solder the wire before stacking). GPIO40 is not a
+# strapping pin, and the Sense board's microphone uses GPIO41/42, not 40.
+# Driven by src/drivers/servo_power.py. See adding_servo_switch.md.
+SERVO_PWR_PIN = 40
+
+
+def servo_power_pin():
+    """Return the GPIO number driving the servo power switch's EN pin."""
+    return SERVO_PWR_PIN

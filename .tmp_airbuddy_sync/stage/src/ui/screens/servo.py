@@ -452,12 +452,26 @@ class ServoScreen:
 
     def _ensure_pwm(self):
         if self._pwm is None:
+            # Stop a hand-control glide on this pin before we drive it.
+            try:
+                from src.drivers.servo import pin_released
+                pin_released(self._pin)
+            except Exception:
+                pass
             self._pwm = self._make_pwm()
         return self._pwm
 
 
     def _write_pulse_us(self, pulse_us):
         """Hardware callback passed into WindFinder."""
+        # Power the servo rail first; held off (servo_power_mode "off"):
+        # the sweep runs without moving the servo.
+        try:
+            from src.drivers import servo_power
+            if not servo_power.request():
+                return
+        except Exception:
+            pass
         pwm = self._ensure_pwm()
         self._write_pulse_to_pwm(pwm, pulse_us)
 
@@ -604,6 +618,12 @@ class ServoScreen:
                 pass
 
             self._pwm = None
+            # The nav controller's Servo shares this pin; it rebuilds its PWM.
+            try:
+                from src.drivers.servo import pin_released
+                pin_released(self._pin)
+            except Exception:
+                pass
 
 
     # ----------------------------------------------------------------
