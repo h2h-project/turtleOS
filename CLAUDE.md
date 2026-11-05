@@ -907,6 +907,9 @@ one exception is `_IRQ_GET_SECRET` / `_IRQ_SET_SECRET` / `_IRQ_PASSKEY_ACTION`:
 NimBLE needs their answer synchronously, so they read and write
 `_secrets` and `/ble_bonds.json` and call `gap_passkey()` inline.
 
+### 20. I2C_SYS retries a NACKed transfer once (`src/hal/i2c_retry.py`)
+With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–100 ms NACKs (OSError 19) for **every** device, and the immediate retry always succeeds; back-to-back transfers never fail, and 100 kHz doesn't help. The OLED init (~50 writes, aborts on the first error) therefore booted headless ("OLED: not found"). The XIAO `init_i2c()` returns a `RetryI2C` wrapper that retries EIO/ENODEV once (not timeouts). Scans look healthy throughout, so don't trust a scan as proof the bus works: `tests/oled_bus_test.py` measures the after-idle failure rate (healthy = 0/20 on every row).
+
 ---
 
 ## Key file locations at a glance

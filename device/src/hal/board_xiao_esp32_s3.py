@@ -166,8 +166,13 @@ I2C_EXT_FREQ = 400_000
 def init_i2c():
     """
     Create and return the I2C_SYS bus used by OLED, RTC, sensors, etc.
+
+    Wrapped in RetryI2C: with the AHT21 module attached, the first transfer
+    after the bus idles a few ms NACKs and the retry succeeds. See
+    src/hal/i2c_retry.py.
     """
-    return I2C(I2C_ID, scl=Pin(I2C_SCL), sda=Pin(I2C_SDA), freq=I2C_FREQ)
+    from src.hal.i2c_retry import RetryI2C
+    return RetryI2C(I2C(I2C_ID, scl=Pin(I2C_SCL), sda=Pin(I2C_SDA), freq=I2C_FREQ))
 
 
 def init_i2c_ext():
