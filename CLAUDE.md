@@ -72,7 +72,7 @@ device/               ← everything deployed to the microcontroller
     │       ├── turtle_waiting.py ← animated turtle idle screen (turtle_mode=true)
     │       ├── journey.py        ← start/end an operator journey; toggles telemetry tagging
     │       ├── servo.py          ← sail servo status + test sweep
-    │       ├── compass.py        ← live heading via the shared HeadingSource (GY-87 mag)
+    │       ├── compass.py        ← live heading via the shared HeadingSource (GY-273 mag)
     │       ├── sailpoint.py      ← sail-angle overlay on compass reading
     │       ├── destination.py    ← mission/operator target display + GPS capture flow
     │       ├── battery.py        ← INA219 voltage/current/charge screen
@@ -103,10 +103,10 @@ device/               ← everything deployed to the microcontroller
     │   ├── aht10.py              ← temp/humidity driver
     │   ├── servo.py              ← MG996R sail servo driver (PWM, 50 Hz)
 │   ├── servo_power.py        ← servo rail switch (Pololu SSR on GPIO40): on per write, idle cut-off
-    │   ├── gy87.py               ← GY-87 10DOF composite: MPU6050 + aux-bus mag + BMP180 (one shared instance)
+    │   ├── gy87.py               ← IMU + compass composite on I2C_EXT: MPU6050 + mag (+ BMP180 on a legacy GY-87); one shared instance
     │   ├── mpu6050.py            ← MPU6050 accel/gyro (0x69), I2C bypass, pitch/roll
     │   ├── bmp180.py             ← BMP180 barometer (0x77): temp, pressure, ISA altitude
-    │   ├── hmc5883l_qmc5883l.py  ← HMC5883L/QMC5883L magnetometer — the GY-87's mag, or a standalone GY-271
+    │   ├── hmc5883l_qmc5883l.py  ← HMC5883L/QMC5883L magnetometer — the GY-273 compass board
     │   ├── ina219.py             ← battery / power monitor
     │   ├── as5600.py             ← magnetic angle encoder
     │   ├── scd4x.py              ← SCD41 CO2 sensor (alternate)
@@ -163,7 +163,7 @@ Sequential steps run inside an animated `Booter` progress bar on the OLED (`devi
 | 4 | **RTC clock** | Reads DS3231 (I2C 0x68). Syncs `machine.RTC()` to UTC. DS3231 is always kept in UTC. |
 | 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
-| 7 | **10DOF IMU, AS5600 sailpoint** (turtle_mode) | `step_imu()` probes the GY-87 **on I2C_EXT** (MPU6050 at 0x68, or 0x69 if AD0 is high; enables I2C bypass, finds the on-board QMC5883L/HMC5883L, then the BMP180 at 0x77) and keeps the single `GY87` instance in `_rt_imu` — NavController, the compass screen and the telemetry scheduler all receive it via `run(imu=...)`; nothing re-probes. A standalone GY-271 with no IMU still reports green (`QMC5883L standalone`). Then, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
+| 7 | **IMU + compass, AS5600 sailpoint** (turtle_mode) | `step_imu()` probes **I2C_EXT** for the GY-521 IMU (MPU6050 at 0x68, or 0x69 if AD0 is high), enables its I2C bypass, then finds the GY-273 compass (QMC5883L/HMC5883L) on the same bus, then a BMP180 at 0x77 if one is there (only on a legacy GY-87). It keeps the single `GY87` instance (class name from the old one-board GY-87, which still works) in `_rt_imu` — NavController, the compass screen and the telemetry scheduler all receive it via `run(imu=...)`; nothing re-probes. **The compass must be on I2C_EXT with the IMU:** once an IMU answers, a missing mag reports `Compass FAIL` and the I2C_SYS standalone-compass fallback never runs. With no IMU at all, a compass on I2C_SYS still reports green (`QMC5883L standalone`). Then, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
 | 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu`, `ble` kwargs; `ble` is the Turtle Wrangler `BleService`, see [Bluetooth](#bluetooth--turtle-wrangler-docswrangler)) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
 
 After the pipeline, `main.py`:
@@ -190,7 +190,7 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
 | Button LED | GP18 | GPIO18 | GPIO48 | GPIO2 (D1) — moved off D0, see GNSS note |
 | I2C bus (I2C_SYS) | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
-| I2C_EXT (plug-in bus) | — | — | — | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-87 IMU; see the "Two I2C buses" note below |
+| I2C_EXT (plug-in bus) | — | — | — | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-521 IMU + GY-273 compass; see the "Two I2C buses" note below |
 | GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
 | Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
 | Servo power switch | — | — | — | **GPIO40 (underside pad MTDO) → Pololu #5421 SSR EN** — see `adding_servo_switch.md` |
@@ -202,22 +202,23 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 
 > **Note:** GPIO43/44 are also the ESP32-S3 UART0 console pins (`U0TXD`/`U0RXD`). A device continuously driving GPIO44 can, on some firmware builds, leak bytes into the REPL — see [Critical gotcha #16](#16-gps-uart-shares-gpio4344-with-the-esp32-s3-uart0-console-pins).
 
-**Two I2C buses: I2C_SYS and I2C_EXT.** The turtleShell v3.0 architecture splits I2C into a system bus for onboard devices and an external bus for plug-in sensors. As of firmware 2.4 only the GY-87 has moved: it sits on I2C_EXT because its MPU6050 answers at the factory address 0x68, which is the DS3231's address on I2C_SYS. The remaining sensors migrate as the v3.0 PCB develops. `init_i2c()` / `i2c_pins()` are I2C_SYS; `init_i2c_ext()` / `i2c_ext_pins()` are I2C_EXT and return `None` on boards without one. GPIO9 (D10) was deliberately not used for I2C_EXT because the stacked GNSS module drives it as GPS_RESET. `[BOOT]` logs a scan of each bus separately.
+**Two I2C buses: I2C_SYS and I2C_EXT.** The turtleShell v3.0 architecture splits I2C into a system bus for onboard devices and an external bus for plug-in sensors. So far only the IMU and compass have moved: the GY-521's MPU6050 answers at the factory address 0x68, which is the DS3231's address on I2C_SYS, and the GY-273 compass has to share the IMU's bus (see boot step 7). The remaining sensors migrate as the v3.0 PCB develops. `init_i2c()` / `i2c_pins()` are I2C_SYS; `init_i2c_ext()` / `i2c_ext_pins()` are I2C_EXT and return `None` on boards without one. GPIO9 (D10) was deliberately not used for I2C_EXT because the stacked GNSS module drives it as GPS_RESET. `[BOOT]` logs a scan of each bus separately.
 
 **I2C devices on the shared bus** (addresses the same across all ESP32-S3 variants):
 
 | Device | I2C Address | Mode |
 |--------|------------|------|
-| QMC5883L / HMC5883L (magnetometer — the GY-87's own mag once bypass is on, or a standalone GY-271) | 0x0D / 0x1E | turtleOS |
-| AHT10 / AHT21 (temp/humidity) | 0x38 | airOS |
+| AHT20 / AHT21 (temp/humidity — the AHT20 on the turtle's AHT20 + BMP280 module) | 0x38 | shared |
+| BMP280 (pressure — on the AHT20 + BMP280 module; read by the `BME280` driver, see gotcha 17) | 0x77 (or 0x76) | shared |
+| AS5600 (sail-angle encoder) | 0x36 | turtleOS |
 | OLED (SSD1306/SH1106) | 0x3C | shared |
 | INA219 (battery/current monitor) | 0x40 | turtleOS |
 | ENS160 (CO2/TVOC) | 0x53 | airOS |
 | SCD41 (CO2 — alternate sensor) | 0x62 | airOS |
 | DS3231 (RTC) | 0x68 | shared |
-| MPU6050 (GY-87 IMU) — **on I2C_EXT**, factory address; 0x68 on I2C_SYS is the RTC | 0x68 (0x69 if AD0 high) | turtleOS |
-| QMC5883L / HMC5883L (GY-87 on-board mag) — **on I2C_EXT**, appears after bypass | 0x0D / 0x1E | turtleOS |
-| BMP180 (GY-87 barometer) — **on I2C_EXT**; shares 0x77 with BME280-alt, see gotcha 17 | 0x77 | turtleOS |
+| MPU6050 (GY-521 IMU) — **on I2C_EXT**, factory address; 0x68 on I2C_SYS is the RTC | 0x68 (0x69 if AD0 high) | turtleOS |
+| QMC5883L / HMC5883L (GY-273 compass) — **on I2C_EXT**, with the IMU | 0x0D / 0x1E | turtleOS |
+| BMP180 (legacy GY-87 barometer only) — **on I2C_EXT** | 0x77 | turtleOS |
 
 **Platform detection** (`src/hal/platform.py`):
 ```python
@@ -272,7 +273,7 @@ Single-click enters `sensor_carousel()` configured for navigation screens (order
 0. **Servo** screen — **always first.** Sail servo status. **Single click advances; double click** waits 0.5 s then runs one full luff wind-finder sweep (`screens/wind_finder.py::WindFinder`, driven through `ServoScreen`'s raw-PWM callbacks). The result (wind angle + 180° alternate + jitter/confidence) stays on screen until the next action. `_make_pwm()` sets the frequency in the `PWM()` constructor — a bare `PWM(Pin(n))` on ESP32 comes up at the LEDC default (~5 kHz) until `.freq()` lands, which is garbage to a servo. Idle loop polls the button every 2 ms with no periodic redraw (screen is static once probed) — see the sampling note under [the button](#user-interaction--the-button).
 1. **Journey** screen — **only present while a journey is open** (`src/app/journey.active()`), and when present it follows Servo. Same skeleton as the WiFi screen: a right-hand toggle, double-click flips it. Idle text "Ready to go?" / toggle off; active text "Trip in progress / Double click to / arrive" / toggle on. Opening a journey needs a GPS fix, stamps `set_departure`, and writes `/journey_state.json`; closing it stamps `set_arrival` (best-effort — a lost fix still ends the journey) and moves the record into the file's history. While open, every telemetry payload gets `flags.journey_id` = the journey's start epoch (see [Journey tagging](#journey-tagging)). Started from the Destination screen's menu, which hands off to this same screen after a here-stamp.
 2. **Destination** screen — active waypoint / mission-vs-operator target + GPS capture flow.
-3. **Compass** screen — live heading from the GY-87's magnetometer through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
+3. **Compass** screen — live heading from the GY-273 compass through NavController's shared `HeadingSource` (`nav.heading_source()`), so the offset and the probe live in one place; the screen only builds its own `HeadingSource` when no NavController exists. `flows.py` reads it via the public `read_heading()`.
 4. **Sailpoint** screen — sail-angle overlay on heading (AS5600).
 
 The **GPS screen is deliberately not here** (nor in the connectivity carousel) — it
@@ -401,7 +402,7 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **Auth:** sends `X-Device-Id` and `X-Device-Key` headers on every request.
 
-**GY-87 fields (turtleOS 2.4+):** `_read_baro()` adds `bmp_pressure` (hPa), `bmp_temp` (°C) and `bmp_alt_m` (ISA altitude from 1013.25 hPa — a sanity number, it drifts with the weather); `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart.
+**IMU and pressure fields (turtleOS 2.4+):** `_read_imu()` adds `imu_heading` (via the `heading_getter` callable, i.e. NavController's heading with `compass_offset_deg` applied) and accelerometer-derived `imu_pitch` / `imu_roll`. All go under `values`, which the server stores verbatim in `raw_data`; the trend-chart field list on hopeturtles.org (`models/telemetryModel.js` `TREND_VALUE_FIELDS`) must name a key for it to chart. Pressure comes from the BMP280 on the AHT20 + BMP280 module, through `AirSensor`, as `bme_pressure` (hPa). `_read_baro()` adds `bmp_pressure` / `bmp_temp` / `bmp_alt_m` only when a legacy GY-87's BMP180 is on I2C_EXT; the current GY-521 + GY-273 pair has no barometer.
 
 **Battery fields:** `ina_bus_v` is the **corrected** pack voltage (`INA219.battery_v()`), because hopeturtles.org reads that key as battery voltage and derives SoC from it; `ina_raw_bus_v` is the raw VIN- register for diagnostics.
 
@@ -892,11 +893,11 @@ The idle screen object (`turtle_waiting_scr`) is instantiated once at startup. C
 ### 16. GPS UART shares GPIO43/44 with the ESP32-S3 UART0 console pins
 The GPS UART is on `TX=43, RX=44` (D6/D7), which are **also the ESP32-S3's default UART0 console pins** (`U0TXD`/`U0RXD`). If a build leaves UART0 active as a secondary console with input enabled, a device that continuously drives GPIO44 (e.g. a GNSS module's TXD streaming NMEA at power-up) can inject bytes into the REPL's stdin — showing as garbage at the prompt, and a stray `0x03` reads as Ctrl-C (`KeyboardInterrupt`). This is a latent pin/console overlap to keep in mind when a "crash" correlates with the harness being wired up; note it has **not** been confirmed as the cause of any specific field issue, and `os.dupterm(None, 1)` does not address it (the console is at the IDF level, not a Python dupterm slot). If it is ever confirmed, the clean fix is to reflash MicroPython with the UART0 console disabled (console on USB-Serial-JTAG only), which frees GPIO43/44 entirely.
 
-### 17. 0x77 is both the BMP180 and the BME280's alternate address
-The GY-87's BMP180 barometer sits at 0x77, which is also where a BME280 with SDO high answers. `step_warmup()` only hands 0x77 to `AirSensor` when the Bosch chip-ID register (0xD0) reads 0x60 (BME280) or 0x58 (BMP280); the `BME280` driver refuses any other ID, and the `BMP180` driver requires 0x55. Never decide which driver owns 0x77 from the scan alone.
+### 17. 0x77 is shared by the BMP180, BMP280 and BME280
+The turtle's AHT20 + BMP280 module answers at 0x77 (or 0x76), and so does a BME280 with SDO high, and a legacy GY-87's BMP180. `step_warmup()` only hands 0x77 to `AirSensor` when the Bosch chip-ID register (0xD0) reads 0x60 (BME280) or 0x58 (BMP280); the `BME280` driver refuses any other ID, and the `BMP180` driver requires 0x55. Never decide which driver owns 0x77 from the scan alone.
 
-### 18. The GY-87 is probed once — inject it, don't re-probe
-`step_imu()` builds the one `GY87` instance. It reaches `NavController(imu=)` → `HeadingSource(mag=, imu=)`, `CompassScreen(heading_src=)` and `TelemetryScheduler(imu=, heading_getter=)`. Re-probing from a screen re-runs the MPU6050 init and bypass sequence mid-bus and was the source of the old triplicated probe ladders. The GY-87 is only ever probed on **I2C_EXT**: its MPU6050 uses the factory address 0x68, which on I2C_SYS is the DS3231. The driver reads WHO_AM_I before writing anything, so a wrong-bus probe is a harmless read, but `step_imu()` never asks I2C_SYS for an IMU at all.
+### 18. The IMU is probed once — inject it, don't re-probe
+`step_imu()` builds the one `GY87` instance. It reaches `NavController(imu=)` → `HeadingSource(mag=, imu=)`, `CompassScreen(heading_src=)` and `TelemetryScheduler(imu=, heading_getter=)`. Re-probing from a screen re-runs the MPU6050 init and bypass sequence mid-bus and was the source of the old triplicated probe ladders. The IMU is only ever probed on **I2C_EXT**: the MPU6050 uses the factory address 0x68, which on I2C_SYS is the DS3231. The driver reads WHO_AM_I before writing anything, so a wrong-bus probe is a harmless read, but `step_imu()` never asks I2C_SYS for an IMU at all.
 
 ### 19. The BLE IRQ handler only records — except the bond store
 `BleService._irq()` runs in MicroPython scheduler context. It appends to
@@ -932,7 +933,7 @@ With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–
 | Turtle idle screen | `device/src/ui/screens/turtle_waiting.py` |
 | Sail servo screen | `device/src/ui/screens/servo.py` |
 | Compass screen | `device/src/ui/screens/compass.py` |
-| GY-87 10DOF composite driver | `device/src/drivers/gy87.py` (+ `mpu6050.py`, `bmp180.py`) |
+| IMU + compass composite driver (`GY87`) | `device/src/drivers/gy87.py` (+ `mpu6050.py`, `bmp180.py`) |
 | Heading abstraction | `device/src/nav/heading.py` |
 | Battery screen | `device/src/ui/screens/battery.py` |
 | Telemetry scheduler | `device/src/app/telemetry_scheduler.py` |
