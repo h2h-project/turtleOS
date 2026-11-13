@@ -9,130 +9,54 @@ This is a major upgrade from the earlier architecture, where one 3.7V battery po
 
 ---
 
-## Power Architecture Overview
-
-```text
-SYSTEM POWER
-
-Solar panel
-    │
-    ▼
-Solar charger
-    │
-    ▼
-INA219 VIN- side
-    │
-    ├── Main power switch ──> XIAO BAT+
-    │
-System Battery + ──> INA219 VIN+
-System Battery - ───────────> System GND
-```
-
-```text
-SERVO POWER
-
-2 × 18650 cells in series
-        │
-        ▼
-   2S pack (~7.4V nominal)
-        │
-        ▼
-   LM2596 buck regulator
-        │
-        ▼
-   ~6V regulated output
-        │
-        ▼
-      MG996R servo
-```
-
----
-
 ## System Power
 
-The TurtleShell electronics are powered by a single **21700 Li-ion cell**, approximately **3.7V nominal / 4200mAh**.
+![System power wiring: battery, INA219, CN3065 solar charger, main switch and XIAO](docs/images/system_power.png)
 
-The battery connects to the XIAO ESP32-S3 through its dedicated underside **BAT+ / BAT- pads**. The XIAO therefore runs directly from the 1S battery rather than from a boosted 5V rail.
+The TurtleShell electronics run from a single **21700 Li-ion cell** (1S, about 3.7 V nominal, 4200 mAh). The XIAO ESP32-S3 takes it directly on its underside **BAT+ / BAT− pads**, with no boost to 5 V.
 
-```text
-Battery + → INA219 → Main switch → XIAO BAT+
-Battery - ───────────────────────→ XIAO BAT-
-```
+Reading the chart from left to right:
 
-The main power switch disconnects the XIAO and TurtleShell electronics while leaving the solar charger connected to the battery. USB-C can still power the XIAO independently when plugged in.
+1. **Battery + → INA219 VIN+.** Battery + connects only to the INA219. Nothing else touches the battery side of the shunt.
+2. **INA219 VIN− is the system's positive node.** Both the solar charger and the main switch connect here.
+3. **The CN3065 joins before the switch.** Solar keeps charging the battery while the electronics are switched off.
+4. **The main switch is in the positive wire only** and feeds XIAO BAT+.
+5. **One common negative, never switched.** Battery −, INA219 GND, CN3065 BATT− and XIAO BAT− all tie together. The INA219 needs its GND on this line, because it measures bus voltage from VIN− to GND.
+
+USB-C can still power the XIAO with the main switch off.
 
 ---
 
 ## INA219 Battery Monitoring
 
-The INA219 is positioned at the boundary of the system battery so TurtleOS can measure **net battery current** — both discharge and charge.
+Every amp going into or out of the battery passes through the INA219's shunt, so turtleOS sees **net battery current**: what the solar charger puts in, minus what the system draws.
 
-```text
-Battery +
-   │
-   ▼
-INA219 VIN+
-   │
- [shunt]
-   │
-INA219 VIN-
-   │
-   ├── Solar charger BATT+
-   └── Main switch → XIAO BAT+
-```
+| Current flow | Direction through the shunt | INA219 reading |
+|---|---|---|
+| Battery powering the system | VIN+ → VIN− | **positive** (discharging) |
+| Solar or USB charging the battery | VIN− → VIN+ | **negative** (charging) |
 
-Battery negative is shared between the battery, XIAO, INA219 and solar charger.
+Example: solar supplies 300 mA and the system draws 120 mA. The extra 180 mA flows into the battery, and the INA219 reads **−180 mA**.
 
-The INA219 convention is:
+turtleOS keeps this sign everywhere: telemetry `ina_current_ma` and the Wrangler Power characteristic both send the raw reading.
 
-```text
-VIN+ → VIN- = positive current
-VIN- → VIN+ = negative current
-```
+**Two charge paths.** Solar charge comes in through the CN3065. With USB-C plugged in **and the main switch on**, the XIAO's own charger also charges the battery, back through the switch and the shunt. Both read as negative current, so a charging reading with no sun usually means USB.
 
-So TurtleOS can interpret readings as:
+**Battery voltage.** The INA219 measures voltage at VIN−, on the far side of the shunt and battery leads from the cell, so the reading drops slightly under load and rises while charging. turtleOS removes that I×R swing with the `battery_r_ohm` config key (see `CLAUDE.md` for calibration). Every battery voltage and SoC it shows or reports is the corrected value.
 
-```text
-Positive current = battery discharging
-Negative current = battery charging
-```
-
-Because both the solar charger and the XIAO connect to the **VIN- side**, the INA219 measures the net result of charging and system consumption.
-
-Example:
-
-```text
-Solar provides:        300mA
-System consumes:       120mA
-Net battery charge:    180mA
-INA219 reading:       -180mA
-```
-
-The INA219 is part of the **onboard/system I²C bus**, along with the OLED, RTC and future onboard sensors.
+The INA219 is on the onboard **I2C_SYS** bus at 0x40.
 
 ---
 
 ## Solar Charging
 
-The 1S system battery is solar charged independently of whether TurtleShell is switched on.
+The Voltaic P126 panel (about 2 W) feeds the CN3065 solar charger, whose BATT+ output joins INA219 VIN− as shown in the chart.
 
-```text
-Solar panel → Solar charger → INA219 VIN- → INA219 → Battery
-```
-
-This keeps solar charging active while the XIAO is powered down and allows TurtleOS to detect charging current through the INA219.
-
-The planned panel is the **Voltaic P126**, approximately **2W**, with a nominal operating voltage above 6V.
-
-The current Robotistan **CN3065 Mini Solar Li-Po Charger** is specified for roughly **4.4–6V input**, while the Voltaic P126 can exceed 6V and has a substantially higher open-circuit voltage.
-
-**This interface is not yet finalized.** Before deployment, either:
+**The panel and charger don't match yet.** The Robotistan **CN3065 Mini Solar Li-Po Charger** accepts about **4.4–6 V**. The P126 runs above 6 V, and its open-circuit voltage is higher still. Before deployment, do one of these:
 
 - use a solar charger rated for the P126's full voltage range,
-- add suitable input regulation/clamping,
-- or use a lower-voltage panel compatible with the CN3065.
-
-USB-C charging through the XIAO remains available as a separate service/shore-charging method.
+- add input regulation or clamping ahead of the CN3065,
+- or use a lower-voltage panel the CN3065 can take.
 
 ---
 
