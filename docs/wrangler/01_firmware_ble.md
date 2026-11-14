@@ -225,6 +225,12 @@ expiry.
     above the heading text;
   - static screens (Destination, Device, Servo) redraw for the blink via
     `connection_header.BleWatch`.
+- Header mark changed (2026-11-14, `connection_header.ble_mark()`): "+"
+  blinking fast (300 ms phase) while the wrangle window is open, steady
+  "+" while a phone is connected, steady "-" when Bluetooth is on with no
+  phone and the window closed (the beacon included). The icon cluster
+  moved one pixel left so a clear column separates the WiFi triangle from
+  the mark.
 - Also fixed: the Servo screen never passed `gps_state` to the header.
 
 ---

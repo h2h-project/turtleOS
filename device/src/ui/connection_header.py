@@ -31,7 +31,7 @@
 
 import time
 
-from src.ui.glyphs import draw_wifi_signal, draw_gps, draw_api, draw_plus3
+from src.ui.glyphs import draw_wifi_signal, draw_gps, draw_api, draw_plus3, draw_minus3
 from src.ui.glyphs import GPS_NONE, GPS_INIT, GPS_FIXED  # noqa: F401 — re-exported
 from src.ui.glyphs import WIFI_NONE, WIFI_FULL, wifi_level_from_rssi  # noqa: F401 — re-exported
 
@@ -131,14 +131,21 @@ def set_gps_state(state):
 # Bluetooth indicator (Turtle Wrangler)
 #
 # Read straight from the BleService on every draw rather than cached here, so
-# it can never go stale. Shown whenever Bluetooth is ON; blinks with a 1 s
-# phase while advertising (window open, no phone), steady otherwise (phone
-# connected, or window closed). Hidden when off.
-#   - every screen:        3x3 "+" in the WiFi icon's empty lower-right corner
-#   - waiting screen only: the 7x9 rune left of the nav flèche
-#                          (src/ui/screens/turtle_waiting.py)
+# it can never go stale. Hidden when Bluetooth is off. Otherwise:
+#   - wrangle window open, no phone: "+" blinking fast (BLE_BLINK_MS phase)
+#   - phone connected:               "+" steady
+#   - on, no phone, window closed:   "-" steady (this includes the slow
+#                                    beacon for bonded phones)
+# Where it is drawn:
+#   - every screen:        3x3 mark right of the WiFi icon, one clear column
+#                          between them
+#   - waiting screen only: the 5x7 rune left of the nav flèche
+#                          (src/ui/screens/turtle_waiting.py); it blinks in
+#                          the window and is steady otherwise
 # ---------------------------------------------------------------------------
-BLE_BLINK_MS = 1000
+# 300, not 250: screens that redraw every 500 ms would sample a 250 ms phase
+# at the same point every time and the mark would look frozen.
+BLE_BLINK_MS = 300
 
 _ble_mod = None
 
@@ -171,7 +178,7 @@ class BleWatch:
         self._last = None
 
     def changed(self, now_ms=None):
-        v = (ble_on(), ble_visible(now_ms))
+        v = (ble_on(), ble_mark(now_ms))
         if self._last is None:          # first look: the screen just drew
             self._last = v
             return False
@@ -181,19 +188,27 @@ class BleWatch:
         return False
 
 
-def ble_visible(now_ms=None):
-    """True when a Bluetooth indicator should be drawn right now."""
+def ble_mark(now_ms=None):
+    """The header mark to draw right now: "+", "-" or None (off, or the
+    blink-off half of the wrangle window)."""
     try:
         svc = _ble_svc()
         if svc is None or not svc.active():
-            return False
-        if svc.advertising():
+            return None
+        if svc.connected():
+            return "+"
+        if svc.advertising() and not svc.beacon():
             if now_ms is None:
                 now_ms = time.ticks_ms()
-            return (now_ms // BLE_BLINK_MS) % 2 == 0
-        return True
+            return "+" if (now_ms // BLE_BLINK_MS) % 2 == 0 else None
+        return "-"
     except Exception:
-        return False
+        return None
+
+
+def ble_visible(now_ms=None):
+    """True when a Bluetooth indicator should be drawn right now."""
+    return ble_mark(now_ms) is not None
 
 
 def get_gps_state():
@@ -269,7 +284,9 @@ def draw(
     Draw the right-aligned GPS / API / WiFi status cluster.
 
     Cluster layout (right-to-left): WiFi — gap — API — gap — GPS
-    Bluetooth on: a 3x3 "+" in the WiFi icon's lower-right corner (see ble_visible()).
+    Bluetooth on: a 3x3 "+" or "-" right of the WiFi icon (see ble_mark()).
+    The cluster always sits one pixel left of right_inset to leave a clear
+    column between the WiFi icon and that mark.
 
     Parameters
     ----------
@@ -310,17 +327,23 @@ def draw(
     g = int(gap)
     x = w - int(right_inset)
 
-    # WiFi (rightmost)
-    x -= WIFI_W
+    # WiFi (rightmost). The whole cluster sits one pixel left of right_inset,
+    # Bluetooth on or off, so nothing shifts when the mark appears.
+    x -= WIFI_W + 1
     fb.fill_rect(x, y, WIFI_W, WIFI_H, 0)
-    # Bluetooth "+": the WiFi glyph is an inverted triangle, so its lower-right
-    # corner is empty. Centre the plus one column right of the glyph's last
-    # column (inside right_inset) — the WiFi icon itself never moves. Cleared
-    # first so a blink-off frame doesn't leave the previous plus behind.
-    fb.fill_rect(x + WIFI_W - 2, y + 3, 3, 3, 0)
+    # Bluetooth mark: 3x3, in the last three columns before right_inset. The
+    # WiFi glyph is an inverted triangle, so its lower-right corner is empty
+    # and the mark's left column overlaps the glyph's box without touching
+    # it. Cleared first so a blink-off frame, or a "+" turning into a "-",
+    # leaves nothing behind.
+    bx = x + WIFI_W - 1
+    fb.fill_rect(bx, y + 3, 3, 3, 0)
     draw_wifi_signal(fb, x, y, level=wifi_level, color=1)
-    if ble_visible(now_ms):
-        draw_plus3(fb, x + WIFI_W - 2, y + 3, color=1)
+    mark = ble_mark(now_ms)
+    if mark == "+":
+        draw_plus3(fb, bx, y + 3, color=1)
+    elif mark == "-":
+        draw_minus3(fb, bx, y + 3, color=1)
     x -= g
 
     # API

@@ -408,8 +408,8 @@ _WIFI_OFF_6 = [
 # Bluetooth indicators (Turtle Wrangler, src/net/ble_service.py).
 #   draw_ble_rune: 5x7, the cap height of the f_small heading text —
 #                  waiting screen only, top-left, left of the flèche.
-#   draw_plus3:    3x3 "+" tucked into the empty lower-right corner of the
-#                  header WiFi icon, on every screen. See connection_header.
+#   draw_plus3 / draw_minus3: 3x3 mark right of the header WiFi icon, on
+#                  every screen. See connection_header.ble_mark().
 BLE_RUNE_W = 5
 BLE_RUNE_H = 7
 
@@ -433,6 +433,11 @@ def draw_plus3(fb, x, y, color=1):
     _pix(fb, x + 1, y, color)
     _hline(fb, x, y + 1, 3, color)
     _pix(fb, x + 1, y + 2, color)
+
+
+def draw_minus3(fb, x, y, color=1):
+    """3x1 minus on the middle row of the same 3x3 cell as draw_plus3."""
+    _hline(fb, x, y + 1, 3, color)
 
 
 def draw_wifi(fb, x, y, on=True, color=1):

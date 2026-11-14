@@ -314,7 +314,7 @@ Waiting → Online screen
 - Online screen is always shown, including offline — it renders "Offline" plus the pending unsent-telemetry count, which is how you check the queue without a connection.
 - A single click **always** advances from Online to Logging (the `api_ok` gate was intentionally removed — the scheduler's `api_ok` flag lags the live handshake).
 - The GPS screen is **not** in this carousel; it lives in the hold flow. See [Manual GPS logging](#manual-gps-logging-hold-flow).
-- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`, first screen of the **hold flow**, before Battery): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. When the window closes the turtle drops to the **beacon** (`ble_beacon_ms`, turtleOS 2.6.4): the same advert, slower, for phones that already hold a bond, so a lost link comes back without the button (body text "Paired"). Neither ever drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on (blink 1 s while advertising, steady otherwise): a 3x3 "+" in the WiFi icon's lower-right corner on every screen, and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
+- **Bluetooth screen** (turtle mode only, `screens/bluetooth.py`, first screen of the **hold flow**, before Battery): double-click turns Bluetooth on/off (`ble_enabled`, via `actions.ble_set_enabled`). Opening the screen reopens the **wrangle window**: the turtle advertises for `ble_window_min` minutes after boot, after waking from sleep and on each visit here. When the window closes the turtle drops to the **beacon** (`ble_beacon_ms`, turtleOS 2.6.4): the same advert, slower, for phones that already hold a bond, so a lost link comes back without the button (body text "Paired"). Neither ever drops a connected phone; sleep shuts the radio down. Indicators while Bluetooth is on: a 3x3 mark right of the WiFi icon on every screen ("+" blinking fast in the wrangle window, steady "+" with a phone connected, "-" otherwise), and a rune left of the nav flèche on the waiting screen. See [Connection header](#connection-header-srcuiconnection_headerpy) and `docs/wrangler/`.
 - Quad click at any step triggers `selfdestruct_flow`.
 - `_entry_settle(btn)` drains tail bounces of the triggering triple-click at carousel entry. `_post_screen_flush(btn, ms=120)` drains between screens. Neither calls `btn.reset()` (which would eat real clicks).
 
@@ -551,7 +551,7 @@ plan (one data model for Bluetooth, telemetry JSON and the app API) is
 | Journeys over Bluetooth (2.6.0): `0119` Journey, `JOURNEY_LIST` (history), `JOURNEY_TRACK` (paged points from the unsent queue, sized to the MTU) | `ble_telemetry.journey()`, `ble_commands._op_journey_list/_track`, `journey.track_points()`; host test `cd device && python3 ../tests/journey_host.py` |
 | What every command (and OLED gesture) actually does | `src/app/actions.py` |
 | Bluetooth screen (on/off, pairing code, forget phones) | `src/ui/screens/bluetooth.py` |
-| Header "+" / waiting-screen rune | `connection_header.ble_on()` / `ble_visible()` / `BleWatch` |
+| Header "+" / "-" mark, waiting-screen rune | `connection_header.ble_on()` / `ble_mark()` / `ble_visible()` / `BleWatch` |
 
 **Services:** Turtle `26d00001-…` (advertised), Command `26d00002-…`, and
 the standard Device Information `0x180A` (manufacturer, model, firmware
@@ -699,9 +699,9 @@ _ch.draw(
 )
 ```
 
-Icon cluster width is ~38 px (WiFi 9 + gap 4 + API 7 + gap 4 + GPS 14). Titles up to ~90 px wide won't collide.
+Icon cluster width is ~38 px (WiFi 9 + gap 4 + API 7 + gap 4 + GPS 14), plus the one-pixel shift left for the Bluetooth mark. Titles up to ~88 px wide won't collide.
 
-**Bluetooth indicator.** While Bluetooth is on, `draw()` adds a 3x3 "+" in the WiFi icon's empty lower-right corner (the WiFi icon does not move). It reads the `BleService` state on every draw (`ble_on()` / `ble_visible()`): it blinks with a 1 s phase (`BLE_BLINK_MS`) while advertising and is steady when a phone is connected or the window has closed. The waiting screen draws a matching 5x7 rune left of the nav flèche. A screen that never redraws on its own must poll `connection_header.BleWatch().changed()` in its loop and redraw when it returns True, or the "+" won't blink there (Destination, Device and Servo do this).
+**Bluetooth indicator.** While Bluetooth is on, `draw()` adds a 3x3 mark right of the WiFi icon, in the last three columns before `right_inset`. The whole icon cluster sits one pixel left of `right_inset`, Bluetooth on or off, so there is a clear column between the WiFi triangle and the mark. `ble_mark()` reads the `BleService` state on every draw: a "+" blinking fast (`BLE_BLINK_MS`, 300 ms phase) while the wrangle window is open, a steady "+" while a phone is connected, and a steady "-" when Bluetooth is on with no phone and the window closed (this includes the beacon). The waiting screen draws a matching 5x7 rune left of the nav flèche; it blinks in the window and is steady otherwise. A screen that never redraws on its own must poll `connection_header.BleWatch().changed()` in its loop and redraw when it returns True, or the mark won't blink or change there (Destination, Device and Servo do this).
 
 ---
 

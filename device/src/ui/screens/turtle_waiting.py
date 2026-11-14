@@ -481,7 +481,7 @@ class TurtleWaitingScreen:
             except Exception:
                 _cur_morse = 0
             # ...and whenever a Bluetooth indicator should appear, vanish or
-            # blink (1 s phase while advertising) — redraws on each flip.
+            # blink (fast, while the wrangle window is open) — redraws on each flip.
             try:
                 _cur_ble = (_ch.ble_on(), _ch.ble_visible(now)) if _ch else None
             except Exception:
