@@ -5,13 +5,13 @@
 
 ## Overview
 
-The hope turtle project envisions autonomous marine vehicles made from 95% organic material that are able to self-navigate within ±5 km to a coastal destination to deliver food, building materials, and hope. This repository holds the code for the microcontroller operating system that enables the operation, power management, sensor integration, and overall navigation of the turtle. The codebase is MicroPython running on a Seeed Studio XIAO ESP32-S3.  Note the H2H project also has seperate repositories for the project's PCB, Android Wrangler App, the turtle body, and more.
+Hope turtles are autonomous marine vehicles made from 95% organic material that are able to self-navigate within ±5 km to a coastal destination to deliver food, building materials, and hope. This repository holds the code for the microcontroller operating system that enables the operation, power management, sensor integration, and overall navigation of the turtle. The codebase is MicroPython running on a Seeed Studio XIAO ESP32-S3.  Note the H2H project also has separate repositories for the project's PCB, Android Wrangler App, the turtle body, and more.
 
 ---
 
 ## How it works
 
-The hope turtle is a wind-powered vessel. Its brain is a [Seeed Studio XIAO ESP32-S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html), a thumbnail-sized board with a dual-core ESP32-S3, built-in WiFi and Bluetooth, and 8 MB of PSRAM, running turtleOS in [MicroPython](https://micropython.org/). turtleOS closes the navigation loop entirely on the microcontroller, so no shore-side control link is needed during a voyage. For testing and field trials, the companion Android app **Turtle Wrangler** connects to the turtle over Bluetooth. From a short distance it can read live telemetry, move the sail, and start and end journeys. Wrangler is a testing tool only. A turtle on a mission navigates without it.
+The hope turtle is a wind-powered vessel. Its brain is a [Seeed Studio XIAO ESP32-S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html), a thumbnail-sized board with a dual-core ESP32-S3, built-in WiFi and Bluetooth, and 8 MB of PSRAM, running turtleOS in [MicroPython](https://micropython.org/). turtleOS closes the navigation loop entirely on the microcontroller, so no shore-side control link is needed during a voyage. For testing and field trials, the companion Android app **Turtle Wrangler** connects to the turtle over Bluetooth. From a short distance it can read live telemetry, move the sail, and start and end journeys. Wrangler is a testing tool only. A turtle on a mission navigates without it fully autonomously using simple routing logic (there's no internet connection or AI involed).
 
 **Positioning.** The Seeed Studio XIAO GNSS module (an L76K receiver) stacks directly onto the XIAO and streams NMEA sentences over UART at 9600 baud, once per second. turtleOS parses incoming fixes continuously to keep a current latitude/longitude estimate. Once a fix is acquired, the device knows where it is on the water.
 
