@@ -245,34 +245,70 @@ soldering** (see the bench checks).
 
 ### How it connects
 
-The XIAO doesn't break its USB data lines out to a header pin or pad (confirm
-against the Seeed schematic for your revision), so the way in is through its
-own USB-C socket, using a short **USB-C male plug pigtail**. Amazon pairs this
-socket with a RUNCCI-YUN right-angle USB-C *male* pigtail (25 cm, 4 wires,
-28 AWG, power + data), which suits this job, and its right angle keeps the plug
-low against the XIAO. The turtle_shell PCB sits in the middle as a junction:
+The XIAO brings its USB data lines out to two pads on its **underside**, marked
+**USB_D+** and **USB_D−** on Seeed's back pinout (see the
+[XIAO Bottom Pad Usage](wiring_guide.md#xiao-bottom-pad-usage) chart). Power
+goes in on the **5V** header pin, which is the XIAO's VBUS. So the panel socket
+can be wired straight to the board, with no plug in the XIAO's own USB-C socket.
+The turtle_shell PCB sits in the middle as a junction:
 
 ```
- RUNCCI-YUN socket          turtle_shell PCB                   XIAO
+ RUNCCI-YUN socket          turtle_shell PCB                       XIAO
  (in the cap wall)
-┌──────────┐  4 wires   ┌───────────────────────┐  4 wires   ┌──────────┐
-│ USB-C    │───────────►│ J1 ──[ESD]── traces ──│───────────►│ USB-C    │
-│ female   │            │                  J2   │  male      │ socket   │
-└──────────┘            └───────────────────────┘  pigtail   └──────────┘
+┌──────────┐  4 wires   ┌───────────────────────────┐
+│ USB-C    │───────────►│ J1 ──[ESD]──┬─ VBUS ──►|──┼──► 5V header pin
+│ female   │            │             │  (Schottky) │
+└──────────┘            │             ├─ D+ ────────┼──► USB_D+ underside pad
+                        │             ├─ D− ────────┼──► USB_D− underside pad
+                        │             └─ GND ───────┼──► GND
+                        └───────────────────────────┘
 ```
+
+| Socket wire | XIAO connection | Notes |
+|---|---|---|
+| VBUS | **5V** header pin, through a Schottky diode | Diode anode on the socket side, cathode on the 5V pin |
+| D+ | **USB_D+** underside pad | Never swap D+ and D− |
+| D− | **USB_D−** underside pad | |
+| GND | **GND** | Header pin or the underside GND pad |
 
 1. **Mount the socket** in the cap wall with its seal, and run its four wires to
    the PCB. Trim them so the run is no longer than needed.
 2. **Crimp or solder the four wires into J1**, a 4-pin locking connector on the
    PCB (for example JST-GH or JST-PH), in the order printed on the silkscreen:
    VBUS, D+, D−, GND.
-3. **On the PCB, J1 joins J2 pin for pin**, with the ESD chip at J1.
-4. **Cut the male pigtail short**, put the matching 4-pin connector on its bare
-   end, plug it into J2, and plug its USB-C end into the XIAO.
+3. **Solder fine wires to the USB_D+ and USB_D− pads before stacking the GNSS
+   module**, along with the MTDO wire (see [The MTDO pad](#the-mtdo-pad-gpio40)).
+   The pads can't be reached once the module is on. Twist the two data wires
+   together, keep them short, and strain-relieve them at the pads with hot glue
+   or Kapton tape.
+4. **Run VBUS through the Schottky diode to the 5V pin**, and GND to GND.
 
-Routing it through the PCB, rather than soldering the socket's wires straight to
-the plug's wires, gives the wires strain relief and somewhere to put ESD
-protection. It also lets either cable be unplugged when the cap is opened.
+**Why the diode.** Seeed's wiki says the 5V pin can be used as an input, but
+only with a diode between the external supply and the pin (anode to the supply,
+cathode to 5V). The diode stops the XIAO's own USB-C port, if someone plugs into
+it, from back-feeding 5 V out through the panel socket. A Schottky (for example
+an SS14 or 1N5817) drops only about 0.3 V, so the XIAO still sees about 4.7 V.
+
+**Charging works the same way.** The 5V pin is VBUS, so 5 V on it feeds the
+XIAO's onboard charger exactly as a cable in its own socket does. The panel
+socket can shore-charge the system battery (through the main switch, as described
+in [Power_System.md](Power_System.md)).
+
+**Don't use both ports at once.** The underside pads are wired to the same data
+lines as the XIAO's own USB-C socket. Plugging a computer into both at the same
+time puts two hosts on one bus.
+
+**No-solder alternative.** If you'd rather not solder to the underside pads, use
+a short **USB-C male plug pigtail** into the XIAO's own socket instead. Amazon
+pairs this socket with a RUNCCI-YUN right-angle USB-C *male* pigtail (25 cm, 4
+wires, 28 AWG, power + data), and its right angle keeps the plug low against the
+XIAO. Wire it to a second connector, J2, that joins J1 pin for pin (no diode
+needed: the XIAO's socket handles VBUS itself). It's bulkier and the plug can work
+loose, but it can be unplugged when the cap is opened.
+
+Routing everything through the PCB, rather than soldering the socket's wires
+straight to the XIAO, gives the wires strain relief and somewhere to put ESD
+protection.
 
 ### PCB design notes
 
@@ -280,8 +316,8 @@ protection. It also lets either cable be unplugged when the cap is opened.
   connectors' pins on the silkscreen.
 - **Route D+ and D− as a pair:** side by side, the same length, over an
   unbroken ground plane, with no vias if possible. At full speed this is
-  forgiving, but keep the whole run (socket wires + PCB + pigtail) under about
-  30 cm and twist the loose data wires together.
+  forgiving, but keep the whole run (socket wires + PCB + wires to the XIAO)
+  under about 30 cm and twist the loose data wires together.
 - **Add an ESD protection chip at J1**, for example a **USBLC6-2SC6** (SOT-23-6)
   across D+, D−, VBUS and GND. The panel socket is the one part of the
   electronics a person touches, often with wet or salty hands, and a static zap
@@ -290,8 +326,9 @@ protection. It also lets either cable be unplugged when the cap is opened.
   current.
 - **Keep VBUS separate from every other supply on the PCB.** Don't join it to
   the system battery, the servo pack, the solar charger or the 3V3 rail. It
-  only goes from J1 to J2, and the XIAO handles it from there (including
-  charging the system battery).
+  only goes from J1 through the Schottky diode to the XIAO's 5V pin, and the
+  XIAO handles it from there (including charging the system battery). Size the
+  diode for at least 1 A.
 - **Join GND to the PCB's ground plane.** It's the same ground as everything
   else.
 
@@ -311,13 +348,18 @@ Do these on one socket from the pack, before it goes into the cap.
    - **0 V:** they aren't. The socket then only works with **USB-A to USB-C**
      cables (USB-A ports always supply 5 V). Label the cap accordingly, or keep
      a USB-A to USB-C cable with the turtle.
-3. **Check data.** Wire the socket to the male pigtail (temporarily, by hand or
-   through the PCB), plug it into the XIAO and connect a laptop. The XIAO's
-   serial port should appear and a firmware sync should run normally.
+3. **Check data.** Wire the socket to the XIAO (temporarily, by hand or
+   through the PCB) and connect a laptop. The XIAO's serial port should appear
+   and a firmware sync should run normally.
+4. **Check the diode.** With the laptop plugged into the panel socket, the
+   XIAO's 5V pin should read about 4.7 V. Then plug a cable into the XIAO's own
+   socket instead and check the panel socket's VBUS wire reads 0 V.
 
 ### In the field
 
 - **Keep the socket capped** whenever the turtle is in the water. The PVC body
   seals the cap wall, but an open USB socket corrodes quickly in sea air.
-- **The XIAO's own port stays occupied** by the pigtail plug. To use it
-  directly, unplug the pigtail.
+- **Use one port at a time.** With the underside-pad wiring the XIAO's own
+  USB-C socket stays free for bench work, but don't plug into both at once. (With
+  the pigtail alternative, the XIAO's own port stays occupied; unplug the
+  pigtail to use it directly.)

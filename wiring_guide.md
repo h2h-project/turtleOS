@@ -18,7 +18,7 @@ The pin chart below matches this board orientation:
 
 | Left Side (Top → Bottom) | Right Side (Top → Bottom) |
 |---|---|
-| 🔲 **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V (VBUS) — not used. Live only while USB is plugged in; turtleOS runs from the battery pads with no 5 V rail |
+| 🔲 **1** GPIO1 / A0 / D0 — RESERVED: GPS_WAKEUP (stacked L76K GNSS module) | 🟥 **1** 5V (VBUS) — no 5 V rail on battery power. Optional: panel USB-C socket VBUS in, through a Schottky diode (see [adding_servo_switch.md](adding_servo_switch.md#how-it-connects)) |
 | 🟨 **2** GPIO2 / A1 / D1 → BUTTON LED (active HIGH, LED + resistor to GND) | ⚫ **2** GND → shared ground (all modules, servo SSR GND, servo regulator GND) |
 | 🟨 **3** GPIO3 / A2 / D2 → **I2C_EXT SCL** → GY-521 SCL, GY-273 SCL | 🟥 **3** 3V3 → OLED, RTC, AS5600, INA219, AHT20+BMP280, GY-521, GY-273, servo SSR VIN |
 | 🟪 **4** GPIO4 / A3 / D3 → BUTTON | 🔲 **4** GPIO9 / A10 / D10 / MOSI — RESERVED: GPS_RESET (stacked L76K GNSS module) |
@@ -46,7 +46,7 @@ The underside of the XIAO carries the battery pads and a cluster of extra pads. 
 | MTMS | GPIO42 | JTAG | ⬜ Free |
 | GND | — | Ground | ⬜ Free (extra ground point) |
 | EN | — | Chip enable / reset | Not used. Pulling it low resets the XIAO |
-| USB_D+ / USB_D− | — | USB data lines | Not used |
+| USB_D+ / USB_D− | — | USB data lines (same as the USB-C socket) | Optional: panel-mount USB-C socket in the cap wall. See [adding_servo_switch.md](adding_servo_switch.md#how-it-connects) |
 
 GPIO40 is not a strapping pin, so the servo switch doesn't affect how the chip boots.
 
@@ -150,10 +150,19 @@ The IMU and compass are on I2C_EXT; see [IMU and Compass Wiring](#imu-and-compas
 
 ## GPS UART Wiring
 
-UART wiring crosses between the XIAO and the GPS module:
+The Seeed XIAO GNSS module (L76K) **stacks directly onto the XIAO**, so there are no GPS wires to run. Through the stacking header it uses:
 
-| GPS Module Pin | XIAO ESP32-S3 Pin |
-|---|---|
+| GNSS module signal | XIAO pin | Notes |
+|---|---|---|
+| GPS_RXD | GPIO43 / D6 / TX | XIAO TX → GPS RX, 9600 baud |
+| GPS_TXD | GPIO44 / D7 / RX | GPS TX → XIAO RX |
+| GPS_WAKEUP | GPIO1 / D0 | Reserved: don't reuse |
+| GPS_RESET | GPIO9 / D10 | Reserved: don't reuse |
+| Power, GND | header power pins | |
+
+Solder any underside-pad wires (servo switch, USB) **before** stacking the module. See [XIAO Bottom Pad Usage](#xiao-bottom-pad-usage).
+
+---|---|
 | GPS VCC | 3V3 or 5V, depending on GPS module |
 | GPS GND | GND |
 | GPS RX | GPIO43 / D6 / TX |
