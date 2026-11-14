@@ -72,9 +72,7 @@ The latest version of turtleOS (v2.4) lays the foundation for forthcoming turtle
 | AS5600 | Sail angle encoder | 0x36 | Magnetic angle of the sail pivot; finds the wind during a luff sweep | `AS5600` (`src/drivers/as5600.py`) | turtleOS |
 | INA219 | Battery monitor | 0x40 | Battery voltage and net charge/discharge current | `INA219` (`src/drivers/ina219.py`) | turtleOS |
 | AHT20 | AHT20 + BMP280 module | 0x38 | Air temperature and relative humidity | `AHT21` (`src/sensors/air.py`), via `AirSensor` | both |
-| BMP280 | AHT20 + BMP280 module | 0x77 (or 0x76) | Barometric pressure | `BME280` (`src/drivers/bme280.py`), via `AirSensor` | both |
-| ENS160 | Air quality sensor | 0x53 | CO₂ (eCO2) and TVOC | `ENS160` (`src/sensors/air.py`), via `AirSensor` | airOS |
-| SCD41 | CO₂ sensor (alternate) | 0x62 | True CO₂ | `SCD4X` (`src/drivers/scd4x.py`) | airOS |
+
 
 ### I2C_EXT devices
 
@@ -82,7 +80,7 @@ The latest version of turtleOS (v2.4) lays the foundation for forthcoming turtle
 |---|---|---|---|---|---|
 | MPU6050 | GY-521 IMU | 0x68 (0x69 if AD0 high) | Accelerometer + gyroscope: hull pitch and roll | `MPU6050` (`src/drivers/mpu6050.py`), wrapped by `GY87` (`src/drivers/gy87.py`) | turtleOS |
 | QMC5883L / HMC5883L | GY-273 compass | 0x0D / 0x1E (0x2C for a QMC5883P clone) | Three-axis magnetometer: heading | `QMC5883L` / `HMC5883L` / `QMC5883P` (`src/drivers/hmc5883l_qmc5883l.py`), via `GY87` | turtleOS |
-| BMP180 | Legacy GY-87 board only | 0x77 | Barometric pressure and temperature | `BMP180` (`src/drivers/bmp180.py`), via `GY87` | turtleOS |
+
 
 turtleOS probes I2C_EXT once at boot and shares the one `GY87` instance with navigation, the compass screen and telemetry.
 
