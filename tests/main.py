@@ -2,7 +2,6 @@
 from machine import Pin, I2C
 import time
 import framebuf
-import struct
 
 # -----------------------
 # I2C setup

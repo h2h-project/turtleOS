@@ -1,0 +1,44 @@
+# Ruff configuration for turtleOS — used by scripts/de_lint_please.sh
+#
+# The rule set is tuned for MicroPython firmware: it looks for likely bugs,
+# not style. Line length, semicolon one-liners (`import gc; gc.collect()`),
+# imports inside functions (the lazy-import convention) and similar house
+# habits are deliberately not checked.
+
+# MicroPython's syntax is closest to early CPython 3.x plus f-strings and the
+# walrus operator. py38 makes ruff flag newer syntax (match statements,
+# except*, PEP 695 generics) that the board can't compile.
+target-version = "py38"
+
+# `const()` is a MicroPython builtin; it needs no import on the device.
+builtins = ["const"]
+
+extend-exclude = [
+    "backups",            # archived experiments
+    ".tmp_*",             # Synker staging copies of device/
+    "device/src/fonts",   # generated glyph tables
+    "device/src/lib",     # vendored third-party code (urequests)
+]
+
+[lint]
+select = [
+    "E9",    # syntax errors, I/O errors
+    "F",     # pyflakes: undefined names, unused imports/variables, redefinitions
+    "PLE",   # pylint errors: things that are wrong at runtime
+    "W605",  # invalid escape sequence in a string
+    "E711",  # == None      (use `is None`)
+    "E712",  # == True/False
+    "E713",  # not x in y   (use `x not in y`)
+    "E714",  # not x is y   (use `x is not y`)
+    "E721",  # type(a) == type(b)
+    "E722",  # bare `except:` — also swallows Ctrl-C at the REPL
+    "B006",  # mutable default argument
+    "B012",  # return/break/continue inside `finally`
+    "B015",  # comparison whose result is thrown away
+    "B020",  # loop variable overrides the thing being iterated
+    "B025",  # duplicate exception in try/except
+]
+
+[lint.per-file-ignores]
+# The HAL facade imports board functions only to re-export them.
+"device/src/hal/board.py" = ["F401"]

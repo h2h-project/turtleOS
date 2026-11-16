@@ -13,7 +13,6 @@ from src.ui.clicks import (
     draw_text,
     wait_for_single,
     wait_release,
-    dwell_or_click,
     reset_and_flush,
     gc_collect,
 )

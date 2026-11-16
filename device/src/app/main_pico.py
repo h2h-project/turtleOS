@@ -7,7 +7,6 @@
 #   - quad-click turtle_waiting branch (quad now always calls selfdestruct_flow)
 #   - turtle_waiting branch in the waiting-screen section
 
-import machine
 import time
 
 try:

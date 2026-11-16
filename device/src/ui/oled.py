@@ -1,5 +1,4 @@
 # src/ui/oled.py  (MicroPython / Pico W / ESP32)
-import time
 import framebuf
 import math
 from machine import Pin, I2C

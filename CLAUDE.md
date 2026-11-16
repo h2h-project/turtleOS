@@ -134,6 +134,7 @@ scripts/              ← host-side deploy helpers
   ├── sync_turtleOS.sh    ← Synker: re-upload turtleOS firmware to an already-installed device
   ├── sync_airOS.sh       ← Synker: re-upload airOS firmware to an already-installed device
   ├── config_collection.sh ← sourced by both Synkers: WiFi/device picker from config_collection.json
+  ├── de_lint_please.sh   ← linter: ruff (rules in /ruff.toml) + mpy-cross compile of device/; no board needed
   ├── xiao_config.example.json    ← committed template (credentials blank)
   ├── xiao_config.json            ← LOCAL, git-ignored: base config installed by sync_turtleOS.sh
   ├── airbuddy_config.example.json ← committed template (credentials blank)
@@ -798,6 +799,8 @@ There is no automated unit test suite. `tests/` contains hardware integration sc
 mpremote connect auto run tests/i2c_scan.py
 mpremote connect auto run tests/sensor_debug.py
 ```
+
+**Linting** runs on the laptop with no board attached: `./scripts/de_lint_please.sh` (`--stats`, `--fix`, `--no-mpy`, or paths). It runs ruff over `device/`, `tests/` and `scripts/` with the bug-focused rule set in `ruff.toml` (no style rules; `backups/`, fonts, vendored `lib/` and the Synker staging folders are excluded), then compiles every file in `device/` with `mpy-cross` to catch syntax MicroPython rejects. Exit code 0 = clean, 1 = findings.
 
 ---
 

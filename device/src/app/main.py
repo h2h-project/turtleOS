@@ -1,6 +1,5 @@
 # src/app/main.py — AirBuddy 2.1 core loop (Revised + API two-state patch)
 
-import machine
 import time
 
 try:

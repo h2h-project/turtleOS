@@ -19,7 +19,6 @@
 import os
 import random
 import shutil
-import struct
 import sys
 import tempfile
 import time as _t

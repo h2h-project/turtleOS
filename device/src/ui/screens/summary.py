@@ -2,7 +2,7 @@
 
 import time
 from src.ui.glyphs import (
-    draw_home, HOME_W, HOME_H, draw_degree, draw_c, draw_sub2, draw_face,
+    draw_home, HOME_W, draw_degree, draw_c, draw_sub2, draw_face,
     draw_battery, draw_battery_level, battery_display_bands, BATT_W, BATT_H,
     draw_x_mark, XMARK_W, XMARK_H,
 )
