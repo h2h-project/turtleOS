@@ -139,26 +139,33 @@ def save_set_fields(updates):
 
 # ---------------------------------------------------------------- journey
 
-def _enter_sail_nav():
-    """Opening a journey puts the turtle into SAIL-NAV. No-op if the state
-    machine refuses (e.g. the turtle is in SAFE after a fault)."""
+def _enter_acquire(reason):
+    """Put the turtle in ACQUIRE from any state. With a journey open,
+    NavController then runs the resume stages (battery, GPS, wind) and
+    enters SAIL_NAV itself. Returns False if the state machine refuses."""
     try:
         from src.nav import state_machine as sm
-        if sm.get_state() == sm.BOOT:
-            # Boot normally advances BOOT->ACQUIRE; cover the race where a
-            # journey is started first.
-            sm.set_state(sm.ACQUIRE, "journey started (from boot)")
-        sm.set_state(sm.SAIL_NAV, "journey started")
+        return sm.set_state(sm.ACQUIRE, reason)
     except Exception as e:
-        print("[JOURNEY] sail-nav enter failed:", repr(e))
+        print("[JOURNEY] state change failed:", repr(e))
+        return False
+
+
+def _can_acquire():
+    try:
+        from src.nav import state_machine as sm
+        return sm.can_set(sm.ACQUIRE)
+    except Exception:
+        return True
 
 
 def _stand_down():
-    """Ending a journey drops SAIL-NAV back to ACQUIRE. Left alone if the
-    turtle has meanwhile gone to SAFE or already reached ARRIVAL."""
+    """Ending a journey drops the turtle back to ACQUIRE from SAIL_NAV,
+    ARRIVAL or SAFE, so it stops steering and the next journey starts
+    clean."""
     try:
         from src.nav import state_machine as sm
-        if sm.get_state() == sm.SAIL_NAV:
+        if sm.get_state() in (sm.SAIL_NAV, sm.ARRIVAL, sm.SAFE):
             sm.set_state(sm.ACQUIRE, "journey ended")
     except Exception as e:
         print("[JOURNEY] stand-down failed:", repr(e))
@@ -190,13 +197,17 @@ def journey_start(gps=None):
             print("[JOURNEY] start: no GPS fix")
             return ERR_NO_GPS_FIX, {}
 
+        if not _can_acquire():
+            print("[JOURNEY] start: nav state refuses ACQUIRE")
+            return ERR_WRONG_STATE, {}
+
         rec = journey.start(loc[0], loc[1])
         if rec is None:
             print("[JOURNEY] start: RTC not synced")
             return ERR_RTC_NOT_SYNCED, {}
 
         save_set_fields({"set_departure": [loc[0], loc[1]]})
-        _enter_sail_nav()
+        _enter_acquire("journey started")
         print("[JOURNEY] started id={} dep={:.6f},{:.6f}".format(rec.get("id"), loc[0], loc[1]))
         return OK, {"journey_id": rec.get("id"), "lat": loc[0], "lon": loc[1]}
     except Exception as e:

@@ -124,6 +124,7 @@ characteristic and field. "—" means that surface doesn't carry it.
 | `xte_m` | cross-track error, m, + = right of track (not computed yet) | — | `0111` | — |
 | `nav_fault` | why SAFE: 0 none · 1 GPS never · 2 GPS lost · 3 no waypoints | — | `0111` `fault` | NavController |
 | `trim` | 0 CRUISE · 1 FEATHER | — | `0111` | NavController |
+| `resume_stage` | what an open journey waits for in ACQUIRE: BATTERY · GPS · WIND; absent/0 = none | `flags.resume_stage` (string, only while resuming) | `0111` `resume_stage` u8: 0 none · 1 BATTERY · 2 GPS · 3 WIND | `NavController.resume_stage()` / `state_machine.resume_stage()` |
 
 **Targets and journeys**
 
@@ -339,7 +340,9 @@ reads everything once on connect, then relies on notifications.
 **`0111` Nav** — `heading_x10 u16`, `bearing_to_target_x10 u16`,
 `dist_to_target_m u32`, `xte_m i16`, `nav_state u8`, `fault u8`,
 `trim u8`, then *(appended within v1, 2026-10-09; older firmware sends
-only the first 13 bytes)* `compass_offset_deg i16`
+only the first 13 bytes)* `compass_offset_deg i16`, then *(appended within
+v1, 2026-11-18, turtleOS 2.6.6; older firmware sends only the first 15
+bytes)* `resume_stage u8`
 - Source: `NavController.snapshot()` and `heading_source()`.
 - `bearing_to_target` and `dist_to_target_m` are computed from the cached
   fix to `WaypointSequencer.current()` (`bearing.initial_bearing` /
@@ -352,6 +355,10 @@ only the first 13 bytes)* `compass_offset_deg i16`
 - `fault` (reason for SAFE): 0 none · 1 GPS never acquired · 2 GPS lost ·
   3 no waypoints configured · `0xFF` other (see the serial log).
 - `trim`: 0 CRUISE · 1 FEATHER (low battery) · `0xFF` n/a.
+- `resume_stage`: what an open journey is waiting for before the turtle
+  steers again (`nav_state` is ACQUIRE meanwhile): 0 none · 1 battery
+  (below `resume_batt_pct`) · 2 GPS fix · 3 wind sweep running. See
+  "Journey resume" in the developer guide (`CLAUDE.md`).
 - `compass_offset_deg`: config `compass_offset_deg`, −180…180, already
   included in `heading`. The raw magnetometer heading is `heading −
   compass_offset_deg`. Lets the app calibrate ("the bow points at true
@@ -613,7 +620,7 @@ empty.
 
 | Op | Name | Payload | OLED equivalent | Result |
 |---|---|---|---|---|
-| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV; `0xFF` = the autopilot is off) · BUSY (sweep already running) |
+| `0x10` | NAV_LUFF_SWEEP | — | Machine-state screen, double-click (`NavController.begin_luff_sweep()`) | IN_PROGRESS → OK `<H>` wind_x10 (`0xFFFF` = the sweep ended without a wind angle) · WRONG_STATE `<B>` nav_state (only valid in ACQUIRE / SAIL_NAV, and not while a journey resume waits for battery or GPS; `0xFF` = the autopilot is off) · BUSY (sweep already running) |
 | `0x11` | SERVO_BENCH_SWEEP | — or *(turtleOS 2.6.5)* `<HH>` step_x10, hold_ms | Servo screen, double-click (`WindFinder` full luff sweep) | IN_PROGRESS → OK `<HHB>` wind_x10, alt_wind_x10, confidence_pct (WindFinder's jitter ratio vs calm: 1× = 0 %, ≥ 5× = 100 %) · NO_HARDWARE (`servo_present` false, or no AS5600) · BAD_VALUE (settings out of range) · BAD_LENGTH (not 0 or 4 bytes; also what firmware before 2.6.5 answers to settings) |
 | `0x12` | SERVO_SET_ANGLE *(added 2026-10-05)* | `<B>` 0–180 | **App-only** (Navigate servo dial) | OK `<H>` pulse written (µs) · BAD_VALUE (> 180) · BUSY (a luff sweep is moving the servo) · NO_HARDWARE (no NavController or `servo_present` false) |
 

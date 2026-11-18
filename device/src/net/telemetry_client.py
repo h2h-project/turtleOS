@@ -34,6 +34,99 @@ except Exception:
 
 QUEUE_FILE = "telemetry_queue.json"
 QUEUE_MAX = 5000
+# At the cap, drop this many of the oldest readings in one rewrite, so a full
+# queue costs one file rewrite per QUEUE_TRIM new readings instead of one per
+# reading (the file is ~2 MB at the cap).
+QUEUE_TRIM = 500
+# Readings per batch POST. The server rejects batches over 1000
+# (hopeTurtles.org deviceApiController.js MAX_BATCH); small chunks also keep
+# each request short enough to finish over weak WiFi.
+FLUSH_CHUNK = 100
+# One flush_queue() call stops starting new chunks after this long, so the
+# background thread gets back to its loop; the next send carries on.
+FLUSH_BUDGET_MS = 90000
+_COPY_BLOCK = 4096
+
+# Queue state shared by every TelemetryClient instance (the scheduler and the
+# background thread each build their own) and by both threads.
+#   len     — lines in QUEUE_FILE, None until first counted
+#   drained — lines at the head of QUEUE_FILE already accepted by the server
+#             but not yet cut from the file (only during a flush)
+_qstate = {"len": None, "drained": 0}
+
+try:
+    import _thread
+    _qlock = _thread.allocate_lock()
+except Exception:
+    _qlock = None
+
+
+def _lock():
+    if _qlock is not None:
+        _qlock.acquire()
+
+
+def _unlock():
+    if _qlock is not None:
+        _qlock.release()
+
+
+def _count_lines():
+    """Non-blank lines in QUEUE_FILE (0 if absent). Caller holds the lock."""
+    n = 0
+    try:
+        with open(QUEUE_FILE, "r") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
+def queue_count():
+    """Readings still waiting to be sent. Used by every on-screen and
+    Bluetooth queue count, so a drain in progress counts down live."""
+    _lock()
+    try:
+        if _qstate["len"] is None:
+            _qstate["len"] = _count_lines()
+        return max(0, _qstate["len"] - _qstate["drained"])
+    finally:
+        _unlock()
+        _gc_collect()
+
+
+def _rewrite_tail(skip_bytes=0, skip_lines=0):
+    """Cut the head off QUEUE_FILE: drop the first skip_bytes bytes, then the
+    next skip_lines lines, and keep the rest byte-for-byte. Streams in blocks
+    (no JSON parsing) and replaces the file with tmp+rename, which is atomic
+    on LittleFS. Caller holds the lock. Returns the lines kept."""
+    import os as _os
+    tmp = QUEUE_FILE + ".tmp"
+    kept = 0
+    try:
+        with open(QUEUE_FILE, "rb") as src, open(tmp, "wb") as dst:
+            if skip_bytes:
+                src.seek(skip_bytes)
+            while skip_lines > 0:
+                if not src.readline():
+                    break
+                skip_lines -= 1
+            while True:
+                block = src.read(_COPY_BLOCK)
+                if not block:
+                    break
+                kept += block.count(b"\n")
+                dst.write(block)
+        _os.rename(tmp, QUEUE_FILE)
+        return kept
+    except OSError:
+        try:
+            _os.remove(tmp)
+        except Exception:
+            pass
+        return None
 
 
 def _gc_collect():
@@ -71,7 +164,6 @@ class TelemetryClient:
         self.device_id = (device_id or "").strip()
         self.device_key = (device_key or "").strip()
         self._last_error = ""
-        self._queue_len = None
 
     def last_error(self):
         return self._last_error or ""
@@ -174,7 +266,7 @@ class TelemetryClient:
         finally:
             _gc_collect()
 
-        self._queue_len = len(items)
+        _qstate["len"] = len(items)
         return items
 
     def _save_queue(self, q):
@@ -190,7 +282,7 @@ class TelemetryClient:
                         pass
             import os as _os
             _os.rename(tmp, QUEUE_FILE)
-            self._queue_len = len(q)
+            _qstate["len"] = len(q)
         except Exception:
             try:
                 import os as _os
@@ -203,28 +295,35 @@ class TelemetryClient:
     def enqueue(self, payload):
         """Append one reading to the queue.
         Direct append (safe: only the new line risks corruption on power loss).
-        Compacts via tmp+rename only when the cap is reached."""
+        At QUEUE_MAX the oldest QUEUE_TRIM readings are cut in one rewrite."""
         j = _json()
-        current = self._queue_len
-        if current is None:
-            self._load_queue()
-            current = self._queue_len or 0
-
-        if current >= QUEUE_MAX:
-            # Load, trim to (QUEUE_MAX - 1) most recent, append new item, save atomically.
-            q = self._load_queue()
-            q = q[-(QUEUE_MAX - 1):]
-            q.append(payload)
-            self._save_queue(q)
-        else:
-            try:
-                with open(QUEUE_FILE, "a") as f:
-                    f.write(j.dumps(payload) + "\n")
-                self._queue_len = current + 1
-            except Exception:
-                pass
-            finally:
-                _gc_collect()
+        try:
+            line = j.dumps(payload) + "\n"
+        except Exception:
+            return
+        _lock()
+        try:
+            if _qstate["len"] is None:
+                _qstate["len"] = _count_lines()
+            if _qstate["len"] >= QUEUE_MAX:
+                # Readings a flush has already delivered go first; they are
+                # the oldest anyway. A flush in progress sees drained reset
+                # and keeps its cursor valid by re-reading from the top.
+                drop = max(QUEUE_TRIM, _qstate["drained"])
+                kept = _rewrite_tail(skip_lines=drop)
+                if kept is not None:
+                    print("telemetry queue: full, dropped", _qstate["len"] - kept, "oldest readings")
+                    _qstate["len"] = kept
+                    _qstate["drained"] = 0
+                    _qstate["trimmed"] = _qstate.get("trimmed", 0) + 1
+            with open(QUEUE_FILE, "a") as f:
+                f.write(line)
+            _qstate["len"] += 1
+        except Exception:
+            pass
+        finally:
+            _unlock()
+            _gc_collect()
 
     # ----------------------------
     # HTTP Send (LOW MEM)
@@ -473,29 +572,126 @@ class TelemetryClient:
         self.enqueue(payload)
         return False, "queued: {}".format(last_msg)
 
-    def flush_queue(self):
-        """Drain all queued readings in one batch POST.
-        Keeps queue intact on failure so the next successful send retries.
-        Returns (ok: bool, sent: int) — sent is 0 and ok is True when the
-        queue was already empty (nothing to do, not a failed attempt)."""
-        q = self._load_queue()
-        if not q:
+    def _read_chunk(self, offset):
+        """Read up to FLUSH_CHUNK readings starting at byte offset.
+        Returns (items, lines, new_offset). Corrupt lines are skipped but
+        still consumed; a last line with no newline is still being written
+        and is left for next time."""
+        j = _json()
+        items = []
+        lines = 0
+        try:
+            with open(QUEUE_FILE, "rb") as f:
+                if offset:
+                    f.seek(offset)
+                while len(items) < FLUSH_CHUNK:
+                    raw = f.readline()
+                    if not raw or not raw.endswith(b"\n"):
+                        break
+                    offset += len(raw)
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    lines += 1
+                    try:
+                        obj = j.loads(stripped)
+                        if isinstance(obj, dict):
+                            items.append(obj)
+                    except Exception:
+                        pass
+        except OSError:
+            pass
+        return items, lines, offset
+
+    def _is_legacy_queue(self):
+        try:
+            with open(QUEUE_FILE, "rb") as f:
+                return f.read(1) == b"["
+        except OSError:
+            return False
+
+    def flush_queue(self, budget_ms=FLUSH_BUDGET_MS):
+        """Drain the queue in batch POSTs of FLUSH_CHUNK readings.
+
+        Walks the file with a byte cursor; each chunk counts as delivered once
+        the server answers 2xx. The delivered head is cut from the file in one
+        rewrite at the end (also after a failed chunk), so a 5000-reading
+        backlog costs one rewrite, not one per chunk. Readings appended
+        meanwhile are kept. A reset mid-drain resends the chunks since the
+        last rewrite; the server ignores the duplicates (INSERT IGNORE on
+        turtle + recorded_at).
+
+        Stops at the first failed chunk or once budget_ms has passed; the next
+        send or flush resumes from what is left.
+
+        Returns (ok: bool, sent: int). ok is True when the queue was empty or
+        at least one chunk was delivered (the API answered); sent counts the
+        queued lines delivered."""
+        if self._is_legacy_queue():
+            self._load_queue()  # migrates the old JSON-array file to JSONL
+
+        if queue_count() == 0:
             return True, 0
 
         _gc_collect()
-        print("telemetry queue: flushing", len(q), "buffered readings via batch")
+        total = queue_count()
+        print("telemetry queue: flushing", total, "buffered readings in chunks of", FLUSH_CHUNK)
 
-        ok, accepted, msg = self._post_batch(q)
-        self._last_error = msg
+        t0 = time.ticks_ms()
+        offset = 0
+        sent = 0
+        failed_msg = None
+        trims = _qstate.get("trimmed", 0)
+        while True:
+            items, lines, new_offset = self._read_chunk(offset)
+            if not lines:
+                break
+            if items:
+                ok, accepted, msg = self._post_batch(items)
+                self._last_error = msg
+                if not ok:
+                    failed_msg = msg
+                    break
+            # A cap trim during the POST rewrote the file under the cursor.
+            # Nothing is lost (the trimmed lines were the oldest, including
+            # this chunk); restart from the top of the new file.
+            _lock()
+            try:
+                if _qstate.get("trimmed", 0) != trims:
+                    trims = _qstate.get("trimmed", 0)
+                    offset = 0
+                else:
+                    offset = new_offset
+                    _qstate["drained"] += lines
+                sent += lines
+            finally:
+                _unlock()
+            if items:
+                print("telemetry queue: chunk sent ({}/{} accepted), {} left".format(
+                    accepted, len(items), queue_count()))
+            if time.ticks_diff(time.ticks_ms(), t0) > budget_ms:
+                print("telemetry queue: flush budget used, resuming on next send")
+                break
+            _gc_collect()
 
-        if ok:
-            self._print_send_stamp(
-                q[-1],
-                prefix="Batch Sent ({}/{} readings)".format(accepted, len(q)),
-                extra=msg if msg and msg != "OK" else None
-            )
-            self._save_queue([])
-            return True, len(q)
-        else:
-            print("telemetry queue: batch flush failed:", msg, "- will retry next send")
-            return False, 0
+        # Cut the delivered head off the file, keeping anything appended
+        # while the POSTs ran.
+        _lock()
+        try:
+            if _qstate.get("trimmed", 0) != trims:
+                offset = 0  # a cap trim already cut the head; cursor is stale
+            if offset:
+                kept = _rewrite_tail(skip_bytes=offset)
+                if kept is not None:
+                    _qstate["len"] = kept
+            _qstate["drained"] = 0
+        finally:
+            _unlock()
+            _gc_collect()
+
+        if failed_msg is not None:
+            print("telemetry queue: batch flush failed:", failed_msg,
+                  "- sent", sent, "this round, will retry next send")
+            return sent > 0, sent
+        print("telemetry queue: flushed", sent, "readings,", queue_count(), "left")
+        return True, sent

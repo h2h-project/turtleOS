@@ -16,8 +16,9 @@ NA = {"i": 0x7FFFFFFF, "H": 0xFFFF, "h": 0x7FFF, "I": 0xFFFFFFFF, "B": 0xFF}
 LAYOUTS = {
     "0101": ("Contract info", "<BB", ["contract_version", "turtle_mode"]),
     "0110": ("Position", "<iiBBH", ["lat_e7", "lon_e7", "sats", "fix_quality", "fix_age_s"]),
-    "0111": ("Nav", "<HHIhBBBh", ["heading_x10", "bearing_x10", "dist_m", "xte_m",
-                                  "nav_state", "fault", "trim", "compass_offset_deg"]),
+    "0111": ("Nav", "<HHIhBBBhB", ["heading_x10", "bearing_x10", "dist_m", "xte_m",
+                                   "nav_state", "fault", "trim", "compass_offset_deg",
+                                   "resume_stage"]),
     "0112": ("Targets", "<iiiiB", ["set_lat_e7", "set_lon_e7", "mission_lat_e7",
                                    "mission_lon_e7", "active_source"]),
     "0113": ("Sail", "<HHBBHB", ["sail_x10", "wind_x10", "sweep_state", "confidence_pct",

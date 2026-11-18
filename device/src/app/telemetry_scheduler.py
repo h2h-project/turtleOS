@@ -157,17 +157,12 @@ class TelemetryScheduler:
 
     @staticmethod
     def queue_size():
+        # Shared with the sender, so a drain in progress counts down live.
         try:
-            n = 0
-            with open(QUEUE_FILE, "r") as f:
-                for line in f:
-                    if line.strip():
-                        n += 1
-            return n
+            from src.net.telemetry_client import queue_count
+            return queue_count()
         except Exception:
             return 0
-        finally:
-            _gc_collect()
 
     def _dbg_print(self, *parts):
         try:
@@ -766,7 +761,13 @@ class TelemetryScheduler:
         if cfg and cfg.get("turtle_mode", False):
             try:
                 from src.nav.state_machine import get_state as _nav_get_state
+                from src.nav.state_machine import resume_stage as _nav_resume
                 payload["machine_state"] = _nav_get_state()
+                # Journey resume stage (BATTERY / GPS / WIND) while the turtle
+                # works its way back to SAIL_NAV; flags is stored verbatim.
+                _stage = _nav_resume()
+                if _stage:
+                    payload["flags"]["resume_stage"] = _stage
             except Exception:
                 pass
 

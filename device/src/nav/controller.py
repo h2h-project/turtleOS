@@ -5,11 +5,43 @@
 # the 200-500 ms autopilot spec), and returns immediately when not due.
 # All servo writes are gated on construction (servo passed only when
 # cfg["servo_present"]) and clamped to the physical stop angles.
+#
+# Resuming a journey (review B3/B4/B9/B10). While a journey is open the
+# turtle reaches SAIL_NAV only through three resume stages, run in ACQUIRE
+# in priority order:
+#   1. BATTERY  wait until battery >= resume_batt_pct (sail feathered once;
+#               the servo rail then idles off). No INA219 = pass.
+#   2. GPS      wait for a fresh fix. No timeout: a turtle waiting for a fix
+#               is never put into SAFE.
+#   3. WIND     one luff sweep, skipped if the wind was solved less than
+#               luff_resweep_s ago; a sweep that can't run is logged and
+#               skipped (steering doesn't use the wind angle yet).
+# then SAIL_NAV and steering. The stages start by themselves whenever the
+# turtle is in ACQUIRE with a journey open: after a reboot or crash, on a
+# journey start, when the battery drops below low_batt_pct while sailing,
+# and when SAFE clears. A battery drop during stages 2-3 restarts stage 1.
 
 import time
 
 from src.nav import state_machine as sm
 from src.nav import gpsfix
+
+# Resume stages (snapshot()["resume"], BLE 0111 resume_stage 1-3).
+RESUME_BATTERY = "BATTERY"
+RESUME_GPS = "GPS"
+RESUME_WIND = "WIND"
+
+_FRESH_FIX_MS = 5000        # a fix this recent counts as "have GPS"
+_SAFE_HOLDOFF_MS = 30000    # SAFE lasts at least this long before it can clear
+_STAGE_LOG_MS = 60000       # how often a waiting stage prints its progress
+
+
+def _journey_open():
+    try:
+        from src.app import journey
+        return bool(journey.active())
+    except Exception:
+        return False
 
 
 class NavController:
@@ -39,6 +71,11 @@ class NavController:
         # (us/s; 0 = jump straight there). config.py.
         self._glide_us_s = int(cfg.get("servo_glide_us_s", 4000))
         self.fault = None
+        self._stage = None             # RESUME_* while resuming (sm._resume)
+        self._stage_log_ms = None      # next "still waiting" print
+        self._safe_since_ms = None     # when SAFE was entered
+        self._wind_solved_ms = None    # when a sweep last produced a wind angle
+        self._last_state = sm.get_state()
 
         # imu: the shared GY87 built at boot (src/drivers/gy87.py). Its mag is
         # injected so HeadingSource never re-probes; with no GY-87 it falls
@@ -77,17 +114,36 @@ class NavController:
         # reused snapshot dict — no per-tick allocation
         self._snap = {"state": sm.get_state(), "heading": None, "sail": None,
                       "wind": None, "wp_dist_m": None, "trim": "CRUISE",
-                      "fault": None, "sweeping": False}
+                      "fault": None, "sweeping": False, "resume": None}
+
+    # The resume stage lives in the state machine module so telemetry can
+    # read it without a NavController handle.
+    @property
+    def _stage(self):
+        return sm._resume[0]
+
+    @_stage.setter
+    def _stage(self, v):
+        sm._resume[0] = v
 
     # ------------------------------------------------------------------
     # Public API for screens / main loop
     # ------------------------------------------------------------------
 
     def begin_luff_sweep(self):
-        """Start a sweep (ACQUIRE first-fix, or manual re-sweep in SAIL_NAV)."""
+        """Start a sweep (ACQUIRE first-fix, or manual re-sweep in SAIL_NAV).
+        Refused while a journey resume waits for battery or GPS: those come
+        first."""
         if not self._autopilot or sm.get_state() not in (sm.ACQUIRE, sm.SAIL_NAV):
             return False
+        if self._stage in (RESUME_BATTERY, RESUME_GPS):
+            return False
         return self._sweep.start()
+
+    def resume_stage(self):
+        """RESUME_BATTERY / RESUME_GPS / RESUME_WIND while a journey is
+        resuming in ACQUIRE, else None."""
+        return self._stage
 
     def sweeping(self):
         return self._sweep.active()
@@ -205,6 +261,7 @@ class NavController:
         s["wind"] = self._sweep.wind_angle()
         s["fault"] = self.fault
         s["sweeping"] = self._sweep.active()
+        s["resume"] = self._stage
         lat, lon, _age = gpsfix.get()
         wp = self._wps.current()
         s["wp_dist_m"] = None
@@ -255,24 +312,32 @@ class NavController:
             return
 
         state = sm.get_state()
+        if state != self._last_state:
+            self._state_changed(state, now)
         if state == sm.ACQUIRE:
-            if self._sweep.active():
-                self._sweep_status = self._sweep.step(now)
+            if self._stage is None and _journey_open():
+                self._abort_sweep("journey resume")   # battery and GPS come first
+                self._set_stage(RESUME_BATTERY, now, "journey open")
+            if self._stage is not None:
+                self._resume_cycle(cfg, now)
+            elif self._sweep.active():
+                # A sweep started by hand (State screen / Wrangler), no journey.
+                self._step_sweep(now)
                 if self._sweep_status["done"]:
-                    sm.set_state(sm.SAIL_NAV, "wind angle solved")
-                    self._pid.reset()
-                    self._sailnav_since_ms = now
-                    self._schedule_resweep(cfg, now)
+                    self._enter_sail_nav(cfg, now, "wind angle solved")
         elif state == sm.SAIL_NAV:
             if self._sweep.active():
                 # re-sweep (manual or scheduled) pauses steering while it runs
-                self._sweep_status = self._sweep.step(now)
+                self._step_sweep(now)
                 if self._sweep_status["phase"] in ("done", "failed"):
                     self._schedule_resweep(cfg, now)
             else:
                 self._sail_nav_cycle(cfg, now)
-        elif state in (sm.ARRIVAL, sm.SAFE):
+        elif state == sm.ARRIVAL:
             self._feather()
+        elif state == sm.SAFE:
+            self._feather()
+            self._safe_cycle(now)
 
     # ------------------------------------------------------------------
     # Internals
@@ -295,12 +360,146 @@ class NavController:
         except Exception:
             pass
 
+    def _state_changed(self, state, now):
+        """Bookkeeping when the state moved, by this controller or by
+        anyone else (a journey start or end in actions.py)."""
+        self._last_state = state
+        if state != sm.ACQUIRE and self._stage is not None:
+            self._stage = None
+        if state == sm.SAFE:
+            if self._safe_since_ms is None:
+                self._safe_since_ms = now
+        else:
+            self._safe_since_ms = None
+            if state != sm.SAIL_NAV:
+                self.fault = None
+
+    def _set_stage(self, stage, now, why):
+        self._stage = stage
+        self._stage_log_ms = time.ticks_add(now, _STAGE_LOG_MS)
+        print("[NAV] resume: {} ({})".format(stage, why))
+
+    def _stage_log_due(self, now):
+        if self._stage_log_ms is None or time.ticks_diff(now, self._stage_log_ms) >= 0:
+            self._stage_log_ms = time.ticks_add(now, _STAGE_LOG_MS)
+            return True
+        return False
+
+    def _step_sweep(self, now):
+        self._sweep_status = self._sweep.step(now)
+        if self._sweep_status.get("done") and self._sweep.wind_angle() is not None:
+            self._wind_solved_ms = now
+
+    def _abort_sweep(self, why):
+        if self._sweep.active():
+            self._sweep.abort(why)
+
+    def _enter_sail_nav(self, cfg, now, reason):
+        """The one way into SAIL_NAV: fresh PID, GPS-loss timer starting
+        now, periodic re-sweep armed."""
+        if not sm.set_state(sm.SAIL_NAV, reason):
+            return False
+        self._last_state = sm.SAIL_NAV
+        self._stage = None
+        self._pid.reset()
+        self._last_nav_ms = None
+        self._sailnav_since_ms = now
+        self._feather_applied = False
+        self.fault = None
+        self._schedule_resweep(cfg, now)
+        return True
+
+    def _resume_cycle(self, cfg, now):
+        """One step of the journey resume: battery, then GPS, then wind."""
+        if not _journey_open():
+            print("[NAV] resume cancelled: no journey open")
+            self._abort_sweep("journey closed")
+            self._stage = None
+            return
+
+        pct = self._battery_pct()
+        low = int(cfg.get("low_batt_pct", 20))
+        need = max(low, int(cfg.get("resume_batt_pct", 40)))
+
+        if self._stage != RESUME_BATTERY and pct is not None and pct < low:
+            self._abort_sweep("battery low")
+            self._set_stage(RESUME_BATTERY, now, "battery {}% < {}%".format(pct, low))
+
+        if self._stage == RESUME_BATTERY:
+            self._snap["trim"] = "FEATHER"
+            self._feather()
+            if pct is not None and pct < need:
+                if self._stage_log_due(now):
+                    print("[NAV] resume: waiting for battery {}% (need {}%)".format(pct, need))
+                return
+            self._snap["trim"] = "CRUISE"
+            self._set_stage(RESUME_GPS, now,
+                            "battery unknown" if pct is None else "battery {}%".format(pct))
+
+        if self._stage == RESUME_GPS:
+            _lat, _lon, age = gpsfix.get()
+            if age is None or age > _FRESH_FIX_MS:
+                if self._stage_log_due(now):
+                    print("[NAV] resume: waiting for a GPS fix")
+                return
+            if self._wps.current() is None or self._wps.is_final_reached():
+                # Nothing to sail to (SAIL_NAV goes to SAFE) or already
+                # there (ARRIVAL): no point spending a sweep on it.
+                self._enter_sail_nav(cfg, now, "journey resumed, no target to sail")
+                return
+            interval_ms = int(cfg.get("luff_resweep_s", 600)) * 1000
+            if self._wind_solved_ms is not None and \
+                    time.ticks_diff(now, self._wind_solved_ms) < interval_ms:
+                self._enter_sail_nav(cfg, now, "journey resumed, wind known")
+                return
+            if not self._sweep.start():
+                print("[NAV] resume: wind sweep unavailable ({})".format(self._sweep.error))
+                self._enter_sail_nav(cfg, now, "journey resumed, no wind sweep")
+                return
+            self._set_stage(RESUME_WIND, now, "GPS fix")
+            return
+
+        if self._stage == RESUME_WIND:
+            if self._sweep.active():
+                self._step_sweep(now)
+                if self._sweep_status["phase"] not in ("done", "failed"):
+                    return
+                if self._sweep_status["phase"] == "failed":
+                    print("[NAV] resume: wind sweep failed ({})".format(self._sweep.error))
+            self._enter_sail_nav(cfg, now, "journey resumed")
+
+    def _safe_cycle(self, now):
+        """SAFE clears by itself once its cause has gone: after the hold-off,
+        a fresh fix and a target to sail to put the turtle back in ACQUIRE.
+        With a journey open the resume stages then take it from there."""
+        if self._safe_since_ms is None:
+            self._safe_since_ms = now
+        if time.ticks_diff(now, self._safe_since_ms) < _SAFE_HOLDOFF_MS:
+            return
+        _lat, _lon, age = gpsfix.get()
+        if age is None or age > _FRESH_FIX_MS or self._wps.current() is None:
+            return
+        if sm.set_state(sm.ACQUIRE, "SAFE cleared ({} gone)".format(self.fault)):
+            self._state_changed(sm.ACQUIRE, now)
+
     def _schedule_resweep(self, cfg, now):
         """Arm the periodic wind re-calibration (PDF: ~every 10 minutes)."""
         interval_s = int(cfg.get("luff_resweep_s", 600))
         self._next_sweep_ms = time.ticks_add(now, interval_s * 1000)
 
     def _sail_nav_cycle(self, cfg, now):
+        # Battery first: below low_batt_pct, feather and drop to ACQUIRE.
+        # With a journey open the resume stages bring it back once the
+        # battery reaches resume_batt_pct (no chatter around one threshold).
+        pct = self._battery_pct()
+        if pct is not None and pct < int(cfg.get("low_batt_pct", 20)):
+            self._snap["trim"] = "FEATHER"
+            self._feather()
+            sm.set_state(sm.ACQUIRE, "battery {}%".format(pct))
+            self._state_changed(sm.ACQUIRE, now)
+            return
+        self._snap["trim"] = "CRUISE"
+
         # Scheduled wind re-calibration — runs before steering; on refusal
         # (e.g. no magnet) just re-arm rather than hammering every cycle.
         if self._next_sweep_ms is not None and \
@@ -335,13 +534,6 @@ class NavController:
             self._enter_safe("no waypoints configured")
             return
 
-        # Battery failsafe: feather below threshold, resume on recharge
-        pct = self._battery_pct()
-        if pct is not None and pct < int(cfg.get("low_batt_pct", 20)):
-            self._snap["trim"] = "FEATHER"
-            self._feather()
-            return
-        self._snap["trim"] = "CRUISE"
         self._feather_applied = False
 
         heading = self._heading.heading_deg()
@@ -397,5 +589,7 @@ class NavController:
     def _enter_safe(self, reason):
         self.fault = reason
         sm.set_state(sm.SAFE, reason)
+        self._last_state = sm.SAFE
+        self._safe_since_ms = None     # _safe_cycle stamps it on its clock
         self._feather_applied = False
         self._feather()

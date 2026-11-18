@@ -8,7 +8,8 @@
 # sweep against a simulated fluttering sail (with whole-degree servo
 # quantization), and a full NavController mission:
 # ACQUIRE → sweep → SAIL_NAV (PID steering) → waypoint advance → ARRIVAL,
-# plus GPS-loss → SAFE.
+# plus GPS-loss → SAFE, and the journey resume after a reboot (battery →
+# GPS fix → wind sweep → SAIL_NAV) with SAFE recovery.
 
 import sys
 import os
@@ -130,8 +131,10 @@ def test_mission():
         "nav_cycle_ms": 300, "arrival_radius_m": 300, "gps_loss_safe_s": 120,
         "low_batt_pct": 20, "sail_min_deg": 10, "sail_max_deg": 170,
         "luff_sweep_dps": 8, "luff_threshold_mult": 5.0,
-        "waypoints": [[31.36, 34.27], [31.40, 34.20]], "compass_offset_deg": 0,
+        "mission_waypoints": [[31.36, 34.27], [31.40, 34.20]], "compass_offset_deg": 0,
     }
+    import src.nav.controller as ctl_mod
+    ctl_mod._journey_open = lambda: False       # no journey: old manual path
     servo = FakeServo()
     c = NavController(cfg, i2c=None, gps=None, servo=servo, battery=None)
     c._enc = FakeEnc(servo, 95.0)
@@ -160,7 +163,7 @@ def test_mission():
         cmds.add(int(servo.cmd))
     assert cmds != {90}, "PID must steer"
 
-    for wp in cfg["waypoints"]:
+    for wp in cfg["mission_waypoints"]:
         for _ in range(2):
             CLOCK[0] += 300
             gpsfix.update(wp[0], wp[1])
@@ -185,9 +188,182 @@ def test_mission():
     print("mission OK (ACQUIRE→sweep→SAIL_NAV→ARRIVAL; GPS loss→SAFE)")
 
 
+def test_resume():
+    """A journey open at boot: battery first, then a GPS fix, then the wind
+    sweep, then SAIL_NAV. Battery drops send it back to stage 1; SAFE clears
+    when the fix returns."""
+    import src.nav.waypoints as wpm
+    wpm._STATE_PATH = os.path.join(tempfile.mkdtemp(), "nav_state.json")
+    from src.nav import state_machine as sm
+    from src.nav import gpsfix
+    import src.nav.controller as ctl_mod
+    from src.nav.controller import NavController
+    from src.nav.luff import LuffSweep
+
+    random.seed(5)
+    cfg = {
+        "nav_cycle_ms": 300, "arrival_radius_m": 300, "gps_loss_safe_s": 120,
+        "low_batt_pct": 20, "resume_batt_pct": 40, "luff_resweep_s": 600,
+        "sail_min_deg": 10, "sail_max_deg": 170,
+        "luff_sweep_dps": 8, "luff_threshold_mult": 5.0,
+        "mission_waypoints": [[31.40, 34.20]], "compass_offset_deg": 0,
+    }
+    JOURNEY = [False]
+    PCT = [30]
+    ctl_mod._journey_open = lambda: JOURNEY[0]
+
+    def make():
+        servo = FakeServo()
+        c = NavController(cfg, i2c=None, gps=None, servo=servo, battery=None)
+        c._enc = FakeEnc(servo, 95.0)
+        c._heading = FakeHeading()
+        c._sweep = LuffSweep(servo, c._enc, speed_dps=8, threshold_mult=5.0,
+                             sail_min=10, sail_max=170)
+        c._battery_pct = lambda: PCT[0]
+        return c, servo
+
+    boat = (31.355, 34.272)
+
+    def run(c, ms, fix, until=None, step=25):
+        end = CLOCK[0] + ms
+        while CLOCK[0] < end:
+            CLOCK[0] += step
+            if fix:
+                gpsfix.update(*boat)
+            c.tick(cfg)
+            if until is not None and until():
+                return True
+        return until is None
+
+    gpsfix._fix[:] = [None, None, None, 0]
+    sm._state[0] = sm.BOOT
+    c, servo = make()
+    sm.set_state(sm.ACQUIRE, "boot complete")
+
+    # No journey: ACQUIRE idles, no stage.
+    run(c, 5000, fix=False)
+    assert sm.get_state() == sm.ACQUIRE and c.resume_stage() is None
+
+    # Journey open, battery low: stage 1, feathered, nothing else moves.
+    JOURNEY[0] = True
+    servo.cmd = 33.0
+    run(c, 1000, fix=False)
+    assert c.resume_stage() == "BATTERY", c.resume_stage()
+    assert sm.resume_stage() == "BATTERY"
+    assert servo.cmd == 90.0                    # feathered once
+    assert not c.begin_luff_sweep()             # battery first
+    assert c.snapshot()["resume"] == "BATTERY"
+    run(c, 600000, fix=True, step=300)          # 10 min, fix or not
+    assert c.resume_stage() == "BATTERY" and not c.sweeping()
+    assert servo.cmd == 90.0
+
+    # Charged past resume_batt_pct (not just low_batt_pct): stage 2.
+    PCT[0] = 25
+    run(c, 2000, fix=False, step=300)
+    assert c.resume_stage() == "BATTERY"        # hysteresis: 25 < 40
+    gpsfix._fix[:] = [None, None, None, 0]
+    PCT[0] = 45
+    run(c, 1000, fix=False, step=300)
+    assert c.resume_stage() == "GPS", c.resume_stage()
+
+    # No fix for 10 minutes: still waiting, never SAFE, no sweep.
+    run(c, 600000, fix=False, step=300)
+    assert sm.get_state() == sm.ACQUIRE and c.resume_stage() == "GPS"
+    assert not c.sweeping()
+
+    # Battery dips while waiting for GPS: back to stage 1.
+    PCT[0] = 15
+    run(c, 1000, fix=False, step=300)
+    assert c.resume_stage() == "BATTERY"
+    PCT[0] = 45
+    run(c, 1000, fix=False, step=300)
+    assert c.resume_stage() == "GPS"
+
+    # Fix arrives: wind sweep, then SAIL_NAV with the re-sweep armed.
+    assert run(c, 2000, fix=True, until=lambda: c.resume_stage() == "WIND")
+    assert c.sweeping()
+    assert run(c, 600000, fix=True, until=lambda: sm.get_state() == sm.SAIL_NAV)
+    assert c.resume_stage() is None
+    assert abs(c.wind_angle() - 95.0) < 8, c.wind_angle()
+    nxt = c.seconds_to_next_sweep()
+    assert nxt is not None and 590 <= nxt <= 600, nxt     # B10
+
+    cmds = set()
+    for _ in range(20):
+        CLOCK[0] += 300
+        gpsfix.update(*boat)
+        c.tick(cfg)
+        cmds.add(int(servo.cmd))
+    assert cmds != {90}, "PID must steer"
+
+    # Low battery while sailing: feather, ACQUIRE, stage 1 (B9: no chatter).
+    PCT[0] = 19
+    run(c, 1000, fix=True, step=300)
+    assert sm.get_state() == sm.ACQUIRE and c.resume_stage() == "BATTERY"
+    assert servo.cmd == 90.0
+    PCT[0] = 30
+    run(c, 3000, fix=True, step=300)
+    assert c.resume_stage() == "BATTERY"        # 30 < 40, stays put
+    # Recharged; the wind was solved minutes ago, so no second sweep.
+    PCT[0] = 45
+    assert run(c, 3000, fix=True, until=lambda: sm.get_state() == sm.SAIL_NAV, step=300)
+    assert not c.sweeping()
+
+    # GPS lost at sea: SAFE, then clears once the fix is back (B4).
+    t0 = CLOCK[0]
+    assert run(c, 300000, fix=False, until=lambda: sm.get_state() == sm.SAFE, step=300)
+    assert c.fault == "gps loss" and CLOCK[0] - t0 >= 120000
+    run(c, 60000, fix=False, step=300)
+    assert sm.get_state() == sm.SAFE            # no fix, stays SAFE
+    assert run(c, 60000, fix=True, until=lambda: sm.get_state() == sm.SAIL_NAV, step=300)
+    assert c.fault is None
+
+    # Journey ends (actions._stand_down): ACQUIRE, no stage, stays there.
+    sm.set_state(sm.ACQUIRE, "journey ended")
+    JOURNEY[0] = False
+    run(c, 5000, fix=True, step=300)
+    assert sm.get_state() == sm.ACQUIRE and c.resume_stage() is None
+
+    # Journey started from ARRIVAL goes through ACQUIRE and the stages.
+    sm._state[0] = sm.ARRIVAL
+    assert sm.set_state(sm.ACQUIRE, "journey started")
+    JOURNEY[0] = True
+    assert run(c, 600000, fix=True, until=lambda: sm.get_state() == sm.SAIL_NAV, step=50)
+
+    # Reboot mid-journey with a wind angle long gone: a fresh controller
+    # sweeps again before steering.
+    gpsfix._fix[:] = [None, None, None, 0]
+    sm._state[0] = sm.BOOT
+    c, servo = make()
+    sm.set_state(sm.ACQUIRE, "boot complete")
+    run(c, 1000, fix=False, step=300)
+    assert c.resume_stage() == "GPS"            # battery 45% passes at once
+    assert run(c, 2000, fix=True, until=lambda: c.resume_stage() == "WIND")
+    assert run(c, 600000, fix=True, until=lambda: sm.get_state() == sm.SAIL_NAV)
+
+    # No battery monitor: stage 1 passes. Autopilot off: nothing moves.
+    sm._state[0] = sm.BOOT
+    c, servo = make()
+    c._battery_pct = lambda: None
+    cfg_off = dict(cfg, autopilot_sail=False)
+    sm.set_state(sm.ACQUIRE, "boot complete")
+    servo.cmd = 33.0
+    for _ in range(100):
+        CLOCK[0] += 300
+        gpsfix.update(*boat)
+        c.tick(cfg_off)
+    assert servo.cmd == 33.0 and sm.get_state() == sm.ACQUIRE
+    run(c, 1000, fix=True, step=300)
+    assert c.resume_stage() in ("WIND", None)
+
+    sm._resume[0] = None
+    print("resume OK (battery → GPS → wind → SAIL_NAV; low battery and SAFE recover)")
+
+
 if __name__ == "__main__":
     test_bearing()
     test_state_machine()
     test_luff_sweep()
     test_mission()
+    test_resume()
     print("ALL NAV SIM TESTS PASSED")

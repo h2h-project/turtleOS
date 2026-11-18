@@ -6,7 +6,7 @@ from src.ui.thermobar import ThermoBar
 # Single source of truth for the firmware version.  Referenced by the Booter
 # instance for the OLED label, and importable by the headless boot path in
 # main.py so the version is logged even when no OLED is present.
-VERSION_NUM = "2.6.5"
+VERSION_NUM = "2.6.6"
 VERSION = "turtleOS version " + VERSION_NUM
 
 
@@ -456,6 +456,11 @@ class Booter:
             # under-logo footer entirely rather than printing the label twice.
             self.step_ticker = self.make_dot_ticker(label, p=p_prev) if show_footer else None
             logger("[BOOT] " + label)
+            try:
+                from src.app import watchdog
+                watchdog.feed()
+            except Exception:
+                pass
 
             # Per-step pause (set to 0 to go full speed)
             if pause_ms > 0:

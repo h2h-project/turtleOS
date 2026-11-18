@@ -41,6 +41,7 @@ device/               ← everything deployed to the microcontroller
     │   ├── main_pico.py          ← Pico-only override (legacy)
     │   ├── booter.py             ← animated boot progress bar
     │   ├── boot_guard.py         ← debug-mode REPL gate
+    │   ├── watchdog.py           ← hardware watchdog + crash log/reset (see Watchdog and crash recovery)
     │   ├── rtc_sync.py
     │   ├── telemetry_scheduler.py
     │   ├── telemetry_state.py
@@ -170,12 +171,26 @@ Sequential steps run inside an animated `Booter` progress bar on the OLED (`devi
 After the pipeline, `main.py`:
 1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`) — in turtle_mode this is just a blank fill, since `TurtleWaitingScreen` (built in step 8) draws the real first frame itself once `run()`'s main loop starts.
 2. Checks HAL for `btn_pin()` — if missing, shows an error and waits 30 s then auto-resets.
-3. Calls `src.app.main.run(...)`, which is the permanent event loop.
+3. Calls `src.app.main.run(...)`, which is the permanent event loop. If it raises, the turtle logs the crash and resets (see [Watchdog and crash recovery](#watchdog-and-crash-recovery-srcappwatchdogpy-turtleos-266)).
 
 ### Debug mode gate (`boot_guard.py`)
 Hold the button **at power-on for 2 seconds** → boot halts and drops to the MicroPython REPL instead of running the app. A file named `debug_mode` on the flash also triggers this. To exit: `import os, machine; os.remove('debug_mode'); machine.reset()`.
 
 The button is sampled by `check_hold_early()` as the **first executable line of `device/main.py`** — before the HAL board-detection block, the two I2C bus scans and `init_oled()`. Those used to run first, so the 2 s hold window only started once they finished (seconds after power-on, with no screen feedback), and "hold at power-on" reliably missed. `check_hold_early()` returns a bool over serial only; `enter_debug(oled)` runs later (after `init_oled()`) to draw "De-Bug Mode / Click to reboot" and wait. A normal boot with the button untouched pays nothing — it returns on the first `btn.value()` read. This early sample also means a brownout/crash **boot-loop** can be caught: hold the button and the next loop iteration halts within a few hundred ms.
+
+### Watchdog and crash recovery (`src/app/watchdog.py`, turtleOS 2.6.6)
+
+The ESP32-S3's hardware watchdog (`machine.WDT`) resets the chip if the main loop stops feeding it. `device/main.py` starts it right after the boot guard at 120 s for the boot pipeline (`Booter.boot_pipeline()` feeds once per step), then tightens it to `watchdog_timeout_s` (default 60) just before `run()`. It is fed from `_bg_tick()` and from every `AirBuddyButton.poll_action()`, which covers every screen loop, plus the bench sweep's sample loop (`wind_finder.py`), which sleeps without polling. **Never feed it from the background thread**: a hung main loop must starve it. A new blocking loop that neither polls the button nor calls `tick_fn` for more than ~20 s needs its own `watchdog.feed()`.
+
+A crash (an exception out of `run()`) doesn't wait for the countdown: `watchdog.handle_crash(e)` appends the traceback to `/crash.txt` (capped at 8 kB, newest kept), bumps `/crash_count` and resets after 3 s. From the 4th crash in a row it waits 10 minutes before each reset; it never halts. `_bg_tick` clears the count after 5 minutes of healthy running. Each boot prints `[BOOT] reset cause: …` and appends it to `/reset_log.txt`. All three files are device-owned.
+
+**The watchdog can't be stopped once started**, and it keeps running at the REPL and across a soft reset. `watchdog.relax()` stretches it to 24 h instead. That happens on Ctrl-C out of `run()`, in debug mode after a soft reset, and as the first `exec` of the Synkers and installers. A by-hand `mpremote` session against a running turtle must do the same first, or the board resets within a minute:
+
+```bash
+mpremote connect auto exec "from src.app import watchdog; watchdog.relax()"
+```
+
+Debug mode (button held at power-on) never starts the watchdog, and still breaks a crash loop. `watchdog_enabled: false` restores the old behaviour for bench debugging: no watchdog, and a crash stays at the REPL. Tests: `cd device && python3 ../tests/watchdog_host.py` on the laptop; `tests/wdt_spike.py` (run once per MicroPython build: confirms the timeout can be changed and shows the reset cause), `tests/wdt_hang.py` and `tests/wdt_crash.py` on the board.
 
 ---
 
@@ -361,6 +376,14 @@ mapping stands (single advances, double toggles GPS).
   drains the UART itself only when the cache is stale (airOS), publishing what it reads. A screen that reads
   NMEA without publishing silently strips lat/lon from every stamp taken while it is
   open.
+- The queue drains in batches of `FLUSH_CHUNK` (100) readings, well under the
+  server's 1000-per-batch limit (`flush_queue()` in `src/net/telemetry_client.py`).
+  Delivered readings are cut from the file once per round, not per chunk; a
+  reset mid-round resends a few chunks, which the server ignores as
+  duplicates. At `QUEUE_MAX` (5000) the oldest 500 are dropped in one rewrite.
+  Count the queue with `telemetry_client.queue_count()`, not by reading the
+  file: it excludes readings already delivered in a round still running.
+  Host test: `cd device && python3 ../tests/telemetry_queue_host.py`.
 - `device/telemetry_queue.json` is **device-owned**. The sync/install scripts exclude
   it (along with `telemetry_last_sent.json`) from the rsync stage — staging it would
   overwrite the board's unsent readings on the next upload.
@@ -409,7 +432,7 @@ Runs as a cooperative tick (called from the main loop, never blocking). Posts to
 
 **Battery current sign — one rule everywhere:** `ina_current_ma` (telemetry JSON) and `current_mA` (Wrangler Power `0113`) are the INA219's **raw** reading, `INA219.current_ma()`: **negative = charging** (USB/solar into the pack), **positive = discharging** (the XIAO drawing from it). Never flip it on the turtle or on the wire. The waiting screen is the reference: bolt when `current_ma <= 0`, minus bar otherwise. Anything that wants "positive = charging" converts at the point of use: `INA219.charge_ma()` on the turtle, `chargeMaFromIna()` (`utils/batteryCurrent.js`) on hopeturtles.org, `Format.charge()` in Wrangler.
 
-**`flags`:** `_build_full_payload()` always emits `flags.auto_log` / `flags.manual_registry`, and — while an operator journey is open — `flags.journey_id` (see [Journey tagging](#journey-tagging)). The whole `flags` object is stored verbatim in `raw_data.flags`.
+**`flags`:** `_build_full_payload()` always emits `flags.auto_log` / `flags.manual_registry`, and — while an operator journey is open — `flags.journey_id` (see [Journey tagging](#journey-tagging)). While a journey is resuming, `flags.resume_stage` (`BATTERY` / `GPS` / `WIND`). The whole `flags` object is stored verbatim in `raw_data.flags`.
 
 ---
 
@@ -422,8 +445,10 @@ on this same machine** at:
 
 ```
 /home/russs/WebstormProjects/hopeTurtles.org      ← Node/Express app, the API host
-/home/russs/WebstormProjects/turtle_body          ← sibling project (hardware/body)
+/home/russs/PycharmProjects/turtle_body           ← sibling project (hardware/body CAD + Turtle_Sim)
 ```
+
+**Turtle_Sim** (the buoyancy workbench: flotation, trim and stability from measured component masses) lives in `turtle_body`, not here: `sim/turtle_sim/`, launched with `./run_sim.sh` from that repo's root (serves `127.0.0.1:8765`). It is documented in section 20 of `turtle_body/CLAUDE.md` and in `turtle_body/sim/README.md`. `tests/nav_sim_host.py` in this repo is unrelated: it is the host-side simulation of the nav stack.
 
 Consult it directly when a question is about the wire protocol, what the server
 sends back, or the database. Key files there:
@@ -499,6 +524,34 @@ monotonic per turtle, sortable, allocatable with no server round-trip. The
 `JOURNEY_START`/`JOURNEY_END` (both through `actions.journey_start/end`) open a
 journey (needs a GPS fix; stamps `set_departure`) and close it (stamps
 `set_arrival`; a lost fix still ends it, with `arrival: null`).
+
+**Journey resume (turtleOS 2.6.6, review B3/B4/B9/B10).** Starting a journey
+puts the turtle in **ACQUIRE**, from any state, not straight into SAIL_NAV.
+Whenever the turtle is in ACQUIRE with a journey open, `NavController` works
+through three **resume stages** in priority order, then enters SAIL_NAV
+itself (`_enter_sail_nav()`, the only way in: PID reset, GPS-loss timer
+started, periodic re-sweep armed):
+
+1. **BATTERY**: waits for battery ≥ `resume_batt_pct` (default 40). The sail
+   is feathered once and the servo rail then idles off. No INA219 = passes.
+2. **GPS**: waits for a fix under 5 s old. No timeout; a turtle waiting for a
+   fix never goes to SAFE.
+3. **WIND**: one luff sweep, skipped when the wind was solved less than
+   `luff_resweep_s` ago or no target remains; a sweep that can't run (no
+   magnet/encoder) is logged and skipped.
+
+The same path covers a reboot or crash mid-journey (`/journey_state.json`
+survives; boot logs `[NAV] journey <id> open at boot: resuming`), a journey
+start, a battery drop below `low_batt_pct` while sailing (feather, back to
+ACQUIRE, stage 1; resuming needs `resume_batt_pct`, so no chatter around one
+threshold), and SAFE: SAFE clears to ACQUIRE by itself after 30 s once a
+fresh fix and a target are back. A battery drop during stages 2–3 restarts
+stage 1. Ending a journey drops SAIL_NAV, ARRIVAL or SAFE to ACQUIRE. While
+waiting for battery or GPS, `NAV_LUFF_SWEEP` answers WRONG_STATE (ACQUIRE).
+The stage shows on the State screen header (`ACQUIRE BATT 32%`), in
+Bluetooth Nav `0111` `resume_stage`, and in telemetry as
+`flags.resume_stage`; every step prints `[NAV] resume: …`. Host test:
+`cd device && python3 ../tests/nav_sim_host.py`.
 
 **The turtle remembers its journeys** (v2 plan Phase B, 2026-10-14): ending one
 moves its record (`ended_at`, `arrival`, the final `destination` and its
@@ -629,12 +682,15 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 | `timezone_offset_min` | int | `null` | UTC offset in minutes, −720 to +840. turtleOS: set from the phone (`TIMEZONE_SET`), never from the server. airOS: synced from air2's `GET /api/v1/device` (the owner's account zone) at boot and on the Time screen |
 | `compass_offset_deg` | int | `0` | magnetic declination correction |
 | `servo_present` | bool | `true` | authoritative flag for physical servo wiring (D8/GPIO7); set `false` only on a bench board with no servo |
+| `resume_batt_pct` | int | `40` | a journey resume (after a reboot, a journey start, low battery or SAFE) waits for this battery % before GPS, the wind sweep and steering. Never below `low_batt_pct`. Clamped 0–100. See [Journey tagging](#journey-tagging). |
 | `autopilot_sail` | bool | `true` | `false` = the autopilot never moves the sail servo (no steering, feathering or luff sweeps); only hand control (Wrangler's servo dial, `SERVO_SET_ANGLE`) does. Read live each nav tick. Bench/diagnostic switch. |
 | `servo_min_us` / `servo_max_us` | int | `500` / `2500` | pulse range every servo path uses — the autopilot, Wrangler hand control and the Servo-screen wind-finder sweep (just inside the servo's end stops); MG996R defaults. Clamped 400–2600, ≥200 apart. The sweep parks at the midpoint and stops PWM when done. |
 | `servo_glide_us_s` | int | `4000` | Wrangler hand control glides to each dial angle at this many µs/s (a 20 ms timer in `drivers/servo.py`) instead of jumping; 4000 crosses 500–2500 in 0.5 s. `0` = jump. Clamped 0–20000. The autopilot and sweeps still write directly. |
 | `servo_power_mode` | str | `"auto"` | servo rail switch (Pololu SSR, EN on GPIO40, in the 2S pack's + lead ahead of the LM2596). `"auto"`: every servo write powers the rail (100 ms settle on the first), `_bg_tick` cuts it after `servo_power_idle_s` with no write. `"on"`: always on. `"off"`: always off, servo writes skipped. The fitted servo holds the sail by friction with its rail off, so the idle cut-off doesn't free the sail. Wiring: `adding_servo_switch.md`. |
 | `servo_power_idle_s` | int | `30` | idle seconds before `auto` cuts the servo rail. Clamped 5–3600. |
 | `battery_r_ohm` | float | `0.5` | ohms between the INA219's VIN+ and the cell (cell + leads). `INA219.battery_v()` removes the I×R swing so the pack reads the same plugged and unplugged; every battery voltage/SoC (Battery screen, waiting-screen glyph, Wrangler Power, telemetry) uses it. Clamped 0–2. Calibrate: set `0`, read V and mA on the Battery screen unplugged and charging, R = ΔV / (mA_chg + mA_dis) × 1000. |
+| `watchdog_enabled` | bool | `true` | hardware watchdog + reset on crash; `false` = none, and a crash stays at the REPL (bench debugging) |
+| `watchdog_timeout_s` | int | `60` | seconds the main loop may stall before the chip resets. Clamped 20–600. |
 | `joke_mode` | bool | `false` | quad-click shows selfdestruct instead of turtle screen |
 | `oled_col_offset` | int | `0` | pixel offset for SH1106 column alignment |
 | `board_type` | str | `""` | override for HAL if platform detection is unreliable |
@@ -921,6 +977,7 @@ With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–
 | What | File |
 |------|------|
 | Boot pipeline | `device/main.py` |
+| Watchdog + crash recovery | `device/src/app/watchdog.py` |
 | Main event loop | `device/src/app/main.py` |
 | Config manager | `device/config.py` |
 | Platform detection | `device/src/hal/platform.py` |

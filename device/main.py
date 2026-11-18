@@ -36,6 +36,20 @@ except Exception as _bg_e:
     print("[BOOT] boot_guard early check error:", repr(_bg_e))
 
 # ----------------------------
+# Watchdog — EARLY
+# ----------------------------
+# Covers the boot pipeline at 120 s (fed once per boot step); tightened to
+# watchdog_timeout_s just before run(). Not started in debug mode or with
+# watchdog_enabled false; a watchdog left running by the app before a soft
+# reset is relaxed instead. See src/app/watchdog.py.
+try:
+    from src.app import watchdog as _watchdog
+    _watchdog.boot(debug=_bg_debug)
+except Exception as _wd_e:
+    _watchdog = None
+    print("[BOOT] watchdog init error:", repr(_wd_e))
+
+# ----------------------------
 # Servo power switch — EARLY
 # ----------------------------
 # The SSR's EN pin (GPIO40) floats until something drives it. Pull it low
@@ -1931,6 +1945,16 @@ except Exception as e:
 
 # Launch app loop
 if _btn_hal_ok:
+    # Tighten the watchdog from the boot timeout to the running one, and log
+    # why the chip last reset (the RTC is synced by now).
+    _wd_on = False
+    if _watchdog is not None:
+        try:
+            _watchdog.note_boot()
+            if _watchdog.enabled():
+                _wd_on = _watchdog.start(_watchdog.timeout_s(cfg))
+        except Exception as _wd_e:
+            print("[BOOT] watchdog arm error:", repr(_wd_e))
     try:
         from src.app.main import run
         run(
@@ -1950,14 +1974,24 @@ if _btn_hal_ok:
             imu=_rt_imu,
             ble=_rt_ble,
         )
+    except KeyboardInterrupt:
+        # Ctrl-C: the watchdog can't be stopped, so stretch it to 24 h or it
+        # would reset the board out from under the REPL.
+        if _watchdog is not None:
+            _watchdog.relax()
+        raise
     except Exception as e:
-        # Write crash info with minimal heap — repr(e) is cheap, no traceback capture
+        print("turtleOS crash:", repr(e))
+        if _watchdog is not None and _watchdog.enabled():
+            # Logs the traceback to crash.txt, then resets (3 s; 10 min from
+            # the 4th crash in a row). Does not return.
+            _watchdog.handle_crash(e)
+        # watchdog_enabled false (bench): log it and stay at the REPL.
         try:
-            with open("crash.txt", "w") as _cf:
-                _cf.write(repr(e))
+            if _watchdog is not None:
+                _watchdog.record_crash(e)
         except Exception:
             pass
-        print("AirBuddy crash:", repr(e))
         raise
 else:
     # HAL is broken — show message for 30 s then auto-reset so a redeploy takes effect

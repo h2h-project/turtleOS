@@ -2,6 +2,7 @@
 import time
 from machine import Pin
 from src.hal.board import btn_pin, btn_led_pin
+from src.app import watchdog as _watchdog
 
 
 class AirBuddyButton:
@@ -106,6 +107,10 @@ class AirBuddyButton:
         Returns:
             "sleep", "single", "double", "triple", "quad", "quint", or None
         """
+
+        # Every screen loop polls the button every few ms, including the ones
+        # that never call tick_fn, so this is the watchdog's main feed.
+        _watchdog.feed()
 
         hook = self.on_poll
         if hook is not None:

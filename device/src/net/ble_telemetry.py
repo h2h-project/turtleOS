@@ -54,6 +54,7 @@ _NAV_STATES = {"BOOT": 0, "ACQUIRE": 1, "SAIL_NAV": 2, "ARRIVAL": 3, "SAFE": 4}
 _FAULTS = {None: 0, "": 0, "gps never acquired": 1, "gps loss": 2,
            "no waypoints configured": 3}
 _TRIM = {"CRUISE": 0, "FEATHER": 1}
+_RESUME = {None: 0, "BATTERY": 1, "GPS": 2, "WIND": 3}
 
 # Status flag bits
 F_WIFI_CONNECTED = 1 << 0
@@ -220,6 +221,7 @@ class TurtleData:
         heading = bearing = xte = None
         dist = NA_U32
         state = fault = trim = NA_U8
+        resume = 0
         if nav is not None:
             try:
                 snap = nav.snapshot()
@@ -229,6 +231,7 @@ class TurtleData:
             state = _NAV_STATES.get(snap.get("state"), NA_U8)
             fault = _FAULTS.get(snap.get("fault"), NA_U8) if state == 4 else 0
             trim = _TRIM.get(snap.get("trim"), NA_U8)
+            resume = _RESUME.get(snap.get("resume"), NA_U8)
             d = snap.get("wp_dist_m")
             if d is not None:
                 dist = min(int(d), NA_U32 - 1)
@@ -247,8 +250,9 @@ class TurtleData:
         except Exception:
             off = NA_I16
         # xte: no cross-track function yet -> sentinel (contract v1 note)
-        return struct.pack("<HHIhBBBh", _x10_u16(heading, True), _x10_u16(bearing, True),
-                           dist, NA_I16 if xte is None else _x10_i16(xte), state, fault, trim, off)
+        return struct.pack("<HHIhBBBhB", _x10_u16(heading, True), _x10_u16(bearing, True),
+                           dist, NA_I16 if xte is None else _x10_i16(xte), state, fault, trim, off,
+                           resume)
 
     def targets(self):
         cfg = self._g("cfg") or {}

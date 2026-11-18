@@ -95,6 +95,13 @@ DEFAULTS = {
     # faulty — with it on, the DS3231 is the only time source at sea.
     "secure_mode": False,
 
+    # --- Watchdog (src/app/watchdog.py) ---
+    # The chip resets itself if the main loop stops for watchdog_timeout_s,
+    # and a crash logs to crash.txt and resets. False is for bench debugging:
+    # no watchdog, and a crash stays at the REPL.
+    "watchdog_enabled": True,
+    "watchdog_timeout_s": 60,
+
     # --- Time ---
     # Minutes offset from UTC.
     # Example: Jakarta = 420
@@ -180,6 +187,7 @@ DEFAULTS = {
     "sail_min_deg": 10,           # servo physical stop (lower)
     "sail_max_deg": 170,          # servo physical stop (upper)
     "low_batt_pct": 20,           # below this, feather the sail (PDF failsafe)
+    "resume_batt_pct": 40,        # journey resume waits for this before GPS, wind, steering
     "gps_loss_safe_s": 120,       # no GPS fix this long in SAIL-NAV -> SAFE
 }
 
@@ -339,7 +347,7 @@ def _normalize_types(cfg):
 
     # --- Booleans ---
     for key in ("gps_enabled", "wifi_enabled", "telemetry_enabled", "turtle_mode", "joke_mode", "servo_present",
-                "ble_enabled", "ble_require_bond", "secure_mode"):
+                "ble_enabled", "ble_require_bond", "secure_mode", "watchdog_enabled"):
         old_val = cfg.get(key, DEFAULTS[key])
         new_val = _to_bool(old_val, DEFAULTS[key])
         if old_val != new_val:
@@ -588,7 +596,9 @@ def _normalize_types(cfg):
         ("sail_min_deg", 0, 90),
         ("sail_max_deg", 90, 180),
         ("low_batt_pct", 0, 90),
+        ("resume_batt_pct", 0, 100),
         ("gps_loss_safe_s", 10, 3600),
+        ("watchdog_timeout_s", 20, 600),
     ):
         try:
             v = int(cfg.get(key, DEFAULTS[key]))

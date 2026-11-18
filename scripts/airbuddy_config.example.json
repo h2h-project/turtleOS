@@ -17,5 +17,7 @@
     "oled_col_offset": 2,
     "turtle_mode": false,
     "joke_mode": true,
-    "servo_present": true
+    "servo_present": true,
+    "watchdog_enabled": true,
+    "watchdog_timeout_s": 60
 }

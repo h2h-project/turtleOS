@@ -8,6 +8,8 @@
 import time
 import math
 
+from src.app import watchdog as _watchdog
+
 
 # --------------------------------------------------------------------
 # Sweep configuration
@@ -190,6 +192,7 @@ class WindFinder:
                 self._idle()
                 idle_at = time.ticks_add(time.ticks_ms(), IDLE_EVERY_MS)
             angle = self._read_angle_deg()
+            _watchdog.feed()      # this loop sleeps without polling the button
 
             if angle is not None:
                 angles.append(float(angle))

@@ -348,7 +348,16 @@ echo
 # ------------------------------------------------------------
 
 msg "Connecting to board"
-"${MPREMOTE_CMD[@]}" exec "print('connected')" >/dev/null 2>&1 \
+# The firmware's watchdog can't be stopped and keeps running at the REPL, so
+# stretch it to 24 h before anything else or it resets the board mid-upload.
+# Harmless on firmware without src/app/watchdog.py and on a wiped board.
+"${MPREMOTE_CMD[@]}" exec "
+try:
+    from src.app import watchdog
+    watchdog.relax()
+except Exception:
+    pass
+print('connected')" >/dev/null 2>&1 \
   || die "No MicroPython board found on port '$PORT'. Check the connection and try again."
 
 PLATFORM="$("${MPREMOTE_CMD[@]}" exec "import sys; print(sys.platform)" 2>/dev/null | tail -n1 | tr -d '\r')"

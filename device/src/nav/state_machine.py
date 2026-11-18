@@ -14,11 +14,13 @@ ARRIVAL = "ARRIVAL"
 SAFE = "SAFE"
 
 # Allowed forward transitions. SAFE is reachable from any state (checked
-# separately in set_state); leaving SAFE requires a manual reset → ACQUIRE.
+# separately in set_state).
 #
-# SAIL_NAV/ARRIVAL → ACQUIRE is the operator "stand down" path: ending a
-# journey (src/ui/screens/journey.py) drops the turtle back to ACQUIRE so it
-# is no longer steering to a waypoint. It is not a fault path — SAFE is.
+# Only NavController enters SAIL_NAV, after the journey resume stages
+# (battery, GPS, wind; src/nav/controller.py). A journey start puts the
+# turtle in ACQUIRE from any state and the controller does the rest; a
+# journey end drops it back to ACQUIRE. SAFE clears to ACQUIRE by itself
+# once its cause has gone (NavController._safe_cycle).
 _VALID = {
     BOOT: (ACQUIRE,),
     ACQUIRE: (SAIL_NAV,),
@@ -28,10 +30,24 @@ _VALID = {
 }
 
 _state = [BOOT]
+# Journey resume stage while in ACQUIRE ("BATTERY" / "GPS" / "WIND"), else
+# None. Owned by NavController; kept here so telemetry and screens can read
+# it without a NavController handle.
+_resume = [None]
+
+
+def resume_stage():
+    return _resume[0]
 
 
 def get_state():
     return _state[0]
+
+
+def can_set(new):
+    """True if set_state(new) would be allowed from the current state."""
+    cur = _state[0]
+    return new == cur or new == SAFE or new in _VALID.get(cur, ())
 
 
 def set_state(new, reason=None):

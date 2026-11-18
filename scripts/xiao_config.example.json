@@ -52,5 +52,8 @@
     "sail_min_deg": 10,
     "sail_max_deg": 170,
     "low_batt_pct": 20,
-    "gps_loss_safe_s": 120
+    "gps_loss_safe_s": 120,
+
+    "watchdog_enabled": true,
+    "watchdog_timeout_s": 60
 }

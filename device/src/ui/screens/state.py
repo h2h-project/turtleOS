@@ -72,8 +72,20 @@ class StateScreen:
         w = int(getattr(o, "width", 128))
         h = int(getattr(o, "height", 64))
 
-        # Header: state name left, connection icons right
-        o.f_small.write(display_name(), 0, 1)
+        # Header: state name left (plus the journey resume stage while the
+        # turtle works its way back to SAIL-NAV), connection icons right
+        title = display_name()
+        stage = snap.get("resume") if snap else None
+        if stage == "BATTERY":
+            pct = None
+            try:
+                pct = self._nav.battery_pct()
+            except Exception:
+                pass
+            title += " BATT" if pct is None else " BATT {}%".format(pct)
+        elif stage:
+            title += " " + stage
+        o.f_small.write(title, 0, 1)
         if _ch:
             try:
                 _ch.draw(fb, w, gps_state=_ch.get_gps_state(), icon_y=1)

@@ -141,6 +141,11 @@ class LuffSweep:
         self.error = None
         return True
 
+    def abort(self, why="aborted"):
+        """Stop a running sweep (phase -> failed, sail centred)."""
+        if self.active():
+            self._fail(why)
+
     def active(self):
         return self._phase in ("position", "baseline", "sweep_a", "sweep_b")
 

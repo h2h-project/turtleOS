@@ -433,7 +433,15 @@ msg "Connecting to your XIAO ESP32-S3"
 echo "Make sure the board is plugged in via USB..."
 echo
 
-"${MPREMOTE_CMD[@]}" exec "print('connected')" >/dev/null 2>&1 \
+# A board that already runs turtleOS has a watchdog that keeps going at the
+# REPL: stretch it to 24 h so it can't reset the board mid-upload.
+"${MPREMOTE_CMD[@]}" exec "
+try:
+    from src.app import watchdog
+    watchdog.relax()
+except Exception:
+    pass
+print('connected')" >/dev/null 2>&1 \
     || die "No MicroPython board found. Check the USB connection and make sure MicroPython is flashed, then try again."
 
 PLATFORM="$("${MPREMOTE_CMD[@]}" exec "import sys; print(sys.platform)" 2>/dev/null | tail -n1 | tr -d '\r')"

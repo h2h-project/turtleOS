@@ -824,12 +824,15 @@ def run(
 
     # Servo power rail (Pololu SSR on GPIO40), ticked from _bg_tick.
     from src.drivers import servo_power as _servo_power
+    from src.app import watchdog as _watchdog
 
     # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
     # walks the whole heap (~50 ms each), and the two that used to bracket
     # tick_telemetry() cost ~100 ms of every tick, long enough to swallow a
     # click. MicroPython's automatic collection is plenty at this headroom.
     def _bg_tick():
+        _watchdog.feed()
+        _watchdog.healthy()
         t0 = time.ticks_ms()
         t_tel = t_nav = t_ble = t0
         try:
@@ -913,6 +916,15 @@ def run(
         except Exception as e:
             print("[NAV] state init failed:", repr(e))
         _get_nav()
+        # A journey still open after a reboot or crash: NavController resumes
+        # it from ACQUIRE (battery, then GPS fix, then wind sweep, then
+        # SAIL_NAV) on its own ticks. Logged here so the boot log shows it.
+        try:
+            from src.app import journey as _jr
+            if _jr.active():
+                print("[NAV] journey {} open at boot: resuming".format(_jr.active_id()))
+        except Exception:
+            pass
 
     # A long press on any screen goes to the hold flow (Bluetooth first in
     # turtle mode). Flows hand a hold back as "sleep"; it is parked here
