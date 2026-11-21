@@ -96,7 +96,7 @@ for entry in PAIRS:
 
 print()
 if found_any:
-    print("Update board_pico.py with the I2C bus + SCL/SDA pair that found your devices.")
+    print("Update board_xiao_esp32_s3.py with the I2C bus + SCL/SDA pair that found your devices.")
 else:
     print("No devices found on any pair.")
     print()

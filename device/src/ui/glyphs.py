@@ -1,5 +1,4 @@
 # src/ui/glyphs.py — tiny pixel glyphs for SSD1306/framebuf
-# Pico / MicroPython safe
 
 import time
 
@@ -530,16 +529,6 @@ def wifi_level_from_rssi(rssi):
         return WIFI_LOW
     return WIFI_NONE
 
-
-#
-# _GPS_6 = [
-#     "1111" "0" "1110" "0" "1111",
-#     "1000" "0" "1001" "0" "1000",
-#     "1011" "0" "1110" "0" "1111",
-#     "1001" "0" "1000" "0" "0001",
-#     "1001" "0" "1000" "0" "0001",
-#     "1111" "0" "1000" "0" "1111",
-# ]
 
 # ----------------------------
 # GPS indicator (14x6) — right-angle triangle

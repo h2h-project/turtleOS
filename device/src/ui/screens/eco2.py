@@ -1,6 +1,5 @@
 # src/ui/screens/eco2.py
-# eCO₂ screen for AirBuddy (RAM-lean)
-# Pico / MicroPython safe
+# eCO₂ screen (RAM-lean)
 
 import gc
 import time

@@ -113,26 +113,25 @@ def current_fix(gps=None, max_age_ms=FIX_MAX_AGE_MS, listen_ms=FIX_LISTEN_MS):
             line = None
         if line and "RMC" in line:
             la, lo, cog = gpsfix.parse_rmc(line)
-            if la is not None:
-                try:
-                    gpsfix.update(la, lo, cog)
-                except Exception:
-                    pass
+            # A fix the jump filter drops (review B8) is no position to stamp.
+            if la is not None and gpsfix.update(la, lo, cog):
                 return (la, lo)
         time.sleep_ms(10)
     return None
 
 
 def save_set_fields(updates):
-    """Write operator set_* fields to config, then best-effort mirror them to
-    hopeturtles.org (PATCH /v1/device) for the dashboard. config.json stays
-    authoritative; a failed PATCH is re-pushed on the next online boot."""
+    """Write operator set_* fields to config and flag them for the dashboard.
+    config.json stays authoritative. The background thread PATCHes them to
+    hopeturtles.org whenever WiFi is up, retrying until it lands, and boot
+    retries too (review B13). Nothing network-bound runs here, on the main
+    thread."""
     cfg = write_config(updates)
     if cfg is None:
         return
     try:
-        from src.net.device_client import patch_set_fields
-        patch_set_fields(cfg, {k: v for k, v in updates.items() if k.startswith("set_")})
+        from src.net import device_client
+        device_client.mark_pending()
     except Exception:
         pass
 

@@ -1,5 +1,5 @@
 # src/hal/board_xiao_esp32_s3.py
-# XIAO ESP32-S3 / XS3 pin map + common initializers for AirBuddy.
+# XIAO ESP32-S3 / XS3 pin map + common initializers.
 #
 # Board orientation used in AirBuddy docs:
 #   - USB-C port facing up
@@ -199,7 +199,7 @@ def i2c_pins():
 
 
 # ------------------------------------------------------------
-# GPS (Ublox NEO-6M or similar)
+# GPS (Seeed L76K GNSS Add-on)
 # ------------------------------------------------------------
 # XIAO ESP32-S3 UART wiring:
 #   - D6 / GPIO43 / TX -> GPS RX

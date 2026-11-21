@@ -1,5 +1,5 @@
 # src/drivers/ds3231.py
-# DS3231 RTC driver (MicroPython, Pico-safe)
+# DS3231 RTC driver
 #
 # Wiring example (Pico):
 #   SDA -> GPIO0

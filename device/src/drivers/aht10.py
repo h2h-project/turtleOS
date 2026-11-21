@@ -1,4 +1,4 @@
-# src/drivers/aht10.py — Minimal AHT10 I2C driver (MicroPython / Pico-safe)
+# src/drivers/aht10.py — Minimal AHT10 I2C driver
 #
 # Reads temperature (°C) + humidity (%RH)
 # Address usually 0x38

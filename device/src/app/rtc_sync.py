@@ -1,6 +1,6 @@
 # src/app/rtc_sync.py
 #
-# DS3231 sync + periodic temperature refresh (Pico-safe)
+# DS3231 sync + periodic temperature refresh
 #
 # Key idea:
 # - Time sync is a one-time (boot) thing.

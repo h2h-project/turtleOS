@@ -1,6 +1,5 @@
 # src/ui/screens/co2.py
-# CO2 screen for AirBuddy using SCD41 / SCD4x (RAM-lean)
-# Pico / MicroPython safe
+# CO2 screen using SCD41 / SCD4x (RAM-lean)
 
 import gc
 import time

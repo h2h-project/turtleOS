@@ -1,15 +1,13 @@
-# src/sensors/xiao_gnss.py — generic GNSS/GPS UART driver
+# src/sensors/xiao_gnss.py — GNSS UART driver for the Seeed GNSS Add-on for
+# XIAO (Quectel L76K), configured via PMTK ASCII commands.
 #
-# Primary target: Seeed GNSS Add-on for XIAO (Quectel L76K), configured via
-# PMTK ASCII commands.
-#
-# Legacy path: u-blox NEO-6M, configured via proprietary UBX binary protocol.
-# Select via config key "gps_module": "l76k" (default) or "neo6m".
-# All code inside # LEGACY-NEO6M delimiters is a candidate for deletion once
-# NEO-6M devices are fully retired.
+# The u-blox NEO-6M (UBX binary) path was removed in turtleOS 2.7. A NEO-6M
+# still streams its default NMEA at 1 Hz, which read_nmea() parses as is.
 
 from machine import UART, Pin
 import time
+
+from src.nav.gpsfix import checksum_ok as _checksum_ok
 
 # Set by src/app/clock.py while the clock is waiting for GPS time: called
 # with each RMC line read_nmea() returns. None the rest of the time.
@@ -24,14 +22,6 @@ def _pmtk_sentence(body):
     return "$" + body + "*{:02X}\r\n".format(ck)
 
 
-# ---- LEGACY-NEO6M: delete this function when NEO-6M support is dropped ----
-def _ubx_checksum(body):
-    ck_a = ck_b = 0
-    for b in body:
-        ck_a = (ck_a + b) & 0xFF
-        ck_b = (ck_b + ck_a) & 0xFF
-    return ck_a, ck_b
-# ---- END LEGACY-NEO6M ----
 
 
 class GnssModule:
@@ -83,6 +73,7 @@ class GnssModule:
         )
 
         self._rxbuf = b""
+        self.bad_checksums = 0      # sentences read_nmea() dropped (review B8)
 
     # -------------------------------------------------
     # Non-blocking line read
@@ -105,15 +96,10 @@ class GnssModule:
         Both modes use the same config. turtle_mode is kept in the signature
         for callers but no longer changes anything — see _configure_l76k.
 
-        module="l76k"  → Seeed GNSS Add-on / Quectel L76K (PMTK ASCII)
-        module="neo6m" → u-blox NEO-6M (UBX binary) — LEGACY-NEO6M
+        module is kept for callers (config gps_module); only "l76k" (PMTK)
+        is supported.
         """
-        if module == "neo6m":
-            # ---- LEGACY-NEO6M: delete this branch when NEO-6M support is dropped ----
-            self._configure_neo6m_ubx(turtle_mode)
-            # ---- END LEGACY-NEO6M ----
-        else:
-            self._configure_l76k(turtle_mode)
+        self._configure_l76k(turtle_mode)
 
     def _configure_l76k(self, turtle_mode):
         """Configure Quectel L76K via PMTK ASCII sentences.
@@ -146,31 +132,6 @@ class GnssModule:
         self.uart.write(_pmtk_sentence(rate).encode())
         time.sleep_ms(20)
 
-    # ---- LEGACY-NEO6M: delete this method when NEO-6M support is dropped ----
-    def _configure_neo6m_ubx(self, turtle_mode):
-        """Configure u-blox NEO-6M via proprietary UBX binary protocol.
-
-        GGA + RMC at 1 Hz, matching _configure_l76k — same 9600 baud budget,
-        same reasoning.
-        """
-        # NMEA sentence IDs (class 0xF0):
-        #   GGA=0x00, GLL=0x01, GSA=0x02, GSV=0x03, RMC=0x04, VTG=0x05
-        rates = {0x00: 1, 0x01: 0, 0x02: 0, 0x03: 0, 0x04: 1, 0x05: 0}
-        meas_lo, meas_hi = 0xE8, 0x03  # 1000 ms = 1 Hz
-
-        for msg_id, rate in rates.items():
-            pl = bytes([0xF0, msg_id, 0x00, rate, 0x00, 0x00, 0x00, 0x00])
-            body = bytes([0x06, 0x01, 0x08, 0x00]) + pl
-            ck_a, ck_b = _ubx_checksum(body)
-            self.send_raw(bytes([0xB5, 0x62]) + body + bytes([ck_a, ck_b]))
-            time.sleep_ms(20)
-
-        pl = bytes([meas_lo, meas_hi, 0x01, 0x00, 0x00, 0x00])
-        body = bytes([0x06, 0x08, 0x06, 0x00]) + pl
-        ck_a, ck_b = _ubx_checksum(body)
-        self.send_raw(bytes([0xB5, 0x62]) + body + bytes([ck_a, ck_b]))
-        time.sleep_ms(20)
-    # ---- END LEGACY-NEO6M ----
 
     # -------------------------------------------------
     # NMEA reading
@@ -205,6 +166,15 @@ class GnssModule:
                 txt = ""
 
             if txt.startswith("$GP") or txt.startswith("$GN"):
+                # Review B8: a damaged line (console overlap on GPIO44, the
+                # rxbuf truncation above cutting a sentence) parses into a
+                # plausible position km off. Drop anything that fails *hh.
+                if not _checksum_ok(txt):
+                    self.bad_checksums += 1
+                    if self.bad_checksums <= 3 or self.bad_checksums % 100 == 0:
+                        print("[GPS] bad checksum ({} so far): {!r}".format(
+                            self.bad_checksums, txt[:40]))
+                    continue
                 if rmc_hook is not None and "RMC" in txt:
                     try:
                         rmc_hook(txt)
@@ -259,9 +229,3 @@ class GnssModule:
 
         weekday = 1  # placeholder
         return (year, month, day, weekday, hour, minute, sec)
-
-
-# ---- LEGACY-NEO6M: delete this alias when NEO-6M support is dropped ----
-# Kept so any code that still imports Ublox6GPS by name does not crash.
-Ublox6GPS = GnssModule
-# ---- END LEGACY-NEO6M ----

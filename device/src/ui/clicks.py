@@ -1,4 +1,4 @@
-# src/ui/clicks.py — Click / dwell / button helpers (MicroPython / Pico-safe)
+# src/ui/clicks.py — Click / dwell / button helpers
 #
 # Purpose:
 # - Keep AirBuddy click handling utilities out of app/main.py

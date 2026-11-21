@@ -1,4 +1,4 @@
-# src/ui/waiting.py  (MicroPython / Pico-safe)
+# src/ui/waiting.py
 #
 # WAITING SCREEN
 # - airBuddy logo + tagline

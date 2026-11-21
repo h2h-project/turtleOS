@@ -1,4 +1,4 @@
-# src/app/telemetry_state.py — Telemetry state wrapper for AirBuddy (Pico / MicroPython safe)
+# src/app/telemetry_state.py — Telemetry state wrapper
 #
 # PATCH (LOW-RAM):
 # - DO NOT import TelemetryScheduler at module import time (can trigger ENOMEM).

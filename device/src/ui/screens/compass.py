@@ -1,4 +1,4 @@
-# src/ui/screens/compass.py  (MicroPython / Pico-safe)
+# src/ui/screens/compass.py
 
 import time
 

@@ -2,9 +2,9 @@
 
 turtleOS is a MicroPython firmware for the **Seeed Studio XIAO ESP32-S3** — the **sole deployment target going forward** — that drives a sail-servo actuator, reads GPS and compass, monitors battery via INA219, and displays a live turtle animation on a 128×64 OLED. It is designed for marine and field navigation applications.
 
-The XIAO's MicroPython build places the Python heap in its **8 MB Octal PSRAM** (~7,998 KB total; ~7,996 KB free after a full boot). Memory is **not** a practical constraint on this hardware — see [Memory headroom](#memory-headroom-xiao-esp32-s3). The Raspberry Pi Pico W and basic ESP32 are no longer deployment targets; their HAL files remain in the tree as legacy/portability artifacts only.
+The XIAO's MicroPython build places the Python heap in its **8 MB Octal PSRAM** (~7,998 KB total; ~7,996 KB free after a full boot). Memory is **not** a practical constraint on this hardware — see [Memory headroom](#memory-headroom-xiao-esp32-s3). The Raspberry Pi Pico W and basic ESP32 are no longer targets; their code was removed in turtleOS 2.7 (code review section 2).
 
-**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air2.earthen.io` (the **airbuddy-online** server, checked out at `/home/russs/WebstormProjects/airbuddy-online`; dashboard SPA in `airbuddy-spa`). It sends the same telemetry JSON v2 as turtleOS, with field names from the shared data dictionary in `docs/wrangler/README.md`. Bluetooth in airOS and an AirBuddy app are planned in `docs/airbuddy_app_roadmap.md`. The Hardware Abstraction Layer keeps board-specific code isolated in `src/hal/` so the firmware could be ported to future hardware without rewriting application code — but only the XIAO HAL is actively maintained and tested.
+**airOS mode** (the original air-quality monitor) remains fully functional and is activated by setting `turtle_mode: false` in `config.json`. In that mode the device reads CO2, TVOC, temperature, and humidity from an ENS160 + AHT21 sensor pair and posts telemetry to a REST API at `http://air2.earthen.io` (the **airbuddy-online** server, checked out at `/home/russs/WebstormProjects/airbuddy-online`; dashboard SPA in `airbuddy-spa`). It sends the same telemetry JSON v2 as turtleOS, with field names from the shared data dictionary in `docs/wrangler/README.md`. Bluetooth in airOS and an AirBuddy app are planned in `docs/airbuddy_app_roadmap.md`. The Hardware Abstraction Layer keeps board-specific code isolated in `src/hal/` so the firmware could be ported to future hardware without rewriting application code; today `src/hal/board.py` always uses the XIAO map.
 
 ---
 
@@ -38,7 +38,6 @@ device/               ← everything deployed to the microcontroller
 └── src/
     ├── app/
     │   ├── main.py               ← main event loop (run())
-    │   ├── main_pico.py          ← Pico-only override (legacy)
     │   ├── booter.py             ← animated boot progress bar
     │   ├── boot_guard.py         ← debug-mode REPL gate
     │   ├── watchdog.py           ← hardware watchdog + crash log/reset (see Watchdog and crash recovery)
@@ -46,25 +45,22 @@ device/               ← everything deployed to the microcontroller
     │   ├── telemetry_scheduler.py
     │   ├── telemetry_state.py
     │   ├── journey.py            ← active-journey state (/journey_state.json); tags telemetry
+    │   ├── monotonic.py          ← ms clock that never wraps; use it for any "since" stamp that can outlive 6.2 days
     │   └── actions.py            ← side effects of every OLED gesture, returning GATT v1 result codes; shared with Bluetooth
     ├── hal/
-    │   ├── platform.py           ← detects "pico", "esp32", "esp32s3", "xiao_esp32s3"
-    │   ├── board.py              ← facade: delegates to the correct board module
-    │   ├── board_pico.py         ← Pico pin constants + init helpers
-    │   ├── board_esp32.py        ← ESP32 pin constants + init helpers
-    │   ├── board_esp32_s3.py     ← ESP32-S3 pin constants + init helpers
+    │   ├── platform.py           ← detected platform tag (logs + Device Information only)
+    │   ├── board.py              ← facade: re-exports the XIAO pin map
+    │   ├── timers.py             ← hardware timer id registry (gotcha 22)
     │   └── board_xiao_esp32_s3.py ← XIAO ESP32-S3 pin map (current primary target)
     ├── input/
     │   └── button.py             ← AirBuddyButton (debounce, multi-click, hold)
     ├── ui/
     │   ├── oled.py               ← OLED wrapper (SSD1306/SH1106, font helpers)
     │   ├── flows.py              ← screen carousel orchestration
-    │   ├── flows_pico.py         ← Pico-only carousel variant (legacy)
     │   ├── clicks.py             ← low-level click/dwell helpers used by flows
     │   ├── connection_header.py  ← GPS/API/WiFi icon cluster (top-right)
     │   ├── toggle.py             ← vertical toggle switch widget
     │   ├── glyphs.py             ← pixel-art icons (wifi, gps, api, gear, °, circle)
-    │   ├── glyphs_pico.py        ← Pico-only glyph variant (legacy)
     │   ├── thermobar.py          ← horizontal thermometer bar widget
     │   ├── waiting.py            ← airOS idle screen ("Know thy air…")
     │   ├── logo_airbuddy.py      ← airOS splash logo
@@ -115,8 +111,7 @@ device/               ← everything deployed to the microcontroller
     │   └── ezFBfont.py           ← font renderer
     ├── sensors/
     │   ├── air.py                ← AirSensor + AirReading (ENS160 + AHT21)
-    │   ├── co2_test.py
-    │   └── ublox6gps.py          ← u-blox NEO-6M GPS parser
+    │   └── xiao_gnss.py          ← L76K GNSS driver: PMTK config, read_nmea() (checksum-checked)
     ├── net/
     │   ├── wifi_manager.py       ← STA connect/disconnect wrapper
     │   ├── wifi_manager_null.py  ← no-op stub for no-WiFi builds
@@ -166,7 +161,7 @@ Sequential steps run inside an animated `Booter` progress bar on the OLED (`devi
 | 5 | **Sensor warmup** | Scans I2C for ENS160 (0x53) / AHT21 (0x38). Creates `AirSensor` and calls `begin_sampling()`. Warmup default is 4 s (configurable via `warmup_seconds`). Skipped in turtle_mode if sensors are absent. |
 | 6 | **GPS check** | If `gps_enabled`, opens UART and listens 1.2 s for NMEA bytes to confirm hardware is present. |
 | 7 | **IMU + compass, AS5600 sailpoint** (turtle_mode) | `step_imu()` probes **I2C_EXT** for the GY-521 IMU (MPU6050 at 0x68, or 0x69 if AD0 is high), enables its I2C bypass, then finds the GY-273 compass (QMC5883L/HMC5883L) on the same bus, then a BMP180 at 0x77 if one is there (only on a legacy GY-87). It keeps the single `GY87` instance (class name from the old one-board GY-87, which still works) in `_rt_imu` — NavController, the compass screen and the telemetry scheduler all receive it via `run(imu=...)`; nothing re-probes. **The compass must be on I2C_EXT with the IMU:** once an IMU answers, a missing mag reports `Compass FAIL` and the I2C_SYS standalone-compass fallback never runs. With no IMU at all, a compass on I2C_SYS still reports green (`QMC5883L standalone`). Then, in turtle_mode, the sail-angle encoder. The servo boot check was removed — `PWM(Pin(n)).init()` always succeeds on ESP32-S3 regardless of physical wiring, so it could never actually verify the servo was present. |
-| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu`, `ble` kwargs; `ble` is the Turtle Wrangler `BleService`, see [Bluetooth](#bluetooth--turtle-wrangler-docswrangler)) and only builds its own fallback if one is missing — the Pico path skips this step entirely and always falls back. |
+| 8 | **Initiating nav...** (turtle_mode) / **Finishing boot...** (airOS) | `step_init_runtime()` — builds the I2C handle, INA219 battery monitor, GPS session, WiFi manager and, in turtle_mode, the `NavController` and `TurtleWaitingScreen` that `run()` needs. These used to be built silently inside `src.app.main.run()` *after* the boot screen had already gone blank, leaving several seconds of dead screen before the first frame; building them as a boot step keeps that work visible under the logo/bar. `run()` receives the built objects (`i2c`, `ina_dev`, `gps`, `wifi_manager`, `nav_controller`, `turtle_waiting_scr`, `imu`, `ble` kwargs; `ble` is the Turtle Wrangler `BleService`, see [Bluetooth](#bluetooth--turtle-wrangler-docswrangler)) and only builds its own if one is missing (this step failed). The WiFiManager is the exception that matters: this step builds it only when boot's own connection succeeded, so after a failed boot connection `run()` builds it, which is what lets the turtle reconnect later. |
 
 After the pipeline, `main.py`:
 1. Draws the **waiting screen** (turtle animation or airOS idle, depending on `turtle_mode`) — in turtle_mode this is just a blank fill, since `TurtleWaitingScreen` (built in step 8) draws the real first frame itself once `run()`'s main loop starts.
@@ -196,23 +191,21 @@ Debug mode (button held at power-on) never starts the watchdog, and still breaks
 
 ## Board pin maps
 
-All board-specific code lives in `src/hal/`. Never hardcode pins outside these files. **The XIAO ESP32-S3 is the only deployment target**; the Pico, ESP32, and generic ESP32-S3 columns below are legacy reference for code that still exists in the tree — do not spend effort keeping them working.
+All board-specific code lives in `src/hal/`. Never hardcode pins outside these files. **The XIAO ESP32-S3 is the only target**: the Pico, ESP32 and generic ESP32-S3 pin maps were removed in turtleOS 2.7.
 
-| | Raspberry Pi Pico | ESP32 | ESP32-S3-N16-R8 | **XIAO ESP32-S3** (primary) |
-|---|---|---|---|---|
-| `sys.platform` | `"rp2"` | `"esp32"` | `"esp32"` | `"esp32"` |
-| `platform_tag()` | `"pico"` | `"esp32"` | `"esp32s3"` | **`"xiao_esp32s3"`** |
-| HAL file | `board_pico.py` | `board_esp32.py` | `board_esp32_s3.py` | **`board_xiao_esp32_s3.py`** |
-| Button GPIO | GP15 | GPIO4 | GPIO4 | GPIO4 (D3) |
-| Button LED | GP18 | GPIO18 | GPIO48 | GPIO2 (D1) — moved off D0, see GNSS note |
-| I2C bus (I2C_SYS) | I2C(0) SCL=GP1, SDA=GP0 | I2C(0) SCL=22, SDA=21 | I2C(0) SCL=6, SDA=5, 400 kHz | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
-| I2C_EXT (plug-in bus) | — | — | — | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-521 IMU + GY-273 compass; see the "Two I2C buses" note below |
-| GPS UART | UART(1) TX=GP8, RX=GP9 | UART(2) TX=17, RX=16 | UART(1) TX=43, RX=44 | UART(1) TX=43 (D6), RX=44 (D7) |
-| Servo PWM | — | — | — | **GPIO7 (D8) — MG996R sail actuator** |
-| Servo power switch | — | — | — | **GPIO40 (underside pad MTDO) → Pololu #5421 SSR EN** — see `adding_servo_switch.md` |
-| WiFi | Pico W only (via `net_caps`) | Built-in | Built-in | Built-in |
-| USB power detect | GP24 (VBUS) | board-specific | Returns `False` | Returns `False` |
-| Heap concern | Moderate | High | High — WiFi PHY fragmentation risk | **None — 8 MB PSRAM heap** (see Memory headroom) |
+| | **XIAO ESP32-S3** |
+|---|---|
+| HAL file | `board_xiao_esp32_s3.py` |
+| Button GPIO | GPIO4 (D3) |
+| Button LED | GPIO2 (D1) — moved off D0, see GNSS note |
+| I2C bus (I2C_SYS) | I2C(0) SCL=6 (D5), SDA=5 (D4), 400 kHz |
+| I2C_EXT (plug-in bus) | **I2C(1) SCL=3 (D2), SDA=8 (D9), 400 kHz** — GY-521 IMU + GY-273 compass; see the "Two I2C buses" note below |
+| GPS UART | UART(1) TX=43 (D6), RX=44 (D7) |
+| Servo PWM | **GPIO7 (D8) — MG996R sail actuator** |
+| Servo power switch | **GPIO40 (underside pad MTDO) → Pololu #5421 SSR EN** — see `adding_servo_switch.md` |
+| WiFi | Built-in |
+| USB power detect | Returns `False` (no VBUS GPIO) |
+| Heap | **8 MB PSRAM** (see Memory headroom) |
 
 **Stacked L76K GNSS module (Seeed SKU 109100021):** The XIAO GNSS module stacks onto the board and is wired exactly as the HAL expects — GPS_RXD on D6/GPIO43 and GPS_TXD on D7/GPIO44, default baud 9600. It also **reserves two extra pins**: `D0/GPIO1 → GPS_WAKEUP` and `D10/GPIO9 → GPS_RESET`. Because the module claims D0, the external button LED was relocated from D0/GPIO1 to **D1/GPIO2** (`BTN_LED_PIN = 2`). Do not reuse D0 or D10 for anything else while the module is stacked. All other header pins (D2, D3, D4/SDA, D5/SCL, D8/servo, D9) pass straight through and are unaffected — the I2C bus is untouched.
 
@@ -236,15 +229,7 @@ All board-specific code lives in `src/hal/`. Never hardcode pins outside these f
 | QMC5883L / HMC5883L (GY-273 compass) — **on I2C_EXT**, with the IMU | 0x0D / 0x1E | turtleOS |
 | BMP180 (legacy GY-87 barometer only) — **on I2C_EXT** | 0x77 | turtleOS |
 
-**Platform detection** (`src/hal/platform.py`):
-```python
-from src.hal.platform import platform_tag
-tag = platform_tag()   # "pico" | "esp32" | "esp32s3" | "xiao_esp32s3" | "unknown"
-```
-
-> **Note:** `sys.platform` returns `"esp32"` for all ESP32 variants. `platform.py` resolves this via `uos.uname().machine` in priority order: `"xiao"` in the machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings.
-
-**HAL facade** (`src/hal/board.py`): imports the right board module at runtime and re-exports `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `gps_pins()`, `usb_power_present()`, `servo_pin()`, `servo_pwm_config()`. Always import from `src.hal.board`, never from platform-specific files directly. `servo_pin()` and `servo_pwm_config()` return `None` on boards without a servo wired (Pico, ESP32, ESP32-S3).
+**HAL facade** (`src/hal/board.py`): always re-exports `board_xiao_esp32_s3`: `btn_pin()`, `btn_led_pin()`, `init_i2c()`, `i2c_pins()`, `init_i2c_ext()`, `i2c_ext_pins()`, `gps_pins()`, `usb_power_present()`, `servo_pin()`, `servo_pwm_config()`, `servo_power_pin()`, `user_led_pin()`, `user_led_active_value()`. Always import from `src.hal.board`, never from the board file directly. It used to choose a pin map from `platform_tag()`, and a turtle whose firmware didn't identify as a XIAO (with no `board_type` in config) silently got the generic ESP32-S3 map: button LED on GPIO48, no servo, no I2C_EXT. A port to new hardware adds its own board module and switches here. `src/hal/platform.py`'s `platform_tag()` is still logged at boot (`[BOOT] Board: …`) and sent as the Device Information model string.
 
 ---
 
@@ -260,6 +245,7 @@ One physical button wired active-low (pulled up internally). `AirBuddyButton` in
 | **Double click** | Machine-state screen (three circles; double-click again starts the luff sweep) | Time screen |
 | **Triple click** | Connectivity carousel | Connectivity carousel |
 | **Quad click** | Show turtle waiting screen (or selfdestruct if `joke_mode`) | Self-destruct flow (factory reset) |
+| **Quint click** (5) | "Switch to airOS?" prompt: hold 3 s to switch and reboot, click to cancel | "Switch to turtleOS?" prompt, same gestures |
 | **Hold 3 s** (from **any** screen) | Bluetooth → Battery → GPS → Sleep → Version screens | Battery → GPS → Sleep → Version screens |
 
 A hold works on every screen, not just the waiting screen: each screen returns `"sleep"`, the carousel passes it up, and `run()` parks it in `_pending_action` and starts `sleep_flow` on the next pass without going back to the waiting screen. Inside the hold flow, a hold restarts it at the top (Bluetooth). A screen that consumes `poll_action()` must return `"sleep"` on a hold, and a flow must pass it through, or the long press is lost on that screen.
@@ -268,7 +254,7 @@ A hold works on every screen, not just the waiting screen: each screen returns `
 - Button is sampled in every loop iteration (non-blocking).
 - 50 ms debounce on edges.
 - Each release **restarts** the 500 ms `click_window_ms`, so the budget is 500 ms *between* clicks, not 500 ms for the whole burst. `poll_action()` returns the count as a string (`"single"`, `"double"`, …) once the window expires with no further click. Measuring the window from the first press instead made a triple need three debounced presses inside a single 500 ms window — anything slower than ~120 ms per click emitted as `double` + `single`.
-- Quint (5 clicks) fires immediately on the 5th release; all other counts wait out the window.
+- Quint (5 clicks) fires immediately on the 5th release; all other counts wait out the window. Because nothing debounces a burst, quint never acts on its own: `togglemode.show_toggle_mode()` asks first and only a hold switches mode (review B7). The Version screen's triple click opens the same prompt.
 - A hold of ≥ 3 s while pressed returns `"sleep"` immediately (`hold_ms`, not 2 s).
 - A click is only ~100 ms of debounced level change and the button is **sampled only when polled** — any screen loop that does a frame draw plus a telemetry/nav tick between polls can step straight over one. Interleave `poll_action()` between expensive steps, as `TurtleWaitingScreen._poll()` does.
 - `btn.reset()` clears all pending state — call it at the start of any interactive screen.
@@ -376,6 +362,12 @@ mapping stands (single advances, double toggles GPS).
   drains the UART itself only when the cache is stale (airOS), publishing what it reads. A screen that reads
   NMEA without publishing silently strips lat/lon from every stamp taken while it is
   open.
+- Every fix is checked twice (review B8): `read_nmea()` drops sentences with a
+  missing or wrong `*hh` checksum, and `gpsfix.update()` drops a jump of more
+  than 1° from the last accepted fix (returning False) until 5 agreeing fixes
+  at the new place arrive. Read NMEA only through `read_nmea()` and publish
+  only through `gpsfix.update()`, or a reader bypasses both.
+  Host test: `cd device && python3 ../tests/gps_integrity_host.py`.
 - The queue drains in batches of `FLUSH_CHUNK` (100) readings, well under the
   server's 1000-per-batch limit (`flush_queue()` in `src/net/telemetry_client.py`).
   Delivered readings are cut from the file once per round, not per chunk; a
@@ -486,7 +478,12 @@ Two independent navigation targets:
   screen** (start / end of a journey), not the Destination screen. All of these
   are **best-effort mirrored** to `turtles_tb.set_*` columns via `PATCH
   /v1/device` (`src/net/device_client.py`) — for the dashboard only; the local
-  `config.json` is authoritative for navigation.
+  `config.json` is authoritative for navigation. Writers go through
+  `actions.save_set_fields()`, which only flags the change
+  (`device_client.mark_pending()`, device-owned file `device_patch_pending`);
+  the background thread PATCHes whenever WiFi is up and retries every 5 min,
+  and `step_api()` retries at boot (review B13). Never PATCH from the main
+  thread.
 
 `WaypointSequencer` (`src/nav/waypoints.py`) resolves the active target in this
 order: `set_waypoints` → `set_destination` → `mission_waypoints` →
@@ -657,7 +654,7 @@ the standard Device Information `0x180A` (manufacturer, model, firmware
 
 ## Configuration (`config.py` / `config.json`)
 
-`load_config()` reads `config.json`, applies defaults, and migrates legacy keys. `save_config(cfg)` writes back atomically. **Writers use `update_config(changes)`**, which reloads, merges, normalizes and saves in one step. Calling `save_config()` on a dict loaded earlier silently reverts anything written in between (a Bluetooth command, the boot API sync, another screen).
+`load_config()` reads `config.json`, applies defaults, and migrates legacy keys. `save_config(cfg)` writes `config.json.tmp` and renames it over `config.json` (never remove first: review B6). If `config.json` is missing or corrupt, `load_config()` recovers from the `.tmp`; if neither parses but `config.json` exists, it runs on defaults and `save_config()` refuses to write, so the credentials are never blanked. Host test: `cd device && python3 ../tests/config_save_host.py`. **Writers use `update_config(changes)`**, which reloads, merges, normalizes and saves in one step. Calling `save_config()` on a dict loaded earlier silently reverts anything written in between (a Bluetooth command, the boot API sync, another screen).
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
@@ -780,8 +777,7 @@ Call `toggle.draw()` on every `_draw()` call — it re-renders from scratch each
 1. Create `device/src/ui/screens/yourscreen.py` with a class that has `show_live(self, btn)`.
 2. Add a case in `src/app/main.py`'s `get_screen()` factory.
 3. Import the connection header if the screen should show connectivity icons.
-4. Pre-load the module in `main.py`'s `_preload_screens()` to avoid post-WiFi MemoryError on ESP32.
-5. If the screen is turtle-mode-specific, document which carousel it appears in.
+4. If the screen is turtle-mode-specific, document which carousel it appears in.
 
 ---
 
@@ -803,7 +799,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/h2h-project/turtleOS/main/sc
 
 Do **not** run these as `curl -sSL ... | bash`. Both scripts detect a non-interactive stdin and reattach it to `/dev/tty` (`exec < /dev/tty`) so `read` prompts still work when piped from `curl` — but that `exec` reassigns the shell's fd 0, which in a `curl | bash` pipeline *is* the read end of curl's own pipe. Severing it mid-script makes curl fail with `curl: (23) Failure writing output to destination` partway through. Process substitution (`bash <(curl ...)`) feeds the script through a separate fd, so `exec < /dev/tty` only ever touches keyboard input and doesn't disturb curl.
 
-**Synkers** (`sync_turtleOS.sh` / `sync_airOS.sh`, the "Version Updater" scripts) are for a device that's already been through the installer once. Run locally from a repo clone; they stage a XIAO-only copy (excludes Pico HAL and Pico-only overrides) and offer a menu:
+**Synkers** (`sync_turtleOS.sh` / `sync_airOS.sh`, the "Version Updater" scripts) are for a device that's already been through the installer once. Run locally from a repo clone; they stage a copy of `device/` (minus the device-owned runtime files), remove firmware files retired by an older upload, and offer a menu:
 
 ```bash
 # Interactive mode — menu: 1) reboot + watch boot log via REPL, 2) config.json only,
@@ -867,8 +863,8 @@ The XIAO's MicroPython heap lives in 8 MB PSRAM, so memory pressure is **not an 
 | Metric | Value |
 |---|---|
 | Total Python heap | ~7,998 KB |
-| Free after full boot (app + all preloads) | ~7,996 KB |
-| Full `_preload_screens()` cost (all screens + nav stack) | ~91 KB |
+| Free after full boot | ~7,996 KB |
+| All screens + nav stack, imported | ~91 KB |
 | Entire `src/nav/` stack bytecode | ~30 KB (≈0.4% of heap) |
 | Largest contiguous block allocatable after boot | 4 MB |
 
@@ -879,18 +875,17 @@ mpremote connect auto exec "import gc; gc.collect(); print('free:', gc.mem_free(
 mpremote connect auto exec "import uos; s=uos.statvfs('/'); print('flash free:', s[0]*s[3]//1024, 'KB')"
 ```
 
-The `[PRELOAD] start/done` lines printed at every boot show heap before/after module loading — if those numbers ever trend toward zero, that is the early warning.
+Screens are imported lazily by `run()`'s screen cache; there is no boot preload any more.
 
 ---
 
 ## Critical gotchas
 
-> Gotchas 1–5 below are **memory-discipline conventions inherited from the
-> small-heap boards (Pico W ~70 KB free, non-PSRAM ESP32)**. On the XIAO's
-> 8 MB heap they are not active constraints — `MemoryError`s from these
-> paths do not occur in practice. Keep following them as cheap hygiene
-> (they cost nothing and keep the code portable), but do not treat them as
-> blocking design constraints when building new features.
+> Gotchas 1–3 below are **memory-discipline conventions inherited from the
+> small-heap boards (Pico W ~70 KB free, non-PSRAM ESP32)**, which are no
+> longer supported. On the XIAO's 8 MB heap they are not active constraints.
+> Keep following them as cheap hygiene, but do not treat them as blocking
+> design constraints when building new features. 4 and 5 are retired.
 
 ### 1. WiFi MUST init before AirSensor on ESP32
 ESP32's WiFi PHY allocates a large contiguous block. If AirSensor (also a large allocation) runs first, the heap becomes fragmented and WiFi init crashes with `MemoryError` on small-heap boards. The boot pipeline enforces this order; there is no reason to change it.
@@ -899,15 +894,13 @@ ESP32's WiFi PHY allocates a large contiguous block. If AirSensor (also a large 
 Call `_gc()` before any `import`, sensor init, HTTP request, or JSON parse. MicroPython does not compact the heap; fragmentation is permanent until reset. (On the XIAO's 8 MB heap this is hygiene, not survival.)
 
 ### 3. Lazy imports everywhere
-Do not add top-level imports to screen files or flow modules. Import inside functions / `try` blocks. Screen modules are pre-loaded at boot but class instances are created lazily.
+Do not add top-level imports to screen files or flow modules. Import inside functions / `try` blocks. Screen modules and their instances are both loaded lazily by `run()`'s screen cache.
 
-### 4. Pre-load screen modules before WiFi (`_preload_screens`)
-On small-heap boards, module bytecode imports can fail after WiFi fragments the heap, so `main.py` pre-loads all screen modules before `step_wifi()`. If you add a new screen used in any carousel, add it to the `_preload_screens()` list — it keeps boot deterministic and costs ~nothing.
+### 4. (Retired) Screen preload
+`_preload_screens()` imported every screen before WiFi so small-heap boards wouldn't hit post-WiFi fragmentation. The XIAO already skipped it; it was removed in 2.7. `run()`'s screen cache imports each screen on first use. `device/main.py` still pre-activates the WiFi PHY when `wifi_enabled`, so `step_wifi()` connects from an active radio.
 
-**The XIAO ESP32-S3 skips the full preload entirely** (`_is_xiao` gate in `device/main.py`). On its 8 MB PSRAM heap there is no post-WiFi fragmentation to guard against, and the serial import-with-`gc.collect()` marathon (~110 KB of bytecode) added several seconds of blank OLED before the boot bar could draw. `run()`'s screen cache imports each screen lazily on first use instead. WiFi PHY pre-activation still runs. The Pico path is unchanged.
-
-### 5. Font pre-warming
-Font writers have lazy internal caches. Calling `w.size("A")` once during boot warms those caches. `_preload_screens()` does this for all fonts.
+### 5. (Retired) Font pre-warming
+Done inside `_preload_screens()`; removed with it.
 
 ### 6. `btn.reset()` vs `_post_screen_flush()`
 - `btn.reset()` clears ALL pending click state. Use it at the start of interactive screens (e.g. `WiFiScreen.show_live`).
@@ -928,8 +921,8 @@ The `timezone_offset_min` config key is applied only at display time in `TimeScr
 ### 11. `telemetry_enabled` is shared between Online and Telemetry screens
 Both screens read and write the same `cfg["telemetry_enabled"]` key. A double-click on either screen toggles the same setting. Reload config after toggling to stay in sync.
 
-### 12. ESP32 platform detection via `uos.uname().machine`
-`sys.platform` returns `"esp32"` on all ESP32 variants. `platform_tag()` resolves this in priority order: `"xiao"` in machine string → `"xiao_esp32s3"`; `"ESP32S3"` → `"esp32s3"`; `"esp32"` → `"esp32"`. The XIAO check must precede the generic S3 check because XIAO firmware may include both strings.
+### 12. The pin map doesn't depend on platform detection
+`sys.platform` is `"esp32"` on every ESP32 variant, so `platform_tag()` reads `board_type` from config, then `uos.uname().machine`. Since 2.7 that tag is only logged and reported over Bluetooth: `src/hal/board.py` always uses the XIAO map, so a build that doesn't name itself can't land on the wrong pins.
 
 ### 13. XIAO has no VBUS-detect GPIO
 `usb_power_present()` in `board_xiao_esp32_s3.py` returns `False` by default. Battery monitoring is handled by the INA219 over I2C (0x40).
@@ -970,6 +963,12 @@ NimBLE needs their answer synchronously, so they read and write
 ### 20. I2C_SYS retries a NACKed transfer once (`src/hal/i2c_retry.py`)
 With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–100 ms NACKs (OSError 19) for **every** device, and the immediate retry always succeeds; back-to-back transfers never fail, and 100 kHz doesn't help. The OLED init (~50 writes, aborts on the first error) therefore booted headless ("OLED: not found"). The XIAO `init_i2c()` returns a `RetryI2C` wrapper that retries EIO/ENODEV once (not timeouts). Scans look healthy throughout, so don't trust a scan as proof the bus works: `tests/oled_bus_test.py` measures the after-idle failure rate (healthy = 0/20 on every row).
 
+### 21. `ticks_ms` stamps go wrong after ~6.2 days — use `monotonic.ms()` for long ages
+`time.ticks_ms()` wraps every 2^30 ms (12.4 days) on the ESP32 and `ticks_diff()` is only right within half of that, so a stamp older than ~6.2 days reads as negative, i.e. fresh (review B5: a week-old GPS fix went out as current). Any "how long ago" stamp that can be days old (fix age, when SAFE began, wind solved, last good send, WiFi backoff) uses `src/app/monotonic.ms()`, compared by plain subtraction. Never pass a `monotonic.ms()` value to `ticks_diff()`/`ticks_add()` (OverflowError past 2^31). `_bg_tick()` calls `monotonic.ms()` every pass to keep it exact. Short deadlines re-armed every pass can stay on `ticks_ms`. Host test: `cd device && python3 ../tests/gpsfix_age_host.py`.
+
+### 22. Hardware timer ids come from `src/hal/timers.py`
+The ESP32-S3 has hardware timers 0-3, and `Timer(-1)` (virtual) raises on some MicroPython builds. The send LED blink and Morse used `Timer(-1)` with the error swallowed, so on those turtles they never ran (review B12). Start every periodic timer with `timers.periodic(timers.<NAME>, period_ms, cb)` and add a new user to the table at the top of that file: two users on one id silently replace each other's callback. Board check: `mpremote connect auto run tests/timer_ids.py`.
+
 ---
 
 ## Key file locations at a glance
@@ -983,9 +982,6 @@ With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–
 | Platform detection | `device/src/hal/platform.py` |
 | HAL facade | `device/src/hal/board.py` |
 | XIAO ESP32-S3 pin map (primary) | `device/src/hal/board_xiao_esp32_s3.py` |
-| ESP32-S3 pin map | `device/src/hal/board_esp32_s3.py` |
-| ESP32 pin map | `device/src/hal/board_esp32.py` |
-| Pico pin map | `device/src/hal/board_pico.py` |
 | Button handler | `device/src/input/button.py` |
 | Screen carousels | `device/src/ui/flows.py` |
 | OLED wrapper | `device/src/ui/oled.py` |
@@ -998,7 +994,7 @@ With the AHT21 module attached, the first transfer after I2C_SYS has idled ~5–
 | Battery screen | `device/src/ui/screens/battery.py` |
 | Telemetry scheduler | `device/src/app/telemetry_scheduler.py` |
 | Air sensor + reading | `device/src/sensors/air.py` |
-| GPS parser | `device/src/sensors/ublox6gps.py` |
+| GPS driver (L76K) | `device/src/sensors/xiao_gnss.py` |
 | HTTP client | `device/src/lib/urequests.py` |
 | Gesture/command actions (shared by OLED + Bluetooth) | `device/src/app/actions.py` |
 | Bluetooth peripheral / telemetry / commands | `device/src/net/ble_service.py`, `ble_telemetry.py`, `ble_commands.py` |

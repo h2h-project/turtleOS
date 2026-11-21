@@ -1,4 +1,4 @@
-# src/net/net_caps.py  (MicroPython / Pico-safe)
+# src/net/net_caps.py
 
 def wifi_supported() -> bool:
     """

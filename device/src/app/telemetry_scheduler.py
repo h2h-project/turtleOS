@@ -1,25 +1,12 @@
 # src/app/telemetry_scheduler.py
-# AirBuddy Telemetry Scheduler (Pico / MicroPython)
+# Telemetry scheduler: decides when a reading is due, builds the payload from
+# local sensors and hands it to the background process
+# (src/net/background_process.py), which owns WiFi, HTTP and the queue drain.
 
 import time
 
 LAST_SENT_FILE = "telemetry_last_sent.json"
 QUEUE_FILE = "telemetry_queue.json"
-
-# Morse code table (letters used in "BLESS THE AIR")
-_MORSE = {
-    'A': '.-',
-    'B': '-...',
-    'E': '.',
-    'H': '....',
-    'I': '..',
-    'L': '.-..',
-    'R': '.-.',
-    'S': '...',
-    'T': '-',
-}
-_MORSE_UNIT_MS = 50   # 1 unit = 50 ms  →  dot=50 ms, dash=150 ms
-
 
 def _json():
     """Lazy JSON import (prefer ujson)."""
@@ -37,14 +24,6 @@ def _gc_collect():
         gc.collect()
     except Exception:
         pass
-
-
-def _gc_free_kb():
-    try:
-        import gc
-        return gc.mem_free() // 1024
-    except Exception:
-        return -1
 
 
 class TelemetryScheduler:
@@ -68,20 +47,12 @@ class TelemetryScheduler:
         self._dbg_every_n = 1
         self._dbg_count = 0
 
-        # Button LED for Morse signalling — acquired lazily on first use
-        self._led = None
-        self._led_ready = False
-        self._led_on_val = 1   # logic level that turns the LED on
-        self._led_off_val = 0  # logic level that turns it off
-        self._consecutive_net_fails = 0
-        self._last_gps_lat = None
-        self._last_gps_lon = None
-        self._gps_reject_streak = 0
-
         # Public state for UI (Online screen reads this instead of making its own HTTP)
         # last_ms stamps every send *attempt* (success or failure); last_ok_ms
         # stamps only a successful one, so "last sent" on the Online screen can
         # report actual connectivity instead of the most recent retry.
+        # last_ms is ticks_ms (short "did a send just finish" checks only);
+        # last_ok_ms is src/app/monotonic.ms(), because it can be days old.
         self.api_state = {"ok": None, "sending": False, "msg": "", "last_ms": None, "last_ok_ms": None}
         self._send_now = False
         self._next_event_try_ms = time.ticks_ms()   # see tick(): journey events
@@ -90,12 +61,9 @@ class TelemetryScheduler:
         # hand-taken registry stamp rather than an automatic sample.
         self._manual_flag = False
 
-        # Inline-path WiFi retry backoff — see the reconnect call in tick().
-        self._last_wifi_attempt_ms = None
-        self._wifi_fail_streak = 0
-
         # Background process — set via set_background_process() after start-up.
-        # When present, tick() hands payloads off non-blocking instead of sending inline.
+        # tick() hands every payload to it; until it is attached (or if its
+        # thread is down) payloads go to the flash queue, which it drains.
         self._background_process = None
 
     def set_background_process(self, background_process):
@@ -170,65 +138,6 @@ class TelemetryScheduler:
         except Exception:
             pass
 
-    def _get_led(self):
-        if not self._led_ready:
-            self._led_ready = True
-            try:
-                from machine import Pin
-                # Prefer the dedicated button LED; fall back to the onboard user LED
-                # (XIAO ESP32-S3 has no button LED but does have a user LED on GPIO21,
-                # active-low, exposed via user_led_pin() / user_led_active_value()).
-                from src.hal.board import btn_led_pin
-                pin_num = btn_led_pin()
-                if pin_num is not None:
-                    self._led = Pin(int(pin_num), Pin.OUT)
-                    self._led_on_val = 1
-                    self._led_off_val = 0
-                else:
-                    from src.hal.board import user_led_pin, user_led_active_value
-                    pin_num = user_led_pin()
-                    if pin_num is not None:
-                        self._led = Pin(int(pin_num), Pin.OUT)
-                        self._led_on_val = int(user_led_active_value())
-                        self._led_off_val = 1 - self._led_on_val
-            except Exception:
-                self._led = None
-        return self._led
-
-    def _morse_blink(self, phrase):
-        """Blink the button LED in Morse code for the given phrase (blocking).
-        Spaces between words produce a 7-unit silence."""
-        led = self._get_led()
-        if led is None:
-            return
-        u = _MORSE_UNIT_MS
-        try:
-            prev_was_space = True   # suppress leading gap
-            for char in phrase.upper():
-                if char == ' ':
-                    time.sleep_ms(u * 7)   # word gap
-                    prev_was_space = True
-                    continue
-                if not prev_was_space:
-                    time.sleep_ms(u * 3)   # inter-letter gap
-                prev_was_space = False
-                pattern = _MORSE.get(char, '')
-                first_sym = True
-                for sym in pattern:
-                    if not first_sym:
-                        time.sleep_ms(u)   # intra-symbol gap
-                    first_sym = False
-                    led.value(self._led_on_val)
-                    time.sleep_ms(u * 3 if sym == '-' else u)
-                    led.value(self._led_off_val)
-        except Exception:
-            pass
-        finally:
-            try:
-                led.value(self._led_off_val)
-            except Exception:
-                pass
-
     def _ensure_client(self, cfg):
         if self._client is not None:
             return self._client
@@ -299,8 +208,6 @@ class TelemetryScheduler:
 
         return False
 
-    _GPS_MAX_DELTA = 1.0        # degrees (~111 km); jump larger than this is suspect
-    _GPS_RELOC_THRESH = 5       # clear reference after this many consecutive all-rejected ticks
     _GPS_FRESH_MS = 5000        # a cache this new is someone else's live drain: just use it
     _GPS_FALLBACK_MS = 300000   # oldest cached fix a reading may still carry
 
@@ -330,11 +237,9 @@ class TelemetryScheduler:
         return None, None
 
     def _drain_gps_to_cache(self, gpsfix):
-        """Drain the UART to the end and publish the newest believable RMC
-        (and any GGA) to gpsfix. A jump of more than _GPS_MAX_DELTA from the
-        last accepted fix is dropped as a glitch until it persists."""
-        delta_rejects = 0
-        accepted = False
+        """Drain the UART to the end and publish every RMC (and any GGA) to
+        gpsfix. read_nmea() has already dropped bad checksums and
+        gpsfix.update() drops position jumps, for every reader (review B8)."""
         try:
             for _ in range(30):
                 line = self.gps.read_nmea()
@@ -346,26 +251,10 @@ class TelemetryScheduler:
                 if "RMC" not in line:
                     continue
                 lat, lon, cog = gpsfix.parse_rmc(line)
-                if lat is None:
-                    continue
-                if self._last_gps_lat is not None:
-                    if (abs(lat - self._last_gps_lat) > self._GPS_MAX_DELTA or
-                            abs(lon - self._last_gps_lon) > self._GPS_MAX_DELTA):
-                        delta_rejects += 1
-                        continue
-                self._last_gps_lat = lat
-                self._last_gps_lon = lon
-                self._gps_reject_streak = 0
-                gpsfix.update(lat, lon, cog)
-                accepted = True
+                if lat is not None:
+                    gpsfix.update(lat, lon, cog)
         except Exception:
             pass
-        if not accepted and delta_rejects > 0:
-            self._gps_reject_streak += 1
-            if self._gps_reject_streak >= self._GPS_RELOC_THRESH:
-                self._last_gps_lat = None
-                self._last_gps_lon = None
-                self._gps_reject_streak = 0
 
     def _build_payload_parts(self, reading, rtc_temp_c=None):
         values = {}
@@ -601,35 +490,6 @@ class TelemetryScheduler:
                 pass
         return out if out else None
 
-    # Mirrors TelemetryBackgroundProcess — see the rationale there.
-    WIFI_RETRY_BASE_MS = 900000      # 15 min
-    WIFI_RETRY_CAP_MS = 43200000     # 12 h
-    WIFI_FAIL_STREAK_MAX = 6
-
-    def _may_retry_wifi(self, cfg=None):
-        """True when the inline fallback path may attempt an association again.
-
-        Honours mission_connection_mode: wifi_manual / lora never bring the
-        radio up automatically. This path has no screen wiring, so there is no
-        force override here — a deliberate reconnect goes through the
-        background process.
-        """
-        try:
-            mode = str((cfg or {}).get("mission_connection_mode", "wifi_auto") or "wifi_auto")
-        except Exception:
-            mode = "wifi_auto"
-        if mode != "wifi_auto":
-            return False
-
-        last = self._last_wifi_attempt_ms
-        if last is None:
-            return True
-        streak = min(self._wifi_fail_streak, self.WIFI_FAIL_STREAK_MAX)
-        wait = self.WIFI_RETRY_BASE_MS << streak
-        if wait > self.WIFI_RETRY_CAP_MS:
-            wait = self.WIFI_RETRY_CAP_MS
-        return time.ticks_diff(time.ticks_ms(), last) >= wait
-
     def _build_full_payload(self, cfg, rtc_dict, do_print=False):
         """Build a complete telemetry payload dict from all local sensors.
         Returns the payload dict, or None if any blocking condition is unmet.
@@ -859,21 +719,22 @@ class TelemetryScheduler:
         if do_print:
             self._dbg_print("telemetry: DUE interval_s=", interval_s)
 
-        # --- Background process path (non-blocking) ---
-        # When a TelemetryBackgroundProcess is attached, skip ALL main-thread
-        # WiFi operations (is_connected / reconnect block on the WiFi driver mutex
-        # while WPA2 auth is running on the bg thread). Build the payload and hand
-        # it off immediately; the bg thread owns WiFi reconnect, HTTP POST, and
-        # queue flush without ever blocking the main thread or the button poll.
-        if self._background_process is not None:
-            # Build payload from local sensors (WiFi-independent, non-blocking)
-            payload = self._build_full_payload(cfg, rtc_dict, do_print=do_print)
-            if payload is None:
-                return
+        # --- Hand off to the background process (non-blocking) ---
+        # Never touch WiFi here: is_connected() / reconnect() block on the
+        # WiFi driver mutex while WPA2 auth runs on the bg thread. Build the
+        # payload and hand it off; the bg thread owns reconnect, HTTP POST
+        # and queue flush. There is no inline send path any more (code review
+        # section 2): with no background process, or its thread down, the
+        # reading goes to the flash queue, which the thread drains later.
+        payload = self._build_full_payload(cfg, rtc_dict, do_print=do_print)
+        if payload is None:
+            return
 
+        bp = self._background_process
+        if bp is not None:
             # Refresh api_state from bg result so Online screen stays current.
             try:
-                bp_result = self._background_process.result()
+                bp_result = bp.result()
                 if bp_result.get("last_ms") is not None:
                     self.api_state["sending"] = bool(bp_result.get("sending", False))
                     if bp_result.get("ok") is not None:
@@ -888,155 +749,18 @@ class TelemetryScheduler:
 
             if do_print:
                 self._dbg_print("telemetry: handing off to background_process")
-            if self._background_process.put_payload(payload, cfg):
+            if bp.put_payload(payload, cfg):
                 return None
 
-            # The background thread is not running (never started, or it
-            # crashed). Without this fallback the payload would be dropped in
-            # silence while the UI reports a successful stamp.
-            self._dbg_print("telemetry: bg thread down — queueing to flash")
-            try:
-                self._ensure_client(cfg).enqueue(payload)
-                self.api_state["ok"] = False
-                self.api_state["msg"] = "queued (bg down)"
-                self.api_state["last_ms"] = time.ticks_ms()
-            except Exception as _qe:
-                self._dbg_print("telemetry: queue err", repr(_qe))
-            return False
-
-        # --- Inline send path (fallback: no background process attached) ---
-        # WiFi: attempt reconnect, but do NOT return early on failure.
-        # Readings are always built and queued to flash; HTTP only fires when connected.
-        wifi_ok = True
-        if self.wifi:
-            try:
-                if not self.wifi.is_connected():
-                    ssid = str(cfg.get("wifi_ssid") or "")
-                    pw = str(cfg.get("wifi_password") or "")
-                    # Rate-limited: reconnect() runs a full-power wlan.scan(),
-                    # so retrying it on every send drains the battery for
-                    # nothing when no AP is in range. The background path gates
-                    # this on an explicit request instead (see
-                    # TelemetryBackgroundProcess.request_wifi_check); this
-                    # inline fallback has no screen wiring, so it uses a plain
-                    # time floor to stay self-recovering.
-                    if cfg.get("wifi_enabled", False) and ssid and self._may_retry_wifi(cfg):
-                        if do_print:
-                            self._dbg_print("telemetry: wifi down, reconnecting")
-                        self._last_wifi_attempt_ms = time.ticks_ms()
-                        try:
-                            self.wifi.reconnect(ssid, pw, timeout_s=6)
-                        except Exception as _re:
-                            if do_print:
-                                self._dbg_print("telemetry: reconnect err", repr(_re))
-                        if self.wifi.is_connected():
-                            self._wifi_fail_streak = 0
-                        elif self._wifi_fail_streak < self.WIFI_FAIL_STREAK_MAX:
-                            self._wifi_fail_streak += 1
-                wifi_ok = self.wifi.is_connected()
-            except Exception:
-                wifi_ok = False
-
-        # Build payload from local sensors (WiFi-independent)
-        payload = self._build_full_payload(cfg, rtc_dict, do_print=do_print)
-        if payload is None:
-            return
-
-        client = self._ensure_client(cfg)
-
-        # Offline: enqueue to flash and return — HTTP fires on next connected tick
-        if not wifi_ok:
-            if do_print:
-                self._dbg_print("telemetry: wifi offline — queuing to flash")
-            client.enqueue(payload)
-            self.write_last_sent(payload["recorded_at"], ok=False)
-            self.api_state["sending"] = False
+        # No background process attached yet, or its thread is not running.
+        # Without this the payload would be dropped in silence while the UI
+        # reports a successful stamp.
+        self._dbg_print("telemetry: no background sender — queueing to flash")
+        try:
+            self._ensure_client(cfg).enqueue(payload)
             self.api_state["ok"] = False
-            self.api_state["msg"] = "queued (offline)"
+            self.api_state["msg"] = "queued (bg down)"
             self.api_state["last_ms"] = time.ticks_ms()
-            try:
-                from src.ui.connection_header import set_api_ok
-                set_api_ok(False)
-            except Exception:
-                pass
-            return False
-
-        # --- Inline send path (fallback when no background process) ---
-        # Online: re-assert PM mode before TX — ESP32 can silently revert to
-        # PM_POWERSAVE after idle periods, causing OSError(116) on first connect.
-        if self.wifi is not None:
-            try:
-                self.wifi._apply_pm_performance(quiet=True)
-            except Exception:
-                pass
-
-        if cfg.get("morse_bless", False):
-            self._morse_blink("BLESSTHEAIR")
-
-        _gc_collect()
-        if do_print:
-            self._dbg_print("telemetry: heap", _gc_free_kb(), "KB free  sending...")
-
-        self.api_state["sending"] = True
-        ok = False
-        msg = ""
-        try:
-            ok, msg = client.send(payload)
-        except Exception as e:
-            ok = False
-            msg = "EXC " + repr(e)
-        finally:
-            self.api_state["sending"] = False
-            self.api_state["ok"] = bool(ok)
-            self.api_state["msg"] = str(msg)
-            self.api_state["last_ms"] = time.ticks_ms()
-            if ok:
-                self.api_state["last_ok_ms"] = self.api_state["last_ms"]
-            _gc_collect()
-
-        if do_print:
-            self._dbg_print("telemetry: heap", _gc_free_kb(), "KB free  done ok=%s" % ok)
-
-        try:
-            from src.ui.connection_header import set_api_ok
-            set_api_ok(bool(ok))
-        except Exception:
-            pass
-
-        self.write_last_sent(payload["recorded_at"], ok=bool(ok))
-
-        if do_print:
-            self._dbg_print("telemetry:", ok, msg)
-
-        if ok:
-            self._consecutive_net_fails = 0
-        else:
-            _is_net_err = ("OSError" in str(msg) or "TIMEOUT" in str(msg))
-            if _is_net_err and self.wifi is not None and hasattr(self.wifi, "reconnect"):
-                self._consecutive_net_fails += 1
-                ssid = str(cfg.get("wifi_ssid") or "")
-                pw = str(cfg.get("wifi_password") or "")
-                # Only force-reconnect if WiFi actually dropped, or after 3+
-                # consecutive failures. Don't disconnect a live radio just because
-                # one TCP request failed (that makes things worse, not better).
-                _wifi_down = not self.wifi.is_connected()
-                if ssid and (_wifi_down or self._consecutive_net_fails >= 3):
-                    if do_print:
-                        self._dbg_print(
-                            "telemetry: net fail #", self._consecutive_net_fails,
-                            "- reconnecting wifi"
-                        )
-                    try:
-                        self.wifi.reconnect(ssid, pw, timeout_s=6)
-                    except Exception as _e:
-                        if do_print:
-                            self._dbg_print("telemetry: reconnect err", repr(_e))
-                elif do_print:
-                    self._dbg_print(
-                        "telemetry: net fail #", self._consecutive_net_fails,
-                        "- tcp retry (wifi up)"
-                    )
-            else:
-                self._consecutive_net_fails = 0
-
-        return bool(ok)
+        except Exception as _qe:
+            self._dbg_print("telemetry: queue err", repr(_qe))
+        return False

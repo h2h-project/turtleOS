@@ -1,4 +1,4 @@
-# src/ui/screens/battery.py  (MicroPython / Pico-safe)
+# src/ui/screens/battery.py
 
 import time
 

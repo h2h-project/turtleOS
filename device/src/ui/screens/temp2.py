@@ -1,4 +1,4 @@
-# src/ui/screens/temp2.py — Temperature screen sourced from SCD41 (Pico / MicroPython safe)
+# src/ui/screens/temp2.py — Temperature screen sourced from SCD41
 #
 # Layout:
 # - Top-left:     "Temperature 2" title (f_med, no top margin)

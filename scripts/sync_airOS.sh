@@ -7,8 +7,6 @@ set -euo pipefail
 # Uploads the air-quality-only build of turtleOS (turtle_mode=false)
 # to a connected XIAO ESP32-S3 (or generic ESP32-S3).
 #
-# Excluded: Pico HAL, Pico-only override sources
-# (flows_pico.py, glyphs_pico.py, main_pico.py).
 # All XIAO features are included; sail servo / compass / nav
 # screens simply go unused in airOS mode.
 #
@@ -223,7 +221,7 @@ do_upload_sync() {
     || die "Upload failed. Try reconnecting the board and running again."
   echo "Upload complete."
 
-  msg "Removing excluded files (if present from a prior Pico install)"
+  msg "Removing retired firmware files (if left by an older upload)"
   "${MPREMOTE_CMD[@]}" exec "
 import os
 
@@ -232,6 +230,14 @@ EXCLUDED = [
     '/src/ui/flows_pico.py',
     '/src/ui/glyphs_pico.py',
     '/src/app/main_pico.py',
+    # Removed from the firmware in 2.7 (code review section 2): older
+    # uploads left them on the board.
+    '/src/hal/board_esp32.py',
+    '/src/hal/board_esp32_s3.py',
+    '/src/sensors/ublox6gps.py',
+    '/src/sensors/co2_test.py',
+    '/boot_state.txt',
+    '/early_diag.txt',
     '/.gitignore',
 ]
 
@@ -335,7 +341,6 @@ echo "already installed. First-time setup lives in install_airOS.sh instead."
 echo
 echo "Uploads the air-quality-only XIAO ESP32-S3 build:"
 echo "  Included: air quality screens, connectivity, GPS (optional)."
-echo "  Excluded: Pico HAL, Pico-only override sources."
 echo
 
 # ------------------------------------------------------------
@@ -431,15 +436,7 @@ stage_firmware() {
     --exclude 'journey_state.json' \
     --exclude 'nav_state.json' \
     --exclude 'ble_bonds.json' \
-    \
-    `# ── Pico HAL (not needed on ESP32-S3) ───────────────────────` \
-    --exclude 'src/hal/board_pico.py' \
-    \
-    `# ── Pico-only override sources (never installed on XIAO) ─────` \
-    --exclude 'src/ui/flows_pico.py' \
-    --exclude 'src/ui/glyphs_pico.py' \
-    --exclude 'src/app/main_pico.py' \
-    \
+    --exclude 'device_patch_pending' \
     "$DEVICE_DIR/" "$STAGE_DIR/"
 }
 

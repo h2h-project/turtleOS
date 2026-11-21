@@ -1,6 +1,6 @@
 # src/drivers/servo.py — MG996R sail servo driver (PWM, 50 Hz)
 
-from machine import Pin, PWM, Timer
+from machine import Pin, PWM
 
 # Every write powers the servo rail first (Pololu SSR on GPIO40); a False
 # request means the rail is held off, so the write is skipped.
@@ -13,20 +13,12 @@ HARD_MAX_US = 2600
 
 # glide_to() steps the pulse this often: one servo frame at 50 Hz.
 GLIDE_STEP_MS = 20
-# Hardware timer for the glide (nothing else in turtleOS uses 0-3; the LED
-# blink uses a virtual one), then a virtual one if the port refuses it.
-GLIDE_TIMER_IDS = (2, -1)
 
 
 def _glide_timer(cb):
-    for tid in GLIDE_TIMER_IDS:
-        try:
-            t = Timer(tid)
-            t.init(mode=Timer.PERIODIC, period=GLIDE_STEP_MS, callback=cb)
-            return t
-        except Exception:
-            pass
-    return None
+    # Hardware id from the registry in src/hal/timers.py (review B12).
+    from src.hal import timers
+    return timers.periodic(timers.SERVO_GLIDE, GLIDE_STEP_MS, cb)
 
 
 # Pins something else has taken over or deinit'd since (the Servo screen's

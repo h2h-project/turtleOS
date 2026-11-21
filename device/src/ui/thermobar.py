@@ -1,4 +1,4 @@
-# src/ui/thermobar.py  (MicroPython / Pico-safe)
+# src/ui/thermobar.py
 #
 # A reusable “thermo bar” UI primitive for SSD1306 framebuf displays.
 #

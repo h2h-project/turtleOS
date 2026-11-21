@@ -1,17 +1,11 @@
-# main.py (device root) — AirBuddy 2.1 launcher
+# main.py (device root) — turtleOS / airOS boot pipeline (XIAO ESP32-S3)
 # Boot -> Waiting -> src/app/main.run()
 #
-# Board-agnostic version:
-#  - Uses src.hal.board for I2C + GPS pins (Pico vs ESP32)
-#  - OLED class now uses HAL by default (your patched src/ui/oled.py)
-#
-# Focused patch (ESP32 stability):
-#  - Move WiFi earlier to avoid heap fragmentation (ESP32 WiFi PHY alloc crash)
-#  - Delay heavy allocations (AirSensor) until AFTER WiFi attempt
-#  - Add gc.collect() before WiFi init
-#  - Shorten WiFi timeout + reduce retries for fast fail
-#  - Hold each boot step on OLED for 0.5s (so errors are readable)
-#  - If btn_pin missing in HAL, show message and stop instead of crashing
+#  - Boot guard sampled first (hold the button at power-on for the REPL)
+#  - WiFi runs before AirSensor and other heavy allocations
+#  - Each boot step is shown on the OLED (Booter); failures are held readable
+#  - If btn_pin is missing in the HAL, show a message and reset instead of
+#    crash-looping
 
 from machine import RTC
 import time
@@ -721,77 +715,14 @@ try:
 except Exception:
     pass
 
+# turtleOS runs on the XIAO ESP32-S3 only; src/hal/board.py always uses its
+# pin map. The detected tag is still logged, so a turtle whose firmware
+# doesn't identify as a XIAO shows up in the boot log.
 try:
     from src.hal.platform import platform_tag as _platform_tag
-    _pt = _platform_tag()
-    _is_esp32 = _pt in ("esp32", "esp32s3", "xiao_esp32s3")
-    _is_pico  = (_pt == "pico")
-    _is_xiao  = (_pt == "xiao_esp32s3")  # 8 MB PSRAM heap — no screen-preload needed
-    try:
-        import json as _ptj
-        with open("config.json") as _ptf:
-            _pt_cfg_tag = str(_ptj.load(_ptf).get("board_type", "") or "").strip().lower()
-        _pt_source = "config" if _pt_cfg_tag == _pt else "detected"
-    except Exception:
-        _pt_source = "detected"
-    print("[BOOT] Board: {} ({})".format(_pt, _pt_source))
-    _hal_module = {
-        "pico":          "board_pico",
-        "esp32":         "board_esp32",
-        "esp32s3":       "board_esp32_s3",
-        "xiao_esp32s3":  "board_xiao_esp32_s3",
-    }.get(_pt, "board_esp32_s3 (fallback)")
-    print("[BOOT] Using HAL: {}".format(_hal_module))
+    print("[BOOT] Board: {} (HAL: board_xiao_esp32_s3)".format(_platform_tag()))
 except Exception:
-    _pt = "unknown"
-    _is_esp32 = False  # safe default: skip preload
-    _is_pico  = False
-    _is_xiao  = False
-    print("[BOOT] Board: unknown")
-
-# Pico W: import the LARGEST modules before OLED+fonts allocate 53 KB of
-# fragmented heap.  Each .py import needs a contiguous read buffer = file size.
-# air.py (36 KB) and src.app.main (23 KB, pulls flows+clicks as side effects)
-# cannot fit after OLED fragments the heap; they can fit on a clean heap here.
-# If either import fails, the preload list below retries as a fallback.
-if _is_pico:
-    import gc as _early_gc
-    _early_log = []
-    _early_log.append("start {} KB free".format(_early_gc.mem_free() // 1024))
-    # Import large modules BEFORE OLED+fonts fragments the heap.
-    # Each .py file needs a contiguous read buffer = source file size.
-    # Order matters: largest first while heap is cleanest.
-    #   air.py                    ~36 KB  ← biggest, must be first
-    #   app/main.py               ~23 KB  ← pulls flows+clicks as side-effects
-    #   glyphs.py                 ~28 KB  ← imported by connection_header → waiting → oled.__init__
-    #   connection_header          ~6 KB  ← imported by waiting → oled.__init__ (imports glyphs)
-    #   thermobar.py               ~8.5 KB ← needed by eco2/tvoc sensor screens
-    #   sensor screens             ~10 KB each ← needed for single-click carousel; heap too
-    #                                           fragmented at runtime to import lazily (~13 KB free)
-    #   rtc_sync.py                ~9 KB  ← used inside run()
-    #   telemetry_scheduler.py    ~23 KB  ← lazily imported by TelemetryState._ensure_scheduler();
-    #                                        fails with MemoryError on fragmented post-WiFi heap,
-    #                                        silently breaking all telemetry. Must load here.
-    for _em in ("src.sensors.air", "src.app.main", "src.ui.glyphs",
-                "src.ui.connection_header", "src.ui.thermobar",
-                "src.ui.screens.eco2", "src.ui.screens.tvoc",
-                "src.ui.screens.temp",
-                "src.ui.screens.selfdestruct",
-                "src.app.rtc_sync",
-                "src.app.telemetry_scheduler"):
-        try:
-            __import__(_em)
-            _early_gc.collect()
-            _early_log.append("OK {} {} KB free".format(_em.split(".")[-1], _early_gc.mem_free() // 1024))
-        except Exception as _em_e:
-            _early_gc.collect()
-            _early_log.append("FAIL {} {}".format(_em.split(".")[-1], repr(_em_e)))
-    try:
-        with open("early_diag.txt", "w") as _edf:
-            _edf.write("\n".join(_early_log) + "\n")
-    except Exception:
-        pass
-    del _early_gc, _em, _early_log
+    print("[BOOT] Board: unknown (HAL: board_xiao_esp32_s3)")
 
 # I2C diagnostic: confirm which pins are in use and scan the bus before
 # attempting OLED init, so a wiring problem is distinguishable from a driver problem.
@@ -853,269 +784,36 @@ if _bg_debug:
     raise SystemExit
 
 
-def _preload_screens(oled, is_pico=False, turtle_mode=False):
-    """
-    Import screen module bytecodes while heap is still clean (pre-WiFi).
-    Also pre-warm font metric paths on each writer.
-    Both operations must complete before step_wifi() runs.
+# Read config once, early: the WiFi PHY decision below and the boot screen
+# (_turtle_boot) need it before step_load_config() runs.
+try:
+    _early_cfg = load_cfg_dict()
+except Exception:
+    _early_cfg = None
 
-    Required on ESP32 AND Pico W when wifi_enabled=True.
-    On ESP32: the WiFi PHY allocates ~16 KB of C-heap rx buffers; loading
-    module bytecodes after that causes fragmentation-induced MemoryErrors.
-    On Pico W: the CYW43 driver allocates Python-heap memory on connect;
-    post-WiFi the heap is fragmented enough that even a 1280-byte bytecode
-    (e.g. src.input.button) fails with MemoryError.
-    Only skip when WiFi is disabled — then no PHY allocation occurs and the
-    RAM cost of loading ~52 KB of bytecodes upfront is pure waste.
-
-    Pico W has only ~70 KB free Python heap (CYW43 firmware overhead takes
-    ~130 KB of the 200 KB total).  Loading the full ~52 KB module set fails
-    silently — each failed __import__() partially allocates, then frees,
-    leaving the heap MORE fragmented.  On Pico, load only the small set of
-    modules that MUST be in sys.modules to prevent crashes in run().
-    """
-    _gc()
-    try:
-        import gc as _gc_mod
-        _f = _gc_mod.mem_free(); _t = _f + _gc_mod.mem_alloc()
-        print("[PRELOAD] start: {} KB free of {} KB total".format(_f // 1024, _t // 1024))
-    except Exception:
-        pass
-
-    if is_pico:
-        # Pico W: ~70 KB free (fragmented).  Full preload silently fails and
-        # worsens fragmentation via partial alloc/free churn.
-        # Load only the modules that MUST be in sys.modules to avoid a crash
-        # inside run() and to allow wifi_supported() to succeed.
-        # NOTE: even when WiFi is disabled, the boot pipeline (BME280/AirSensor
-        # imports) fragments the heap enough that a 1280-byte allocation for
-        # src.app.main fails post-boot.  Load it here while the heap is clean.
-        # air, app.main (+ flows + clicks as side-effects) are imported above,
-        # before OLED+fonts allocate 53 KB of fragmented heap.
-        # Only the remaining smaller modules need to be preloaded here.
-        _pico_mods = (
-            "src.ui.waiting",             # ~8 KB  — imported inside run(); fails post-boot
-            "src.ui.screens.time",        # ~4 KB  — double-click: 1280-byte fail post-boot
-            "src.input.button",           # ~3 KB  — imported early in run()
-            "src.net.wifi_manager_null",  # 1.3 KB — crash fix: line 252 of run()
-            "src.net.net_caps",           # 0.5 KB — wifi_supported() probe in step_wifi
-        )
-        _diag_lines = []
-        for mod in _pico_mods:
-            try:
-                _f0 = _gc_mod.mem_free()
-                __import__(mod)
-                _gc()
-                _f1 = _gc_mod.mem_free()
-                _diag_lines.append("OK {} {}KB".format(mod.split(".")[-1], (_f0 - _f1) // 1024))
-            except Exception as _pe:
-                _gc()
-                _diag_lines.append("FAIL {} {}".format(mod.split(".")[-1], repr(_pe)))
-                print("[PRELOAD] FAIL {}: {}".format(mod.split(".")[-1], repr(_pe)))
-        try:
-            with open("preload_diag.txt", "w") as _df:
-                _df.write("\n".join(_diag_lines) + "\n")
-        except Exception:
-            pass
-        del _diag_lines
-        try:
-            _f = _gc_mod.mem_free(); _t = _f + _gc_mod.mem_alloc()
-            print("[PRELOAD] done:  {} KB free of {} KB total".format(_f // 1024, _t // 1024))
-        except Exception:
-            pass
-        _gc()
-        return
-
-    # --- ESP32 full preload ---
-    # Pre-load bytecode for all commonly-used screens.
-    # After WiFi fragments the heap these imports would fail with MemoryError.
-    # With modules already in sys.modules, get_screen() only allocates the instance.
-    # _gc() between each import helps coalesce free blocks on a tight heap.
-    for mod in (
-        # Load clicks before flows: flows imports clicks at top-level, so loading
-        # clicks first lets gc() run between them rather than atomically.
-        "src.ui.clicks",       # ~2 KB — used by flows + app.main
-        "src.ui.flows",        # ~9 KB — carousel orchestration (top-level import in app.main)
-        # app.main + button must be preloaded: they're imported post-WiFi when the
-        # heap is fragmented, and their bytecode allocations (~7 KB, ~3 KB) fail there.
-        "src.app.main",        # ~7 KB — the run() entry point
-        "src.input.button",    # ~3 KB — imported at line 83 of run(); fails post-WiFi
-        "src.ui.waiting",      # ~8 KB — imported unconditionally at top of run()
-        "src.ui.connection_header",  # ~3 KB — imported at top of run(); GPS constants
-        # Sensor modules: air.py is 887 lines / 30 KB source.  Importing it post-WiFi
-        # fragments the heap enough that a 136-byte class-dict allocation fails.
-        # Loading here (83 KB free, unfragmented) gives it plenty of room.
-        "src.sensors.air",     # ~11 KB — AirSensor + AirReading + AHT21 + ENS160
-        "src.drivers.scd4x",   # ~2 KB  — SCD41 driver (top-level import in air.py)
-        # Sensor carousel screens: these are accessed on single-click (the most
-        # common user action).  A failed WiFi connection attempt (12 s of association
-        # retries) fragments the Python heap enough that even 1280-byte module-bytecode
-        # allocations fail post-boot.  Loading them here, before WiFi runs, guarantees
-        # they fit in the unfragmented heap.
-        "src.ui.screens.co2",      # SCD41 CO2 live screen
-        "src.ui.screens.tvoc",     # ENS160 TVOC screen
-        "src.ui.screens.temp",     # AHT21/AHT10 temperature screen
-        "src.ui.screens.temp2",    # SCD41 temperature screen
-        "src.ui.screens.summary",  # summary screen (always shown at end of carousel)
-        "src.ui.screens.sleep",    # low-power screen (long-press flow)
-        "src.ui.screens.version",  # version/about screen (long-press flow, after sleep)
-        # eco2 is ENS160-only — load it too; it's small and accessed on every single-click
-        # when an ENS160 is present.
-        "src.ui.screens.eco2",     # ENS160 eCO2 screen
-        # Connectivity screens: accessed on triple-click, which is rare.
-        # Keep these lazy — triple-click is infrequent, and skipping them here saves
-        # ~12 KB of bytecode during the preload window.
-        # wifi, online, logging, device, time → lazy (get_screen retries on MemoryError)
-        # GPS, Compass, and Sailpoint must be preloaded only in turtle mode: they appear
-        # late in the turtle sensor carousel, after Device screen's HTTP attempt has
-        # fragmented the heap.  In non-turtle mode they are never shown, so loading them
-        # wastes ~6-9 KB of preload budget.
-    ):
-        try:
-            __import__(mod)
-            _gc()  # coalesce after each import — reduces fragmentation
-        except Exception:
-            pass
-
-    if turtle_mode:
-        for mod in (
-            "src.ui.screens.gps",       # GPS status + manual logging (hold flow)
-            "src.ui.screens.compass",   # compass heading screen (turtle sensor carousel)
-            "src.ui.screens.sailpoint", # AS5600 sail angle screen (turtle only)
-            "src.ui.screens.bluetooth", # Turtle Wrangler on/off (connectivity carousel)
-            # Nav stack: imported post-WiFi via _get_nav()/get_screen("state")
-            # when the heap is fragmented — bytecode must be resident by then.
-            "src.nav.state_machine",    # ~1 KB — also imported by telemetry on every send
-            "src.nav.bearing",          # ~2 KB — great-circle math
-            "src.nav.gpsfix",           # ~2 KB — shared GPS fix cache
-            "src.nav.pid",              # ~1 KB
-            "src.nav.luff",             # ~4 KB — sweep + rolling variance
-            "src.nav.heading",          # ~2 KB
-            "src.nav.waypoints",        # ~2 KB
-            "src.nav.controller",       # ~5 KB — orchestrator
-            "src.ui.screens.state",     # ~4 KB — three-circle machine-state screen
-        ):
-            try:
-                __import__(mod)
-                _gc()
-            except Exception:
-                pass
-
-    try:
-        _f = _gc_mod.mem_free(); _t = _f + _gc_mod.mem_alloc()
-        print("[PRELOAD] done:  {} KB free of {} KB total".format(_f // 1024, _t // 1024))
-    except Exception:
-        pass
-
-    # Pre-warm font writers: triggers any lazy caches before WiFi runs.
-    if oled:
-        for attr in ("f_small", "f_med", "f_large",
-                     "f_arvo16", "f_arvo20"):
-            try:
-                w = getattr(oled, attr, None)
-                if w:
-                    w.size("A")
-            except Exception:
-                pass
-
-    _gc()
-
-
-# Preload screen modules before WiFi runs on any WiFi-capable platform.
-# Both ESP32 and Pico W suffer post-WiFi heap fragmentation that prevents
-# large module-bytecode allocations (see _preload_screens docstring).
-#
-# IMPORTANT: Only preload when WiFi will actually run.
-# If wifi_enabled=False, the PHY never allocates, so preloading ~52 KB of
-# bytecodes is pure cost — it exhausts the heap and starves AirSensor init.
-# Load config early (before the usual boot step) so we can make this decision.
-# (_pt / _is_esp32 / _is_pico are set in the board-detection block at boot start.)
-
-_early_cfg = None
-_preload_needed = False
-if _is_esp32 or _is_pico:
-    try:
-        _early_cfg = load_cfg_dict()
-        if _early_cfg is None:
-            # Config unreadable — safe defaults differ by platform:
-            # ESP32: preload to avoid post-WiFi heap fragmentation crash.
-            # Pico W: preload worsens the ~70 KB fragmented heap; skip it.
-            _preload_needed = not _is_pico
-        else:
-            _preload_needed = bool(_early_cfg.get("wifi_enabled", False))
-    except Exception:
-        _preload_needed = not _is_pico  # same platform-specific safe default
-
-# Pre-activate the WiFi PHY *before* preloading fragments the heap.
-#
-# ESP32: wlan.active(True) allocates ~16 KB of static rx buffers from C heap.
-# After _preload_screens() those buffers can't fit contiguously → only 3 of 10
-# succeed → "Expected to init 10 rx buffer, actual is 3" → broken driver state.
-# Activating the radio here (C heap still unfragmented) gives WiFi all 10 buffers.
-#
-# Pico W / CYW43: creating WLAN(STA_IF) initialises the CYW43 driver and
-# allocates its Python-heap working memory.  Doing this before preloading
-# ensures those allocations land in the clean, unfragmented heap; after
-# preloading, only the much-smaller per-connection state is allocated.
-#
-# wifi_manager.connect() is patched to skip active(False)→active(True) when
-# the radio is already up, so this allocation is preserved through boot.
-_wlan_pre = None
-if (_is_esp32 or _is_pico) and _preload_needed:
+# Pre-activate the WiFi PHY when WiFi will run, so step_wifi() connects from an
+# already-active radio. (On small-heap ESP32s this also kept its rx buffers
+# off a fragmented heap; the XIAO's 8 MB PSRAM heap doesn't need that, and its
+# screens are imported lazily by run()'s screen cache instead of preloaded.)
+if bool((_early_cfg or {}).get("wifi_enabled", False)):
     _net_pre = None
     try:
         import network as _net_pre
-        _wlan_pre = _net_pre.WLAN(_net_pre.STA_IF)
-        _wlan_pre.active(True)
+        _net_pre.WLAN(_net_pre.STA_IF).active(True)
         print("[BOOT] WiFi PHY pre-activated")
-        # NOTE: do NOT call _wlan_pre.connect() here.
-        # On ESP32: connecting early deadlocks step_wifi() via WiFi-task mutex.
-        # On Pico:  connecting early is safe but unnecessary — step_wifi() will
-        # connect cleanly from IDLE state once the radio is already active.
+        # NOTE: do NOT connect here: connecting early deadlocks step_wifi()
+        # via the WiFi-task mutex.
     except Exception as _pre_e:
         print("[BOOT] WiFi PHY pre-activate failed:", repr(_pre_e))
-        _wlan_pre = None
-        # Pre-activation failed — skip preload (its only purpose is to protect
-        # against post-WiFi heap fragmentation; without WiFi there is no benefit).
-        _preload_needed = False
-        # ESP32 only: kill the half-started C WiFi task to stop it spamming
-        # "esp_netif_new_api / nvs alloc out of memory" errors after boot.
-        # Pico W: never call deinit() — it permanently destroys the CYW43 driver
-        # and prevents any reconnection attempt later in the session.
-        if _is_esp32 and _net_pre is not None:
+        # Kill the half-started C WiFi task so it doesn't spam
+        # "esp_netif_new_api / nvs alloc out of memory" after boot.
+        if _net_pre is not None:
             try:
                 _net_pre.deinit()
             except Exception:
                 pass
-    # Drop the Python reference — the C/CYW43 radio stays active (idle).
-    _wlan_pre = None
     _net_pre = None
-
-# XIAO ESP32-S3: the Python heap is in 8 MB PSRAM, so there is no post-WiFi
-# fragmentation to guard against and lazy screen imports at runtime are cheap.
-# The full preload was ~110 KB of module bytecode imported serially with a
-# gc.collect() between each — several seconds of blank OLED before the boot
-# bar could even draw. Skip it here; run()'s screen cache imports each screen
-# on first use instead. WiFi PHY pre-activation above still runs (it's cheap
-# and lets step_wifi connect from an already-active radio).
-if _preload_needed and not _is_xiao:
-    _preload_screens(
-        oled,
-        is_pico=_is_pico,
-        turtle_mode=bool((_early_cfg or {}).get("turtle_mode", False)),
-    )
-elif _is_pico:
-    # WiFi is disabled but we still need the core app modules preloaded.
-    # Even without WiFi PHY fragmentation, the boot pipeline (BME280/AirSensor
-    # imports) leaves the heap fragmented enough that a 1280-byte allocation for
-    # src.app.main fails.  No WiFi PHY pre-activation needed — just the modules.
-    _preload_screens(
-        oled,
-        is_pico=True,
-        turtle_mode=bool((_early_cfg or {}).get("turtle_mode", False)),
-    )
-else:
-    _gc()  # just collect — lazy imports work fine without WiFi PHY
+_gc()
 
 cfg = None
 rtc_info = None
@@ -1212,12 +910,9 @@ def step_wifi():
         ok, ip, status = wifi.connect(
             cfg.get("wifi_ssid", ""),
             cfg.get("wifi_password", ""),
-            # ESP32/ESP32-S3: RTCWDT fires at ~15s — stay under that threshold.
-            # Pico W / CYW43: no RTCWDT constraint; allow two retries because the
-            # CYW43 driver often reports spurious WRONG_PASSWORD (status=2) on the
-            # first cold-boot association attempt before recovering on hard-reset.
+            # RTCWDT fires at ~15 s — stay under that threshold.
             timeout_s=12,
-            retry=2 if _is_pico else 0,
+            retry=0,
             tick_cb=_wifi_tick
         )
 
@@ -1243,16 +938,12 @@ def step_wifi():
                     wifi.active(False)
                 except Exception:
                     pass
-            # Only deinit on ESP32 — on Pico, network.deinit() kills the CYW43
-            # driver permanently and prevents reconnection from the main loop or
-            # WiFi screen later in the session.
-            if _is_esp32:
-                try:
-                    import network
-                    if hasattr(network, "deinit"):
-                        network.deinit()
-                except Exception:
-                    pass
+            try:
+                import network
+                if hasattr(network, "deinit"):
+                    network.deinit()
+            except Exception:
+                pass
 
         wifi = None
         _gc()
@@ -1317,6 +1008,19 @@ def step_api():
                         _updates.get("mission_destination"), _updates.get("device_name")))
     except Exception as e:
         print("[BOOT] mission destination sync failed:", repr(e))
+
+    # A set_* change that never reached the dashboard (set offline, or the
+    # PATCH failed): push it now while the server just answered (B13). The
+    # background thread keeps retrying if this fails too.
+    if ok:
+        try:
+            from src.net import device_client
+            _pushed = device_client.push_pending(cfg)
+            if _pushed is not None:
+                print("[BOOT] pending dashboard set_* fields:",
+                      "pushed" if _pushed else "PATCH failed, background will retry")
+        except Exception as e:
+            print("[BOOT] dashboard push failed:", repr(e))
 
     try:
         from src.ui import connection_header
@@ -1635,15 +1339,9 @@ def step_init_runtime():
     loaded!" and the first drawn frame. Building them here keeps that work
     visible under the boot logo/progress bar instead. run() uses whatever
     was built here and only falls back to building it itself if a piece is
-    missing (e.g. this step was skipped on Pico, or something here failed).
+    missing (something here failed).
     """
     global _rt_i2c, _rt_ina, _rt_gps, _rt_wifi_mgr, _rt_nav, _rt_turtle_scr, _rt_ble
-
-    if _is_pico:
-        # Pico's tight heap doesn't have room for a second copy of this setup
-        # living in device/main.py's globals *and* run()'s locals — leave the
-        # Pico path exactly as it was.
-        return True, "SKIPPED (pico)"
 
     if not cfg:
         return True, "SKIPPED (No config)"
@@ -1675,12 +1373,10 @@ def step_init_runtime():
             print("[NAV] gps init failed:", repr(e))
             _rt_gps = None
 
-    # Same ESP32 gating run() used to apply: only re-enter the WiFi driver
-    # here if boot's own connection attempt actually succeeded, to avoid
-    # RTCWDT risk from broken driver state.
+    # Only re-enter the WiFi driver here if boot's own connection attempt
+    # actually succeeded, to avoid RTCWDT risk from broken driver state.
     _boot_wifi_ok = isinstance(wifi_boot, dict) and wifi_boot.get("ok")
-    _wifi_manager_ok = _boot_wifi_ok if _is_esp32 else True
-    if cfg.get("wifi_enabled", False) and _wifi_manager_ok:
+    if cfg.get("wifi_enabled", False) and _boot_wifi_ok:
         try:
             from src.net.net_caps import wifi_supported
             if wifi_supported():
@@ -1788,7 +1484,7 @@ def step_led():
         return True, "No onboard LED"
 
     try:
-        from machine import Pin as _Pin, Timer as _Timer
+        from machine import Pin as _Pin
         _boot_led_gpio = led_pin
         _boot_led_active = active_val
         # Hold the Pin object in a module global so GC cannot finalize it.
@@ -1798,10 +1494,10 @@ def step_led():
         _boot_led_on = True
         _boot_led_pin.value(active_val)  # start lit, then blink from here
         # 0.5 s periodic blink in the background (independent of boot-step timing).
-        # ESP32-S3 only supports hardware timer ids 0-3 (Timer(-1) raises
-        # ValueError); id 0 is free during boot and deinit'd before boot ends.
-        _boot_led_timer = _Timer(0)
-        _boot_led_timer.init(period=500, mode=_Timer.PERIODIC, callback=_boot_led_blink)
+        # Hardware timer id from src/hal/timers.py (BOOT_LED = 0, deinit'd
+        # before boot ends). Timer(-1) raises on some ESP32-S3 builds.
+        from src.hal import timers as _timers
+        _boot_led_timer = _timers.periodic(_timers.BOOT_LED, 500, _boot_led_blink)
         print("[BOOT] LED: OK GPIO{} (active={}), blinking @0.5s".format(led_pin, active_val))
         return True, "LED OK (GPIO{})".format(led_pin)
     except Exception as e:
@@ -1915,17 +1611,6 @@ if (
 # ------------------------------------------------------------
 # Preflight: Button HAL must exist (avoid crash loop)
 # ------------------------------------------------------------
-try:
-    import sys as _bsys, gc as _bgc
-    _bloglines = ["air={}".format('src.sensors.air' in _bsys.modules),
-                  "appmain={}".format('src.app.main' in _bsys.modules),
-                  "heap={}KB".format(_bgc.mem_free()//1024)]
-    with open("boot_state.txt", "w") as _bf:
-        _bf.write(" ".join(_bloglines) + "\n")
-    del _bsys, _bgc, _bloglines, _bf
-except Exception:
-    pass
-
 _btn_hal_ok = True
 try:
     from src.hal.board import btn_pin  # noqa: F401

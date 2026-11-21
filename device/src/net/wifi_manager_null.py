@@ -1,4 +1,4 @@
-# src/net/wifi_manager_null.py  (MicroPython / Pico-safe)
+# src/net/wifi_manager_null.py
 class NullWiFiManager:
     """
     Drop-in replacement for WiFiManager on non-WiFi boards.

@@ -1,5 +1,5 @@
 # src/net/wifi_manager.py
-# Pico W / MicroPython Wi-Fi manager (STA mode)
+# MicroPython Wi-Fi manager (STA mode)
 # Robust connect with sane status handling across firmware variants.
 
 import time

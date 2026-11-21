@@ -1,4 +1,4 @@
-# src/drivers/bme280.py — Minimal BME280 driver (MicroPython / Pico-safe)
+# src/drivers/bme280.py — Minimal BME280 driver
 # Measures: temperature (°C), relative humidity (%RH), pressure (hPa)
 # I2C address: 0x76 (SDO=GND, default) or 0x77 (SDO=VCC)
 # Uses forced mode: one measurement per read() call, sensor sleeps between reads.

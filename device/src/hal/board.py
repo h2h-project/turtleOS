@@ -1,123 +1,32 @@
 # src/hal/board.py
-# Board facade: import this everywhere instead of hardcoding pins.
+# Board facade: import pins from here, never hardcode them elsewhere.
+#
+# turtleOS runs on the Seeed XIAO ESP32-S3 only, so this always re-exports
+# board_xiao_esp32_s3. It used to pick a pin map from platform_tag(), and a
+# turtle whose firmware didn't identify as a XIAO (and had no board_type in
+# config.json) silently got the generic ESP32-S3 map: button LED on GPIO48,
+# no servo pin, no I2C_EXT. A port to new hardware adds its own board module
+# and switches here.
 
 from src.hal.platform import platform_tag
-
-_TAG = platform_tag()
-
-if _TAG == "pico":
-    from src.hal.board_pico import (
-        init_i2c,
-        i2c_pins,
-        gps_pins,
-        btn_pin,
-        btn_led_pin,
-        usb_power_present,
-    )
-
-elif _TAG == "esp32":
-    from src.hal.board_esp32 import (
-        init_i2c,
-        i2c_pins,
-        gps_pins,
-        btn_pin,
-        btn_led_pin,
-        neopixel_pin,
-        usb_power_present,
-    )
-
-elif _TAG == "esp32s3":
-    from src.hal.board_esp32_s3 import (
-        init_i2c,
-        i2c_pins,
-        gps_pins,
-        btn_pin,
-        btn_led_pin,
-        neopixel_pin,
-        usb_power_present,
-    )
-
-elif _TAG == "xiao_esp32s3":
-    from src.hal.board_xiao_esp32_s3 import (
-        init_i2c,
-        i2c_pins,
-        gps_pins,
-        btn_pin,
-        btn_led_pin,
-        neopixel_pin,
-        usb_power_present,
-        servo_pin,
-        servo_pwm_config,
-        servo_power_pin,
-        user_led_pin,
-        user_led_active_value,
-        init_i2c_ext,
-        i2c_ext_pins,
-    )
-
-else:
-    # Conservative fallback: try ESP32-S3 first, since it is your newer target.
-    from src.hal.board_esp32_s3 import (
-        init_i2c,
-        i2c_pins,
-        gps_pins,
-        btn_pin,
-        btn_led_pin,
-        neopixel_pin,
-        usb_power_present,
-    )
+from src.hal.board_xiao_esp32_s3 import (  # noqa: F401
+    init_i2c,
+    i2c_pins,
+    gps_pins,
+    btn_pin,
+    btn_led_pin,
+    neopixel_pin,
+    usb_power_present,
+    servo_pin,
+    servo_pwm_config,
+    servo_power_pin,
+    user_led_pin,
+    user_led_active_value,
+    init_i2c_ext,
+    i2c_ext_pins,
+)
 
 
 def tag():
-    return _TAG
-
-
-# Servo is only wired on XIAO ESP32-S3.  Stub out for all other boards so
-# callers can unconditionally import servo_pin / servo_pwm_config from here.
-try:
-    servo_pin
-except NameError:
-    def servo_pin():
-        return None
-
-try:
-    servo_pwm_config
-except NameError:
-    def servo_pwm_config():
-        return None
-
-# Servo power switch (SSR EN) is only wired on XIAO ESP32-S3; None elsewhere,
-# and src/drivers/servo_power.py then leaves the servo always powered.
-try:
-    servo_power_pin
-except NameError:
-    def servo_power_pin():
-        return None
-
-# I2C_EXT (second bus for plug-in sensors) exists only on XIAO ESP32-S3.
-# Stubs return None so callers can skip the bus when it isn't there.
-try:
-    init_i2c_ext
-except NameError:
-    def init_i2c_ext():
-        return None
-
-try:
-    i2c_ext_pins
-except NameError:
-    def i2c_ext_pins():
-        return None
-
-# user_led_pin / user_led_active_value are only defined on XIAO ESP32-S3.
-# Stubs return None / 1 so callers can check pin is None to skip.
-try:
-    user_led_pin
-except NameError:
-    def user_led_pin():
-        return None
-
-try:
-    user_led_active_value
-except NameError:
-    def user_led_active_value():
-        return 1
+    """The detected platform tag, for logs and Device Information only."""
+    return platform_tag()

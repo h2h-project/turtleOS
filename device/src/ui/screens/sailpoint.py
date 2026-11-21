@@ -1,4 +1,4 @@
-# src/ui/screens/sailpoint.py — AS5600 sail angle indicator (MicroPython / Pico-safe)
+# src/ui/screens/sailpoint.py — AS5600 sail angle indicator
 
 import time
 

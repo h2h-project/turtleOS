@@ -1,4 +1,4 @@
-# src/ui/screens/temp.py — Temperature screen (Pico / MicroPython safe)
+# src/ui/screens/temp.py — Temperature screen
 #
 # Layout:
 # - Top-left:     "Temperature" title (f_med, no top margin)

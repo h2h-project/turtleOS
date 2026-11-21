@@ -1,4 +1,4 @@
-# src/net/telemetry_client.py  (LOW-MEM, Pico-friendly)
+# src/net/telemetry_client.py
 #
 # Updated:
 # - Reads tiny JSON response on success / 202 to extract server_now (unix seconds)

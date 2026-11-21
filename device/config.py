@@ -1,4 +1,4 @@
-# config.py — AirBuddy 2.1 device configuration manager
+# config.py — turtleOS / airOS device configuration manager
 #
 # - Stores configuration in config.json on flash
 # - Applies defaults
@@ -12,6 +12,12 @@ import os
 
 CONFIG_FILE = "config.json"
 
+# Set by load_config() when config.json exists but can't be parsed and there
+# is no usable config.json.tmp. While set, save_config() refuses to write, so
+# no setting change can replace what's left of the file with defaults
+# (review B6). A re-upload (Synker option 2) writes the file directly.
+_write_locked = False
+
 # ----------------------------
 # Defaults
 # ----------------------------
@@ -24,8 +30,8 @@ DEFAULTS = {
 
     # --- Hardware ---
     "gps_enabled": True,
-    # "l76k" = Seeed GNSS Add-on for XIAO (Quectel L76K, PMTK commands) — default
-    # "neo6m" = u-blox NEO-6M (UBX binary) — LEGACY-NEO6M: remove when retired
+    # "l76k" = Seeed GNSS Add-on for XIAO (Quectel L76K, PMTK commands), the
+    # only module configured; the NEO-6M path was removed in 2.7.
     "gps_module": "l76k",
     "oled_col_offset": 0,  # 0 = large/SSD1306, 2 = small 1.3" SH1106
 
@@ -202,16 +208,45 @@ TELEMETRY_MODES = ("off", "auto", "manual")
 # ----------------------------
 # Public API
 # ----------------------------
-def load_config():
+def _read_json_dict(path):
+    """The dict stored at `path`, or None if it is missing, unreadable or
+    not a JSON object."""
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(path, "r") as f:
             cfg = json.load(f)
-        if not isinstance(cfg, dict):
-            cfg = {}
+        if isinstance(cfg, dict):
+            return cfg
     except Exception:
+        pass
+    return None
+
+
+def load_config():
+    global _write_locked
+    # Review B6: a reset mid-save used to leave no config.json, and the
+    # defaults written here then blanked the WiFi and device credentials.
+    # save_config() no longer removes the file first, but a config.json.tmp
+    # left by a cut-off save (or by older firmware) is still the newest
+    # complete copy, so fall back to it.
+    cfg = _read_json_dict(CONFIG_FILE)
+    recovered = False
+    if cfg is None:
+        cfg = _read_json_dict(CONFIG_FILE + ".tmp")
+        if cfg is not None:
+            recovered = True
+            print("[CONFIG] config.json unreadable; recovered from config.json.tmp")
+
+    # A config.json that exists but will not parse is never overwritten with
+    # defaults: whatever is left in it (credentials) beats a blank file. The
+    # device runs on defaults in memory until someone fixes or re-uploads it.
+    protect = cfg is None and file_exists(CONFIG_FILE)
+    _write_locked = protect
+    if protect:
+        print("[CONFIG] config.json unreadable and no backup; running on defaults, not saving")
+    if cfg is None:
         cfg = {}
 
-    changed = False
+    changed = recovered
 
     # --- Migrate legacy keys ---
     if "api_base" not in cfg and "api-base" in cfg:
@@ -263,23 +298,24 @@ def load_config():
     cfg, normalized_changed = _normalize_types(cfg)
     changed = changed or normalized_changed
 
-    if changed or not file_exists(CONFIG_FILE):
+    if not protect and (changed or not file_exists(CONFIG_FILE)):
         save_config(cfg)
 
     return cfg
 
 
 def save_config(cfg):
+    if _write_locked:
+        raise OSError("config.json unreadable; not overwriting it")
     tmp_file = CONFIG_FILE + ".tmp"
 
     with open(tmp_file, "w") as f:
         json.dump(cfg, f)
 
-    try:
-        os.remove(CONFIG_FILE)
-    except Exception:
-        pass
-
+    # LittleFS replaces the target atomically on rename, so there is never a
+    # moment with no config.json. Removing it first (as this used to) opened
+    # exactly that window: a reset between the remove and the rename lost
+    # the config (review B6).
     os.rename(tmp_file, CONFIG_FILE)
 
 

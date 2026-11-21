@@ -1,4 +1,4 @@
-# src/ui/screens/wifi.py  (MicroPython / Pico-safe)
+# src/ui/screens/wifi.py
 
 import time
 import sys as _sys

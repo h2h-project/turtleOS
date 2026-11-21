@@ -1,4 +1,4 @@
-# src/sensors/air.py  (MicroPython / Pico W) — Pico-safe
+# src/sensors/air.py
 #
 # Patched version:
 # - Adds safer AHT21 init + busy/status handling
@@ -74,7 +74,7 @@ def calculate_co2_confidence(
 
 class AirReading:
     """
-    Lightweight reading container (Pico-safe).
+    Lightweight reading container.
 
     ready:
       - True means ENS160 data passed basic validity checks.

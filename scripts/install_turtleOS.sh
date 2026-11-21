@@ -762,10 +762,7 @@ rsync -a \
     --exclude 'journey_state.json' \
     --exclude 'nav_state.json' \
     --exclude 'ble_bonds.json' \
-    --exclude 'src/hal/board_pico.py' \
-    --exclude 'src/ui/flows_pico.py' \
-    --exclude 'src/ui/glyphs_pico.py' \
-    --exclude 'src/app/main_pico.py' \
+    --exclude 'device_patch_pending' \
     "$DEVICE_DIR/" "$STAGE_DIR/"
 
 # ------------------------------------------------------------

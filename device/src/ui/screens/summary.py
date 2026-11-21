@@ -1,4 +1,4 @@
-# src/ui/screens/summary.py — Summary screen (Pico / MicroPython safe)
+# src/ui/screens/summary.py — Summary screen
 
 import time
 from src.ui.glyphs import (

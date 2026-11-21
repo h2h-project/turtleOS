@@ -1,8 +1,8 @@
-# src/ui/flows.py — Screen flow logic for AirBuddy
+# src/ui/flows.py — Screen flow logic
 #
 # PATCH (Feb 2026):
 # - Fix DeviceScreen.show_live(...) call signature (uses api_info, not api_boot/wifi_boot)
-# - Fetch + normalize device assignment info from /api/v1/device (Pico-safe)
+# - Fetch + normalize device assignment info from /api/v1/device
 # - Prevent "post-screen reset_and_flush()" from eating the next click:
 #   use a short post-screen flush WITHOUT btn.reset()
 # - Make WiFiScreen call match its signature: show_live(btn)
@@ -45,7 +45,7 @@ from src.ui.clicks import (
 
 
 # ------------------------------------------------------------
-# Small helpers (Pico-safe, low import overhead)
+# Small helpers
 # ------------------------------------------------------------
 def _gc():
     try:
@@ -1222,12 +1222,13 @@ def _sleep_flow_pass(btn, oled, get_screen, flush_ms, poll_ms, tick_fn,
         _ver_action = wait_for_single(btn, tick_fn=tick_fn)
 
     if _ver_action == "triple":
-        # Triple click on the Version screen flips turtle_mode and reboots —
-        # turtleOS <-> airOS, mirroring the quint-click gesture on the
-        # waiting screen (src/ui/screens/togglemode.py).
+        # Triple click on the Version screen offers to flip turtle_mode and
+        # reboot — turtleOS <-> airOS, mirroring the quint-click gesture on
+        # the waiting screen. A hold confirms (src/ui/screens/togglemode.py).
         try:
             from src.ui.screens.togglemode import show_toggle_mode
-            show_toggle_mode(oled, (cfg or {}).get("turtle_mode", False))
+            show_toggle_mode(oled, (cfg or {}).get("turtle_mode", False),
+                             btn, tick_fn=tick_fn)
         except Exception as e:
             print("[VERSION] mode switch failed:", repr(e))
 

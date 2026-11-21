@@ -145,7 +145,24 @@ SAFE permanently, even when the fix returns a minute later.
 return `ERR_WRONG_STATE` if the transition is refused. Let SAFE recover on its
 own when its cause clears (fix regained) after a hold-off.
 
-### B5. A GPS fix older than about 6.2 days reads as fresh — Confirmed (period per the ESP32 port)
+### B5. A GPS fix older than about 6.2 days reads as fresh — Confirmed (period per the ESP32 port), fixed in 2.7
+
+> **Fixed (turtleOS 2.7, `src/app/monotonic.py`).** `monotonic.ms()` is a
+> millisecond clock that never wraps: each call adds `ticks_diff()` since the
+> previous call to a running Python int, and `_bg_tick()` calls it several
+> times a second on every screen, so the gap is never near 6.2 days. It
+> ignores RTC changes, so a phone or GPS clock sync can't age a fix either.
+> `gpsfix` stamps RMC and GGA on it, so `get()` / `gga()` ages are right after
+> any uptime (3 months is ~7.8e9 ms, a long int on the ESP32). The same clock
+> now carries the other long-lived stamps: NavController's `_safe_since_ms`
+> (SAFE through a week-long outage would otherwise re-arm its 30 s hold-off
+> and refuse to clear), `_wind_solved_ms` (a week waiting for sun would skip
+> the resume sweep with stale wind), `_sailnav_since_ms`, the WiFi backoff's
+> `_last_wifi_attempt_ms` (scheduler and background thread) and
+> `api_state["last_ok_ms"]` on the Online screen. Short `ticks_ms` deadlines
+> that are re-armed every pass (nav cadence, sweep schedule, `last_ms`) stay
+> as they are. Host test: `cd device && python3 ../tests/gpsfix_age_host.py`
+> emulates the ESP32's 2^30 ms ticks period through 3 years.
 
 `src/nav/gpsfix.py:54-58`. The age is `ticks_diff(ticks_ms(), fix_ticks)`.
 `ticks_ms()` wraps every 2^30 ms (12.4 days) and `ticks_diff` is only valid
@@ -164,6 +181,15 @@ profile. The same pattern affects any `ticks_ms` stamp compared after 6 days:
 expired from a periodic tick once it passes a hard limit.
 
 ### B6. A power cut during a config save can wipe the WiFi and device credentials — Confirmed
+
+> **Fixed (turtleOS 2.7, `device/config.py`).** `save_config()` no longer
+> removes `config.json` before the rename, so there is no moment with no file.
+> `load_config()` falls back to `config.json.tmp` when `config.json` is
+> missing or won't parse (and writes the recovered copy back). If the file
+> exists, won't parse and there is no usable `.tmp`, the turtle runs on
+> defaults in memory and `save_config()` refuses to write until the next
+> load finds a good file, so no setting change can replace what's left with
+> blank credentials. Host test: `cd device && python3 ../tests/config_save_host.py`.
 
 `device/config.py:264-275` and `197-261`.
 
@@ -185,6 +211,12 @@ parse.
 
 ### B7. Five quick clicks switch the turtle to airOS and reboot it, with no confirmation — Confirmed
 
+> **Fixed (turtleOS 2.7, `src/ui/screens/togglemode.py`).** Five clicks (and
+> the Version screen's triple click) now open a prompt: "Switch to airOS?
+> Click to cancel. Hold to confirm." Only a 3 s hold switches; any click, or
+> 20 s with no input, cancels and returns to the waiting screen. A failed
+> config save no longer reboots. The gesture is now in the developer guide.
+
 `src/app/main.py:1092-1099`, `src/ui/screens/togglemode.py`. A `quint` from the
 waiting screen flips `turtle_mode`, saves it and calls `machine.reset()`. In
 airOS mode there is no NavController. `button.py` fires quint on the fifth
@@ -195,6 +227,17 @@ not in the developer guide.
 gesture and leave mode changes to Wrangler's `SET_TURTLE_MODE` and the Synker.
 
 ### B8. NMEA sentences are used without checking their checksum — Confirmed
+
+> **Fixed (turtleOS 2.7).** `GnssModule.read_nmea()` drops any `$GP`/`$GN`
+> sentence whose `*hh` checksum is missing or wrong (`gpsfix.checksum_ok()`,
+> now shared with `clock.py`), counts it in `bad_checksums` and logs the
+> first few. The 1° jump filter moved from the telemetry scheduler into
+> `gpsfix.update()`, so NavController, the GPS screen, `actions.current_fix()`
+> and the scheduler all get it. `update()` returns False for a dropped fix
+> (`current_fix()` then has no position to stamp). It relocates only after 5
+> agreeing far fixes in a row, so scattered glitches never move the cache, and
+> it measures longitude across the antimeridian. Host test:
+> `cd device && python3 ../tests/gps_integrity_host.py`.
 
 `src/sensors/xiao_gnss.py:178-214`, `src/nav/gpsfix.py:14-45`. Any line that
 starts `$GP`/`$GN` is parsed; the `*hh` checksum is ignored. The GPS UART
@@ -245,6 +288,13 @@ angle yet (`90 + PID`, marked as a placeholder), and grows when it does.
 
 ### B11. The GPS icon on the turtle waiting screen is only refreshed on entry — Confirmed
 
+> **Fixed (turtleOS 2.7, `src/app/main.py`).** The GPS detection block is now
+> `_refresh_gps(cfg)`, a read of the `gpsfix` cache. It runs at the top of the
+> main loop as before, from `_bg_tick()` right after the nav tick (the tick
+> that fills the cache in turtle mode), and from `_idle()` for the airOS
+> waiting screen. The header icon on every screen now follows a fix gained or
+> lost within ~500 ms (a fix counts as lost after 10 s without a new one).
+
 `src/app/main.py:940-953`. `_probe_gps()` and `set_gps_state()` run at the top
 of the main loop, which is only reached between screens.
 `TurtleWaitingScreen` then reads `get_gps_state()` for as long as it shows, so
@@ -253,6 +303,17 @@ a fix gained or lost while idle isn't shown until the next gesture.
 **Fix:** call `_probe_gps()` from `_bg_tick` (it is a cache read).
 
 ### B12. The send LED blink and Morse probably never run on the XIAO — Check on hardware
+
+> **Fixed (turtleOS 2.7, `src/hal/timers.py`).** Seen in the field: some
+> turtles never blink or send Morse. Every periodic timer now takes an
+> explicit hardware id from one registry: `BOOT_LED` 0 (boot only),
+> `SEND_LED` 1 (send blink and Morse), `SERVO_GLIDE` 2, 3 spare.
+> `timers.periodic()` tries the id, then `Timer(-1)` on builds that have it,
+> and logs `[TIMER] id N unavailable` instead of failing silently. A Morse
+> start that can't get a timer now turns the LED off and clears the OLED
+> Morse circle instead of leaving the first dot lit. Board check:
+> `mpremote connect auto run tests/timer_ids.py` lists which timers the
+> build has and blinks the button LED on `SEND_LED`.
 
 `src/net/background_process.py:318, 409` use `Timer(-1)`. The comment at
 `device/main.py:1787` says the ESP32-S3 raises on `Timer(-1)`, and both call
@@ -264,6 +325,19 @@ maps to a hardware timer and should be checked against the servo glide's
 **Fix:** pick an explicit timer id for each user and record them in one place.
 
 ### B13. A failed dashboard PATCH is never retried — Confirmed
+
+> **Fixed (turtleOS 2.7, `src/net/device_client.py`).** `save_set_fields()`
+> no longer PATCHes. It writes config and calls `device_client.mark_pending()`,
+> which writes the device-owned flag file `device_patch_pending` (survives a
+> reboot; excluded from the Synker and installer uploads). The background
+> thread's `_maybe_push_device()` sends the PATCH whenever WiFi is already up
+> (it never starts WiFi), retrying every 5 min after a failure. A newer change
+> is tried at once, and a change made while a PATCH is in flight keeps the
+> flag set. `step_api()` also pushes once at boot after a good device lookup.
+> Every push sends all six `set_*` fields from `config.json` as it is now; the
+> server treats each as absolute, so the latest target always wins. Nothing
+> network-bound runs on the main thread any more. Host test:
+> `cd device && python3 ../tests/device_patch_host.py`.
 
 `src/net/device_client.py:7` and `actions.save_set_fields` both say the next
 online boot re-pushes the `set_*` fields. `step_api()` has no such push, and
@@ -310,6 +384,29 @@ the rest of the code avoids while the background thread exists.
 ## 2. Obsolete code
 
 About 2,500 lines can go without touching the XIAO's behaviour.
+
+> **Done (turtleOS 2.7), with the exceptions below.** Removed: the three
+> Pico variant files; the Pico, ESP32 and generic ESP32-S3 HAL files
+> (`board.py` now always uses the XIAO map, so a build that doesn't name itself
+> a XIAO can no longer land on the generic map's pins); the `_is_pico` /
+> `_is_esp32` branches, `_preload_screens()` and the `boot_state.txt` write in
+> `device/main.py` (2,001 → ~1,690 lines); the scheduler's inline send path,
+> `_morse_blink`, `_get_led`, `_may_retry_wifi` (with no background process
+> attached a reading now goes to the flash queue); `ublox6gps.py` and the
+> `LEGACY-NEO6M` code (the `gps_module` key stays); `co2_test.py`;
+> `run_screen()`; the GPS and INA219 fallback builders in `run()` and the
+> `_now_ms` / `_ticks_*` wrappers there; the one real block of commented-out
+> code (the other ERA001 hits are documentation); `docs/xiao_setup_old.md`;
+> the misleading file headers. `backups/` is untracked (files kept on disk).
+> The Synkers delete the retired files from boards that still hold them.
+>
+> **Kept on purpose:** `run()`'s WiFiManager fallback, which is live on the
+> XIAO (it builds the manager when boot's own connection failed, so the
+> turtle can reconnect later), and its I2C and turtle-waiting-screen
+> fallbacks for a failed `step_init_runtime()`. **Not done:** the
+> low-memory scaffolding, the `gc is None` / `requests is None` guards and
+> similar wrappers elsewhere (spread through most files; a separate pass),
+> and `scripts/xiao_config_england.json` (untracked, local credentials).
 
 | What | Size | Note |
 |---|---|---|

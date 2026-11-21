@@ -1,4 +1,4 @@
-# src/ui/screens/online.py  (MicroPython / Pico-safe)
+# src/ui/screens/online.py
 # WiFi is assumed already connected when this screen is shown.
 # Displays API status from the background telemetry scheduler — no HTTP here.
 
@@ -109,7 +109,10 @@ class OnlineScreen:
         if api_state is not None:
             last_ok_ms = api_state.get("last_ok_ms")
             if last_ok_ms is not None:
-                elapsed_s = max(0, time.ticks_diff(time.ticks_ms(), last_ok_ms) // 1000)
+                # monotonic.ms(), not ticks: a send days ago must not wrap
+                # around to "just now" (review B5).
+                from src.app import monotonic
+                elapsed_s = max(0, (monotonic.ms() - last_ok_ms) // 1000)
                 if elapsed_s < 60:
                     age = "%ds ago" % elapsed_s
                 elif elapsed_s < 3600:

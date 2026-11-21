@@ -1,6 +1,5 @@
 # src/ui/screens/tvoc.py
-# TVOC screen for AirBuddy
-# Pico / MicroPython safe
+# TVOC screen
 
 import gc
 import time

@@ -1,4 +1,4 @@
-# src/ui/screens/sleep.py  (MicroPython / Pico-safe)
+# src/ui/screens/sleep.py
 
 import time
 from src.ui.toggle import ToggleSwitch

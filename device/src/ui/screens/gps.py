@@ -1,4 +1,4 @@
-# src/ui/screens/gps.py  (MicroPython / Pico-safe)
+# src/ui/screens/gps.py
 #
 # The stamp and the GPS on/off toggle are src.app.actions.gps_stamp /
 # gps_set_enabled, shared with the Bluetooth command handler; this screen

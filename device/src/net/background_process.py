@@ -90,7 +90,7 @@ class TelemetryBackgroundProcess:
             "sending": False,
             "msg": "",
             "last_ms": None,      # stamped on every send attempt, success or failure
-            "last_ok_ms": None,   # stamped only on a successful send
+            "last_ok_ms": None,   # stamped only on a successful send (monotonic.ms())
             "wifi_ok": None,   # set after each reconnect; main thread reads this
         }
 
@@ -118,6 +118,10 @@ class TelemetryBackgroundProcess:
         self._blink_active = 1
         self._blink_state = [False]
         self._morse_state = None   # bytearray(4) during morse; None otherwise
+
+        # Dashboard PATCH of the set_* fields (_maybe_push_device, B13)
+        self._device_tried_gen = -1
+        self._device_next_try_ms = 0
 
     # ------------------------------------------------------------------
     # Main-thread API (non-blocking)
@@ -227,6 +231,10 @@ class TelemetryBackgroundProcess:
                         self._check_wifi_and_flush(self._last_cfg)
                     except Exception as e:
                         print("[BACKGROUND] wifi check failed:", repr(e))
+                try:
+                    self._maybe_push_device()
+                except Exception as e:
+                    print("[BACKGROUND] device push failed:", repr(e))
                 time.sleep_ms(self.LOOP_SLEEP_MS)
         except Exception as e:
             print("[BACKGROUND] Thread crashed:", repr(e))
@@ -240,6 +248,26 @@ class TelemetryBackgroundProcess:
                     break
                 self._safe_enqueue(pending[0], pending[1])
             print("[BACKGROUND] Thread exited")
+
+    def _maybe_push_device(self):
+        """PATCH the operator set_* fields to the dashboard when a change is
+        pending and WiFi is up (review B13). A new change is tried at once;
+        a failed PATCH waits device_client.RETRY_MS. Never starts WiFi."""
+        from src.net import device_client
+        if not device_client.pending():
+            return
+        from src.app import monotonic
+        now = monotonic.ms()
+        gen = device_client.generation()
+        if gen == self._device_tried_gen and now < self._device_next_try_ms:
+            return
+        if self._wifi is None or not self._wifi.is_connected():
+            return
+        self._device_tried_gen = gen
+        if device_client.push_pending(self._last_cfg) is False:
+            self._device_next_try_ms = now + device_client.RETRY_MS
+            print("[BACKGROUND] dashboard PATCH failed; retry in {} s".format(
+                device_client.RETRY_MS // 1000))
 
     def _safe_enqueue(self, payload, cfg):
         """Last-resort persist of a payload that could not be sent."""
@@ -288,7 +316,8 @@ class TelemetryBackgroundProcess:
         if self._blink_timer is not None:
             return
         try:
-            from machine import Timer, Pin
+            from machine import Pin
+            from src.hal import timers
             from src.hal.board import btn_led_pin
             pin_num = btn_led_pin()
             active = 1
@@ -315,9 +344,10 @@ class TelemetryBackgroundProcess:
                 except Exception:
                     pass
 
-            self._blink_timer = Timer(-1)
-            self._blink_timer.init(mode=Timer.PERIODIC, period=1000 // hz, callback=_cb)
-        except Exception:
+            # An explicit hardware id: Timer(-1) raises on some builds (B12).
+            self._blink_timer = timers.periodic(timers.SEND_LED, 1000 // hz, _cb)
+        except Exception as e:
+            print("[BLINK] send blink failed:", repr(e))
             self._blink_timer = None
 
     def _stop_blink(self):
@@ -346,8 +376,16 @@ class TelemetryBackgroundProcess:
     def _start_morse_blink(self):
         """Start morse blink for BLESS THE AIR — drives LED + OLED API circle in sync."""
         self._morse_state = bytearray(4)  # [idx_lo, idx_hi, remaining, done]
+        # Free SEND_LED if a previous blink somehow still holds it.
         try:
-            from machine import Timer, Pin
+            if self._blink_timer is not None:
+                self._blink_timer.deinit()
+        except Exception:
+            pass
+        self._blink_timer = None
+        try:
+            from machine import Pin
+            from src.hal import timers
             from src.hal.board import btn_led_pin
             pin_num = btn_led_pin()
             active = 1
@@ -406,12 +444,27 @@ class TelemetryBackgroundProcess:
             _state[0] = 1
             _state[2] = (b0 & 0x7F) - 1
 
-            self._blink_timer = Timer(-1)
-            self._blink_timer.init(mode=Timer.PERIODIC, period=_MORSE_UNIT_MS,
-                                   callback=_morse_tick)
-        except Exception:
+            # An explicit hardware id: Timer(-1) raises on some builds (B12).
+            self._blink_timer = timers.periodic(timers.SEND_LED, _MORSE_UNIT_MS,
+                                                _morse_tick)
+            if self._blink_timer is None:
+                raise OSError("no timer for Morse")
+        except Exception as e:
+            print("[BLINK] morse failed:", repr(e))
             self._blink_timer = None
             self._morse_state = None
+            # Don't leave the first dot lit or the OLED circle in Morse mode.
+            try:
+                if self._blink_led is not None:
+                    self._blink_led.value(1 - self._blink_active)
+            except Exception:
+                pass
+            try:
+                from src.ui.connection_header import _api_morse_circle, _api_morse_mode
+                _api_morse_circle[0] = 0
+                _api_morse_mode[0] = 0
+            except Exception:
+                pass
 
     def _wait_morse_done(self, timeout_ms=6000):
         """Block the background thread until morse completes or timeout. GIL is released
@@ -463,7 +516,10 @@ class TelemetryBackgroundProcess:
 
         last = self._last_wifi_attempt_ms
         if last is not None:
-            if time.ticks_diff(time.ticks_ms(), last) < self._wifi_backoff_ms():
+            # monotonic, not ticks_ms: weeks in wifi_manual then a switch to
+            # wifi_auto must not read a stale stamp as recent (review B5).
+            from src.app import monotonic
+            if monotonic.ms() - last < self._wifi_backoff_ms():
                 return False
         return True
 
@@ -505,7 +561,8 @@ class TelemetryBackgroundProcess:
                     ssid = str(cfg.get("wifi_ssid") or "")
                     pw = str(cfg.get("wifi_password") or "")
                     print("[BACKGROUND] WiFi check requested, reconnecting...")
-                    self._last_wifi_attempt_ms = time.ticks_ms()
+                    from src.app import monotonic
+                    self._last_wifi_attempt_ms = monotonic.ms()
                     # A deliberate request (WiFi screen, Bluetooth command) gets
                     # the 12 s the WiFi screen allows; a 6 s window missed slower
                     # routers and reported a join failure that wasn't one.
@@ -595,7 +652,8 @@ class TelemetryBackgroundProcess:
                 _now_ms = time.ticks_ms()
                 _result_kwargs = dict(sending=False, ok=bool(ok), msg=msg, last_ms=_now_ms)
                 if ok:
-                    _result_kwargs["last_ok_ms"] = _now_ms
+                    from src.app import monotonic   # can be days old: B5
+                    _result_kwargs["last_ok_ms"] = monotonic.ms()
                 self._set_result(**_result_kwargs)
                 try:
                     from src.ui.connection_header import set_api_ok
@@ -668,7 +726,8 @@ class TelemetryBackgroundProcess:
             _now_ms = time.ticks_ms()
             _result_kwargs = dict(sending=False, ok=ok, msg=msg, last_ms=_now_ms)
             if ok:
-                _result_kwargs["last_ok_ms"] = _now_ms
+                from src.app import monotonic   # can be days old: B5
+                _result_kwargs["last_ok_ms"] = monotonic.ms()
             self._set_result(**_result_kwargs)
             _gc()
 

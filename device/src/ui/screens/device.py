@@ -1,5 +1,4 @@
 # src/ui/screens/device.py
-# MicroPython / Pico-safe
 #
 # Device info screen
 # - Device name (centered)

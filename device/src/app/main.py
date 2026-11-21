@@ -1,12 +1,8 @@
-# src/app/main.py — AirBuddy 2.1 core loop (Revised + API two-state patch)
+# src/app/main.py — turtleOS / airOS main event loop (run())
 
 import time
 
-try:
-    from src.hal.board import init_i2c, gps_pins
-except Exception:
-    init_i2c = None
-    gps_pins = None
+from src.hal.board import init_i2c
 
 from src.ui.clicks import (
     gc_collect as _gc,
@@ -21,46 +17,10 @@ from src.ui.flows import (
     sleep_flow,
 )
 
-DEBUG_SCREENS = False
-
 # ------------------------------------------------------------
 # API icon behavior tuning
 # ------------------------------------------------------------
 API_SENDING_HOLD_MS = 3000            # 3 s — long enough to be visible even for fast sends
-
-
-def _resolve_btn_pin_default():
-    try:
-        import src.hal.board as b
-        fn = getattr(b, "btn_pin", None)
-        if callable(fn):
-            return int(fn())
-        if hasattr(b, "BTN_PIN"):
-            return int(getattr(b, "BTN_PIN"))
-    except Exception:
-        pass
-    return 15
-
-
-def _now_ms():
-    try:
-        return time.ticks_ms()
-    except Exception:
-        return int(time.time() * 1000)
-
-
-def _ticks_add(a, b):
-    try:
-        return time.ticks_add(a, b)
-    except Exception:
-        return a + b
-
-
-def _ticks_diff(a, b):
-    try:
-        return time.ticks_diff(a, b)
-    except Exception:
-        return a - b
 
 
 # ============================================================
@@ -84,20 +44,13 @@ def run(
         imu=None,
         ble=None,
 ):
-    BTN_PIN = _resolve_btn_pin_default()
+    from src.hal.board import btn_pin
+    BTN_PIN = btn_pin()
     # Shared GY-87 10DOF instance built by device/main.py step_imu() (or None).
     _imu_dev = imu
     from config import load_config
     from src.input.button import AirBuddyButton
     from src.ui.waiting import WaitingScreen
-
-    def init_gps(uart_id=1, baud=9600, tx_pin=8, rx_pin=9):
-        try:
-            from src.sensors.xiao_gnss import GnssModule
-            return GnssModule(uart_id=uart_id, baud=baud, tx_pin=tx_pin, rx_pin=rx_pin)
-        except Exception as e:
-            print("GPS:init skipped:", repr(e))
-            return None
 
     try:
         from src.app.rtc_sync import refresh_ds3231_temp as _refresh_rtc_temp
@@ -127,13 +80,8 @@ def run(
     # Use air_sensor (the parameter) not air (assigned later at line ~220).
     # ------------------------------------------------------------
     if i2c is None:
-        # Fallback path: only hit when step_init_runtime() (device/main.py)
-        # didn't build one — e.g. on Pico, or if it failed.
-        if init_i2c:
-            i2c = init_i2c()
-        else:
-            from machine import I2C, Pin
-            i2c = I2C(0, scl=Pin(1), sda=Pin(0), freq=100000)
+        # Only if step_init_runtime() (device/main.py) failed to build one.
+        i2c = init_i2c()
 
     if air_sensor is not None:
         air_sensor._i2c = i2c
@@ -150,53 +98,14 @@ def run(
         except Exception:
             pass
 
+    # Probed once by step_init_runtime(); None = no INA219 attached.
     _ina_dev = ina_dev
-    if _ina_dev is None:
-        try:
-            from src.drivers.ina219 import INA219 as _INA219
-            _gc()
-            try:
-                _INA219.BATT_R_OHM = float(load_config().get("battery_r_ohm", _INA219.BATT_R_OHM))
-            except Exception:
-                pass
-            _ina_dev = _INA219(i2c, auto_init=True)
-            if not _ina_dev.is_present:
-                _ina_dev = None
-        except Exception:
-            _ina_dev = None
 
     rtc = rtc_info if isinstance(rtc_info, dict) else {}
 
-    # ------------------------------------------------------------
-    # GPS INIT
-    # ------------------------------------------------------------
-    if gps_pins:
-        GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN = gps_pins()
-    else:
-        GPS_UART_ID, GPS_BAUD, GPS_TX_PIN, GPS_RX_PIN = (1, 9600, 8, 9)
-
+    # GPS session built by step_init_runtime() when gps_enabled (or None).
     _gps_cfg = load_config() or {}
-    if gps is None and _gps_cfg.get("gps_enabled", False) and init_gps is not None:
-        # Fallback path: only hit when step_init_runtime() didn't build a
-        # GPS session already (e.g. on Pico).
-        try:
-            gps = init_gps(
-                uart_id=GPS_UART_ID,
-                baud=GPS_BAUD,
-                tx_pin=GPS_TX_PIN,
-                rx_pin=GPS_RX_PIN,
-            )
-        except Exception:
-            gps = None
-        if gps is not None:
-            try:
-                gps.configure_mode(
-                    _gps_cfg.get("turtle_mode", False),
-                    module=_gps_cfg.get("gps_module", "l76k"),
-                )
-            except Exception as e:
-                print("[GPS] configure:", repr(e))
-    elif not _gps_cfg.get("gps_enabled", False):
+    if not _gps_cfg.get("gps_enabled", False):
         gps = None
 
     try:
@@ -229,6 +138,25 @@ def run(
                 gps_state = GPS_FIXED
         except Exception:
             pass
+
+    def _refresh_gps(cfg):
+        """Set status["gps_on"] and the header's GPS icon from the fix cache.
+        A cache read, so it runs from _bg_tick and _idle as well as the top
+        of the main loop: a screen owns the loop for as long as it shows, and
+        the waiting screen used to keep the icon it had on entry (review B11)."""
+        try:
+            if (cfg or {}).get("gps_enabled", False):
+                _probe_gps()
+                status["gps_on"] = gps_state
+            else:
+                status["gps_on"] = GPS_NONE
+        except Exception:
+            status["gps_on"] = GPS_NONE
+        if _ch_mod:
+            try:
+                _ch_mod.set_gps_state(status["gps_on"])
+            except Exception:
+                pass
 
     # ------------------------------------------------------------
     # CORE OBJECTS
@@ -274,8 +202,8 @@ def run(
         return None
 
     if turtle_waiting_scr is None and _gps_cfg.get("turtle_mode", False) and oled is not None:
-        # Fallback path: only hit when step_init_runtime() didn't build one
-        # already (e.g. on Pico, or if it failed there).
+        # Only if step_init_runtime() failed to build it: the turtle lives on
+        # this screen, so try once more rather than fall back to airOS's.
         try:
             _gc()
             from src.ui.screens.turtle_waiting import TurtleWaitingScreen
@@ -293,10 +221,8 @@ def run(
         except Exception as e:
             print("[APP] turtle_waiting init failed:", repr(e))
 
-    # Only probe the WiFi PHY when WiFi is actually enabled.
-    # On Pico W, network.WLAN(STA_IF) initialises the CYW43 driver
-    # which allocates ~30 KB of Python heap — fatal when heap is tight.
-    # If wifi_enabled=False we will use NullWiFiManager anyway, so skip.
+    # Only probe the WiFi PHY when WiFi is actually enabled; with
+    # wifi_enabled=False we use NullWiFiManager anyway.
     _hw_wifi = False
     if _gps_cfg.get("wifi_enabled", False):
         try:
@@ -305,24 +231,12 @@ def run(
         except Exception:
             _hw_wifi = False
 
-    _boot_wifi_ok = isinstance(wifi_boot, dict) and wifi_boot.get("ok")
-
-    # On Pico/CYW43 there is no RTCWDT risk from re-entering the WiFi driver
-    # after a failed boot connection.  Always create WiFiManager on Pico if WiFi
-    # is supported and enabled — the driver can reconnect from the main loop and
-    # screens, and _bg_tick() will update status["wifi_ok"] correctly.
-    # On ESP32: gate on _boot_wifi_ok to avoid RTCWDT from broken driver state.
-    try:
-        from src.hal.platform import platform_tag as _plt_tag
-        _is_esp32_loop = (_plt_tag() == "esp32")
-    except Exception:
-        _is_esp32_loop = False
-
-    _wifi_manager_ok = _boot_wifi_ok if _is_esp32_loop else True
+    # step_init_runtime() builds the WiFiManager only when boot's own
+    # connection succeeded. When it failed, build it here instead: the
+    # turtle must still be able to reconnect later (wifi_auto backoff, the
+    # WiFi screen, a triple click). This path is live on the XIAO.
     wifi = wifi_manager
-    if wifi is None and _hw_wifi and _gps_cfg.get("wifi_enabled", False) and _wifi_manager_ok:
-        # Fallback path: only hit when step_init_runtime() didn't build one
-        # already (e.g. on Pico).
+    if wifi is None and _hw_wifi and _gps_cfg.get("wifi_enabled", False):
         try:
             from src.net.wifi_manager import WiFiManager
             wifi = WiFiManager()
@@ -442,13 +356,13 @@ def run(
             try:
                 bp_result = _background_process.result()
                 if bp_result.get("sending"):
-                    api_sending_until_ms = _ticks_add(now_ms, int(API_SENDING_HOLD_MS))
+                    api_sending_until_ms = time.ticks_add(now_ms, int(API_SENDING_HOLD_MS))
                 else:
                     last_ms = bp_result.get("last_ms")
                     if last_ms is not None:
-                        age_ms = _ticks_diff(now_ms, last_ms)
+                        age_ms = time.ticks_diff(now_ms, last_ms)
                         if 0 <= age_ms < int(API_SENDING_HOLD_MS):
-                            api_sending_until_ms = _ticks_add(last_ms, int(API_SENDING_HOLD_MS))
+                            api_sending_until_ms = time.ticks_add(last_ms, int(API_SENDING_HOLD_MS))
                 if bp_result.get("ok") is not None:
                     status["api_ok"] = bool(bp_result["ok"])
                 if bp_result.get("wifi_ok") is not None:
@@ -457,7 +371,7 @@ def run(
                 pass
 
         try:
-            status["api_sending"] = (_ticks_diff(now_ms, api_sending_until_ms) < 0)
+            status["api_sending"] = (time.ticks_diff(now_ms, api_sending_until_ms) < 0)
         except Exception:
             status["api_sending"] = False
 
@@ -466,16 +380,16 @@ def run(
         if not telemetry:
             return
 
-        now_ms = _now_ms()
+        now_ms = time.ticks_ms()
         try:
             result = telemetry.tick(cfg)
 
             if result is True:
-                api_sending_until_ms = _ticks_add(now_ms, int(API_SENDING_HOLD_MS))
+                api_sending_until_ms = time.ticks_add(now_ms, int(API_SENDING_HOLD_MS))
                 status["api_ok"] = True
 
             elif result is False:
-                api_sending_until_ms = _ticks_add(now_ms, int(API_SENDING_HOLD_MS))
+                api_sending_until_ms = time.ticks_add(now_ms, int(API_SENDING_HOLD_MS))
                 status["api_ok"] = False
 
             # None => not due, no change to api_ok
@@ -487,51 +401,9 @@ def run(
         _refresh_api_flags(now_ms)
 
     # ------------------------------------------------------------
-    # SCREEN CACHE + RUNNER
+    # SCREEN CACHE
     # ------------------------------------------------------------
     screens = {}
-
-    def run_screen(name, **kwargs):
-        """
-        Debuggable screen invoker.
-        - Tries show_live(btn=...) if available
-        - Else tries show(...)
-        - Prints why it failed (MemoryError, import error, signature mismatch, etc.)
-        Returns action for show_live, else None.
-        """
-        scr = get_screen(name)
-        if scr is None:
-            if DEBUG_SCREENS:
-                print("[run_screen] missing:", name)
-            return None
-
-        # show_live preferred
-        if hasattr(scr, "show_live"):
-            try:
-                return scr.show_live(**kwargs)
-            except TypeError as e:
-                if DEBUG_SCREENS:
-                    print("[run_screen] show_live TypeError:", name, repr(e))
-            except MemoryError as e:
-                print("[run_screen] show_live MemoryError:", name, repr(e))
-            except Exception as e:
-                if DEBUG_SCREENS:
-                    print("[run_screen] show_live error:", name, repr(e))
-
-        # fallback show()
-        if hasattr(scr, "show"):
-            try:
-                return scr.show(**kwargs)
-            except TypeError as e:
-                if DEBUG_SCREENS:
-                    print("[run_screen] show TypeError:", name, repr(e))
-            except MemoryError as e:
-                print("[run_screen] show MemoryError:", name, repr(e))
-            except Exception as e:
-                if DEBUG_SCREENS:
-                    print("[run_screen] show error:", name, repr(e))
-
-        return None
 
     def get_screen(name):
         """
@@ -825,6 +697,7 @@ def run(
     # Servo power rail (Pololu SSR on GPIO40), ticked from _bg_tick.
     from src.drivers import servo_power as _servo_power
     from src.app import watchdog as _watchdog
+    from src.app import monotonic as _monotonic
 
     # No gc.collect() in here: on the XIAO's 8 MB PSRAM heap a full collect
     # walks the whole heap (~50 ms each), and the two that used to bracket
@@ -833,6 +706,9 @@ def run(
     def _bg_tick():
         _watchdog.feed()
         _watchdog.healthy()
+        # Keep the non-wrapping clock fed: it is exact only while calls are
+        # under ~6.2 days apart, and this runs several times a second (B5).
+        _monotonic.ms()
         t0 = time.ticks_ms()
         t_tel = t_nav = t_ble = t0
         try:
@@ -854,6 +730,9 @@ def run(
             except Exception:
                 pass
         t_nav = time.ticks_diff(time.ticks_ms(), t_nav)
+        # GPS icon follows the fix cache on every screen (B11). After the nav
+        # tick, which is what drains the UART into the cache in turtle mode.
+        _refresh_gps(_cfg_cell[0])
         # Servo power rail: servo_power_mode + the idle cut-off.
         try:
             _servo_power.tick(_cfg_cell[0])
@@ -896,6 +775,7 @@ def run(
 
         start_telemetry_if_ready(_cfg_cell[0])
         tick_telemetry(_cfg_cell[0])
+        _refresh_gps(_cfg_cell[0])      # airOS waiting screen (B11)
 
         return {
             "wifi_ok": status["wifi_ok"],
@@ -950,19 +830,7 @@ def run(
                 status["wifi_ok"] = False
 
         # --- GPS detection ---
-        try:
-            if cfg.get("gps_enabled", False):
-                _probe_gps()
-                status["gps_on"] = gps_state
-            else:
-                status["gps_on"] = GPS_NONE
-        except Exception:
-            status["gps_on"] = GPS_NONE
-        if _ch_mod:
-            try:
-                _ch_mod.set_gps_state(status["gps_on"])
-            except Exception:
-                pass
+        _refresh_gps(cfg)
 
         # --- RTC temp refresh (throttled internally to ~70s) ---
         if _refresh_rtc_temp is not None:
@@ -975,7 +843,7 @@ def run(
         start_telemetry_if_ready(cfg)
 
         # keep api flags fresh even between sends
-        _refresh_api_flags(_now_ms())
+        _refresh_api_flags(time.ticks_ms())
 
         # Collect before entering the blocking waiting-screen loop to
         # reclaim any temporaries from load_config() and status updates.
@@ -1105,9 +973,12 @@ def run(
             screens.clear(); _gc()
             try:
                 from src.ui.screens.togglemode import show_toggle_mode
-                show_toggle_mode(oled, cfg.get("turtle_mode", False))
+                # Asks "Switch to airOS?" first; only a hold switches (B7).
+                show_toggle_mode(oled, cfg.get("turtle_mode", False),
+                                 btn, tick_fn=_bg_tick)
             except Exception as e:
                 print("[QUINT] togglemode failed:", repr(e))
+            _reset_and_flush(btn)
             continue
 
         _reset_and_flush(btn)

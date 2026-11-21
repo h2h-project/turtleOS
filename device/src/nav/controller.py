@@ -25,6 +25,7 @@ import time
 
 from src.nav import state_machine as sm
 from src.nav import gpsfix
+from src.app import monotonic   # "since" stamps that can outlive 6.2 days (B5)
 
 # Resume stages (snapshot()["resume"], BLE 0111 resume_stage 1-3).
 RESUME_BATTERY = "BATTERY"
@@ -55,6 +56,10 @@ class NavController:
         self._next_ms = 0
         self._next_route_ms = 0
         self._last_nav_ms = None
+        # The three "since" stamps below are monotonic.ms(), not ticks_ms():
+        # each can be days old (SAFE through a long GPS outage, wind solved
+        # before a week waiting for sun) and a ticks_diff past ~6.2 days
+        # wraps negative (review B5). Compare them by plain subtraction.
         self._sailnav_since_ms = None
         self._next_sweep_ms = None     # periodic re-sweep schedule (SAIL_NAV)
         self._feather_applied = False
@@ -368,7 +373,7 @@ class NavController:
             self._stage = None
         if state == sm.SAFE:
             if self._safe_since_ms is None:
-                self._safe_since_ms = now
+                self._safe_since_ms = monotonic.ms()
         else:
             self._safe_since_ms = None
             if state != sm.SAIL_NAV:
@@ -388,7 +393,7 @@ class NavController:
     def _step_sweep(self, now):
         self._sweep_status = self._sweep.step(now)
         if self._sweep_status.get("done") and self._sweep.wind_angle() is not None:
-            self._wind_solved_ms = now
+            self._wind_solved_ms = monotonic.ms()
 
     def _abort_sweep(self, why):
         if self._sweep.active():
@@ -403,7 +408,7 @@ class NavController:
         self._stage = None
         self._pid.reset()
         self._last_nav_ms = None
-        self._sailnav_since_ms = now
+        self._sailnav_since_ms = monotonic.ms()
         self._feather_applied = False
         self.fault = None
         self._schedule_resweep(cfg, now)
@@ -449,7 +454,7 @@ class NavController:
                 return
             interval_ms = int(cfg.get("luff_resweep_s", 600)) * 1000
             if self._wind_solved_ms is not None and \
-                    time.ticks_diff(now, self._wind_solved_ms) < interval_ms:
+                    monotonic.ms() - self._wind_solved_ms < interval_ms:
                 self._enter_sail_nav(cfg, now, "journey resumed, wind known")
                 return
             if not self._sweep.start():
@@ -473,8 +478,8 @@ class NavController:
         a fresh fix and a target to sail to put the turtle back in ACQUIRE.
         With a journey open the resume stages then take it from there."""
         if self._safe_since_ms is None:
-            self._safe_since_ms = now
-        if time.ticks_diff(now, self._safe_since_ms) < _SAFE_HOLDOFF_MS:
+            self._safe_since_ms = monotonic.ms()
+        if monotonic.ms() - self._safe_since_ms < _SAFE_HOLDOFF_MS:
             return
         _lat, _lon, age = gpsfix.get()
         if age is None or age > _FRESH_FIX_MS or self._wps.current() is None:
@@ -513,8 +518,8 @@ class NavController:
         loss_ms = int(cfg.get("gps_loss_safe_s", 120)) * 1000
         if age_ms is None:
             if self._sailnav_since_ms is None:
-                self._sailnav_since_ms = now
-            if time.ticks_diff(now, self._sailnav_since_ms) >= loss_ms:
+                self._sailnav_since_ms = monotonic.ms()
+            if monotonic.ms() - self._sailnav_since_ms >= loss_ms:
                 self._enter_safe("gps never acquired")
             return
         if age_ms >= loss_ms:

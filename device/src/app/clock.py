@@ -176,16 +176,8 @@ def disarm_gps():
 
 
 def _checksum_ok(line):
-    try:
-        star = line.rfind("*")
-        if star < 1:
-            return False
-        x = 0
-        for ch in line[1:star]:
-            x ^= ord(ch)
-        return x == int(line[star + 1:star + 3], 16)
-    except Exception:
-        return False
+    from src.nav.gpsfix import checksum_ok
+    return checksum_ok(line)
 
 
 def rmc_unix(line):

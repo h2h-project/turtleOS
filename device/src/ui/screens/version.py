@@ -1,4 +1,4 @@
-# src/ui/screens/version.py — Version / about screen (Pico / MicroPython safe)
+# src/ui/screens/version.py — Version / about screen
 #
 # Static about screen: the brand mark (turtleOS / airOS, same font as the
 # booter screen) near the top, the "Human to Human Hope Delivery" motto
